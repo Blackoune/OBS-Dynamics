@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBS Dynamics - Control Center</title>
+
+    <!-- FontAwesome 6 & Google Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <!-- Anime.js pour les animations -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+
+    <style>
+        /* ==========================================================================
+       VARIABLES ET THÈMES (Violet Tamisé & Dégradés)
+       ========================================================================== */
+        :root {
+            /* Thème Sombre (Par défaut) */
+            --bg-gradient: linear-gradient(135deg, #0d0915 0%, #1a102b 40%, #120924 100%);
+            --card-bg: rgba(28, 18, 48, 0.65);
+            --card-border: rgba(157, 78, 221, 0.22);
+            --input-bg: rgba(18, 11, 33, 0.85);
+            --header-bg: rgba(20, 13, 36, 0.8);
+
+            --primary: #9d4edd;
+            --primary-light: #c77dff;
+            --primary-dark: #5a189a;
+            --primary-gradient: linear-gradient(135deg, #7b2cbf 0%, #9d4edd 100%);
+            --accent-glow: radial-gradient(circle, rgba(157, 78, 221, 0.25) 0%, rgba(0, 0, 0, 0) 70%);
+
+            --text-main: #f3f0ff;
+            --text-muted: #9e93b8;
+
+            --status-green: #10b981;
+            --status-yellow: #f59e0b;
+            --status-red: #ef4444;
+            --status-blue: #3b82f6;
+
+            --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+            --radius: 16px;
+            --transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        [data-theme="light"] {
+            --bg-gradient: linear-gradient(135deg, #f3f0f9 0%, #e8e0f5 50%, #f7f2fc 100%);
+            --card-bg: rgba(255, 255, 255, 0.75);
+            --card-border: rgba(157, 78, 221, 0.25);
+            --input-bg: rgba(246, 242, 255, 0.9);
+            --header-bg: rgba(255, 255, 255, 0.85);
+
+            --text-main: #231634;
+            --text-muted: #6c5c82;
+            --shadow: 0 12px 35px rgba(123, 44, 191, 0.12);
+        }
+
+        /* ==========================================================================
+       RESET & STRUCTURE GLOBALE
+       ========================================================================== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-attachment: fixed;
+            transition: var(--transition);
+            overflow-x: hidden;
+        }
+
+        /* ==========================================================================
+       AUTHENTIFICATION
+       ========================================================================== */
+        .auth-wrapper {
+            width: 100%;
+            max-width: 440px;
+            padding: 2.5rem;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            position: relative;
+            z-index: 10;
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 2.2rem;
+        }
+
+        .auth-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1rem;
+            background: var(--primary-gradient);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            color: white;
+            box-shadow: 0 8px 20px rgba(157, 78, 221, 0.4);
+        }
+
+        .auth-header h1 {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .auth-header p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.4rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 0.4rem;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-wrapper i {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 0.8rem 1rem 0.8rem 2.8rem;
+            background: var(--input-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(157, 78, 221, 0.25);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.85rem;
+            border: none;
+            border-radius: 10px;
+            background: var(--primary-gradient);
+            color: white;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.6rem;
+            box-shadow: 0 4px 15px rgba(123, 44, 191, 0.3);
+        }
+
+        .btn:hover {
+            opacity: 0.95;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(123, 44, 191, 0.45);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .auth-toggle {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .auth-toggle a {
+            color: var(--primary-light);
+            text-decoration: none;
+            font-weight: 700;
+            cursor: pointer;
+            margin-left: 0.3rem;
+        }
+
+        /* ==========================================================================
+       APP APPLICATION (Dashboard)
+       ========================================================================== */
+        .app-container {
+            display: none;
+            width: 100%;
+            max-width: 1180px;
+            margin: 1.5rem;
+            background: var(--card-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            flex-direction: column;
+            min-height: 750px;
+        }
+
+        /* Header Navigation */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 2.2rem;
+            background: var(--header-bg);
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            font-weight: 800;
+            font-size: 1.25rem;
+            letter-spacing: -0.5px;
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--primary-gradient);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.1rem;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: var(--input-bg);
+            padding: 0.3rem;
+            border-radius: 10px;
+            border: 1px solid var(--card-border);
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.88rem;
+            padding: 0.55rem 1.1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-main);
+        }
+
+        .tab-btn.active {
+            background: var(--primary-gradient);
+            color: white;
+            box-shadow: 0 2px 10px rgba(123, 44, 191, 0.3);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .theme-toggle-btn {
+            background: var(--input-bg);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            transition: var(--transition);
+        }
+
+        .theme-toggle-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary-light);
+        }
+
+        .logout-btn {
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            color: var(--status-red);
+            padding: 0.55rem 1rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.88rem;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .logout-btn:hover {
+            background: var(--status-red);
+            color: white;
+        }
+
+        /* Control Bar */
+        .control-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 2.2rem;
+            background: rgba(0, 0, 0, 0.15);
+            border-bottom: 1px solid var(--card-border);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            background: var(--input-bg);
+            padding: 0.5rem 1rem;
+            border-radius: 30px;
+            border: 1px solid var(--card-border);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--status-yellow);
+            box-shadow: 0 0 10px var(--status-yellow);
+        }
+
+        .status-dot.active {
+            background: var(--status-green);
+            box-shadow: 0 0 10px var(--status-green);
+        }
+
+        .status-dot.stopped {
+            background: var(--status-red);
+            box-shadow: 0 0 10px var(--status-red);
+        }
+
+        .control-buttons {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn-action {
+            width: auto;
+            padding: 0.6rem 1.2rem;
+            font-size: 0.88rem;
+            border-radius: 8px;
+        }
+
+        .btn-start {
+            background: var(--status-green);
+            color: #052e16;
+        }
+
+        .btn-pause {
+            background: var(--status-yellow);
+            color: #451a03;
+        }
+
+        .btn-stop {
+            background: var(--status-red);
+            color: white;
+        }
+
+        .btn-folder {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+        }
+
+        .btn-folder:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Zone de Contenu */
+        .content-area {
+            padding: 2rem 2.2rem;
+            flex: 1;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .section-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.8rem;
+        }
+
+        .section-title h2 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+
+        /* Grille de Jeux */
+        .games-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .game-card {
+            background: var(--input-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            transition: var(--transition);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .game-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--primary);
+            box-shadow: 0 8px 25px rgba(123, 44, 191, 0.15);
+        }
+
+        .game-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .game-card-title h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .game-card-title p {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .game-card-badge {
+            background: rgba(157, 78, 221, 0.15);
+            color: var(--primary-light);
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .game-card-body {
+            margin-bottom: 1.2rem;
+            font-size: 0.83rem;
+            color: var(--text-muted);
+        }
+
+        .game-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 0.8rem;
+        }
+
+        .btn-icon-danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--status-red);
+            border: none;
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: var(--transition);
+        }
+
+        .btn-icon-danger:hover {
+            background: var(--status-red);
+            color: white;
+        }
+
+        /* Onglet Paramètres */
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.8rem;
+        }
+
+        .settings-card {
+            background: var(--input-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+        }
+
+        .settings-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            color: var(--primary-light);
+        }
+
+        .user-profile-summary {
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        .profile-avatar {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: white;
+            box-shadow: 0 4px 12px rgba(123, 44, 191, 0.3);
+        }
+
+        /* Onglet Touches Dynamiques */
+        .hotkeys-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .hotkey-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--card-border);
+            padding: 1rem 1.2rem;
+            border-radius: 12px;
+        }
+
+        .hotkey-info h4 {
+            font-size: 0.95rem;
+            margin-bottom: 0.2rem;
+        }
+
+        .hotkey-info p {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .hotkey-badge {
+            background: var(--primary-dark);
+            color: white;
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-family: monospace;
+            font-weight: 700;
+            font-size: 0.85rem;
+            border: 1px solid var(--primary);
+        }
+
+        /* Console / Logs */
+        .console-box {
+            background: rgba(10, 6, 18, 0.95);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 1rem;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.82rem;
+            height: 180px;
+            overflow-y: auto;
+            color: #a7f3d0;
+            margin-top: 1.5rem;
+        }
+
+        .console-line {
+            margin-bottom: 0.3rem;
+            display: flex;
+            gap: 0.6rem;
+        }
+
+        .console-timestamp {
+            color: var(--text-muted);
+        }
+
+        /* ==========================================================================
+       MODALES
+       ========================================================================== */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(7, 4, 14, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 1rem;
+        }
+
+        .modal {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 520px;
+            padding: 2rem;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-header h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.3rem;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--text-main);
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            margin: 1.2rem 0;
+            background: rgba(0, 0, 0, 0.15);
+            padding: 1rem;
+            border-radius: 10px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-size: 0.88rem;
+            cursor: pointer;
+        }
+
+        .checkbox-label input {
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }
+
+        .dynamic-field {
+            display: none;
+            margin-top: 0.8rem;
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(12px);
+            color: var(--text-main);
+            padding: 0.9rem 1.4rem;
+            border-radius: 10px;
+            font-size: 0.88rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            box-shadow: var(--shadow);
+            animation: slideIn 0.3s forwards;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .control-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .control-buttons {
+                justify-content: space-between;
+            }
+
+            header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ==========================================================================
+       ÉCRAN AUTHENTIFICATION
+       ========================================================================== -->
+    <div class="auth-wrapper" id="auth-wrapper">
+        <div class="auth-header">
+            <div class="auth-icon">
+                <i class="fa-solid fa-play"></i>
+            </div>
+            <h1 id="auth-title">Connexion</h1>
+            <p id="auth-subtitle">Accédez au centre de contrôle OBS Dynamics</p>
+        </div>
+
+        <form id="auth-form">
+            <div class="form-group">
+                <label for="email">Adresse Email</label>
+                <div class="input-wrapper">
+                    <i class="fa-solid fa-envelope"></i>
+                    <input type="email" id="email" class="form-control" placeholder="nom@exemple.com" required>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Mot de passe</label>
+                <div class="input-wrapper">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="password" class="form-control" placeholder="••••••••" required>
+                </div>
+            </div>
+
+            <button type="submit" class="btn" id="auth-btn">
+                <span id="auth-btn-text">Se Connecter</span>
+                <i class="fa-solid fa-arrow-right"></i>
+            </button>
+        </form>
+
+        <div class="auth-toggle">
+            <span id="auth-toggle-text">Pas encore de compte ?</span>
+            <a id="auth-toggle-btn">S'inscrire</a>
+        </div>
+    </div>
+
+    <!-- ==========================================================================
+       APPLICATION PRINCIPALE (Dashboard)
+       ========================================================================== -->
+    <div class="app-container" id="app-container">
+        <!-- En-tête -->
+        <header>
+            <div class="brand">
+                <div class="brand-icon">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                </div>
+                <span>OBS Dynamics</span>
+            </div>
+
+            <nav class="nav-tabs">
+                <button class="tab-btn active" onclick="switchTab('games-tab', this)">
+                    <i class="fa-solid fa-gamepad"></i> Jeux
+                </button>
+                <button class="tab-btn" onclick="switchTab('hotkeys-tab', this)">
+                    <i class="fa-solid fa-keyboard"></i> Touches & Hotkeys
+                </button>
+                <button class="tab-btn" onclick="switchTab('settings-tab', this)">
+                    <i class="fa-solid fa-gear"></i> Paramètres
+                </button>
+            </nav>
+
+            <div class="header-actions">
+                <button class="theme-toggle-btn" id="theme-toggle" title="Changer de thème">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="logout-btn" id="logout-btn">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                    <span>Déconnexion</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Barre de Contrôle -->
+        <div class="control-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Script prêt (En attente)</span>
+            </div>
+
+            <div class="control-buttons">
+                <button class="btn btn-action btn-start" onclick="handleScriptControl('start')">
+                    <i class="fa-solid fa-play"></i> Lancer
+                </button>
+                <button class="btn btn-action btn-pause" onclick="handleScriptControl('pause')">
+                    <i class="fa-solid fa-pause"></i> Pause
+                </button>
+                <button class="btn btn-action btn-stop" onclick="handleScriptControl('stop')">
+                    <i class="fa-solid fa-stop"></i> Arrêter
+                </button>
+                <button class="btn btn-action btn-folder" onclick="handleScriptControl('folder')">
+                    <i class="fa-solid fa-folder-open"></i> Dossier Racine
+                </button>
+            </div>
+        </div>
+
+        <!-- Contenu Principal -->
+        <div class="content-area">
+
+            <!-- ONGLET 1: GESTION DES JEUX -->
+            <section id="games-tab" class="tab-content active">
+                <div class="section-title">
+                    <div>
+                        <h2>Jeux Configurés</h2>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem;">
+                            Analyse visuelle ciblée uniquement sur les exécutables actifs
+                        </p>
+                    </div>
+                    <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" onclick="openAddGameModal()">
+                        <i class="fa-solid fa-plus"></i> Ajouter un jeu
+                    </button>
+                </div>
+
+                <div class="games-grid" id="games-container">
+                    <!-- Injecté dynamiquement par JS -->
+                </div>
+            </section>
+
+            <!-- ONGLET 2: TOUCHES PROGRAMMÉES (RUST MAP, ETC.) -->
+            <section id="hotkeys-tab" class="tab-content">
+                <div class="section-title">
+                    <div>
+                        <h2>Touches & Overlay Dynamiques</h2>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.2rem;">
+                            Masquage de carte (Rust), raccourcis Shift/Alt et triggers médias
+                        </p>
+                    </div>
+                    <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" onclick="openAddHotkeyModal()">
+                        <i class="fa-solid fa-plus"></i> Nouveau raccourci
+                    </button>
+                </div>
+
+                <div class="hotkeys-list" id="hotkeys-container">
+                    <!-- Injecté dynamiquement par JS -->
+                </div>
+            </section>
+
+            <!-- ONGLET 3: PARAMÈTRES & COMPTE -->
+            <section id="settings-tab" class="tab-content">
+                <div class="section-title">
+                    <h2>Paramètres Globaux</h2>
+                </div>
+
+                <div class="settings-grid">
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-user-gear"></i> Compte Utilisateur</h3>
+                        <div class="user-profile-summary">
+                            <div class="profile-avatar">
+                                <i class="fa-solid fa-user"></i>
+                            </div>
+                            <div>
+                                <h4 id="user-display-email">utilisateur@local.host</h4>
+                                <p style="color: var(--text-muted); font-size: 0.82rem;">Stockage local sur votre PC</p>
+                            </div>
+                        </div>
+                        <p style="font-size: 0.83rem; color: var(--text-muted); line-height: 1.5;">
+                            Vos jeux et données de configuration sont conservés dans un fichier JSON local et dans votre
+                            navigateur. Aucune donnée n'est envoyée vers un serveur externe.
+                        </p>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-palette"></i> Apparence & Thème</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.2rem;">
+                            Personnalisez l'affichage selon vos préférences visuelles.
+                        </p>
+                        <button class="btn btn-folder" style="width: 100%; justify-content: center;"
+                            onclick="toggleTheme()">
+                            <i class="fa-solid fa-circle-half-stroke"></i> Basculer le thème Clair / Sombre
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Console / Moniteur Backend -->
+                <div style="margin-top: 2rem;">
+                    <h3
+                        style="font-size: 1rem; margin-bottom: 0.6rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <i class="fa-solid fa-terminal" style="color: var(--primary-light);"></i> Journal d'activité
+                        (Console)
+                    </h3>
+                    <div class="console-box" id="console-box">
+                        <div class="console-line">
+                            <span class="console-timestamp">[SYSTEM]</span>
+                            <span>Interface initialisée. Prêt pour la connexion OBS WebSocket.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <!-- ==========================================================================
+       MODAL: AJOUTER UN JEU
+       ========================================================================== -->
+    <div class="modal-overlay" id="add-game-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Nouveau Jeu à Automatiser</h3>
+                <button class="modal-close" onclick="closeModal('add-game-modal')">&times;</button>
+            </div>
+
+            <form id="add-game-form">
+                <div class="form-group">
+                    <label for="game-name">Nom du Jeu</label>
+                    <input type="text" id="game-name" class="form-control" style="padding-left: 1rem;"
+                        placeholder="ex: Valorant, Rust..." required>
+                </div>
+
+                <div class="form-group">
+                    <label for="game-exe">Nom de l'exécutable (.exe)</label>
+                    <input type="text" id="game-exe" class="form-control" style="padding-left: 1rem;"
+                        placeholder="ex: VALORANT-Win64-Shipping.exe" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="game-images">Images PNG de détection (Menu / InGame)</label>
+                    <input type="file" id="game-images" class="form-control" style="padding-left: 1rem;"
+                        accept="image/png" multiple required>
+                </div>
+
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opt-scene"> Créer automatiquement une Scène dédiée dans OBS
+                    </label>
+
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="opt-group" onchange="toggleObsGroupDropdown(this)"> Créer un Groupe
+                        de Sources OBS (Cam, Overlay...)
+                    </label>
+                </div>
+
+                <div class="form-group dynamic-field" id="obs-scene-select-group">
+                    <label for="obs-target-scene">Scène OBS de destination :</label>
+                    <select id="obs-target-scene" class="form-control" style="padding-left: 1rem;">
+                        <!-- Scènes chargées dynamiquement -->
+                    </select>
+                </div>
+
+                <button type="submit" class="btn" style="margin-top: 1rem;">Enregistrer et Configurer</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==========================================================================
+       MODAL: AJOUTER UNE TOUCHE PROGRAMMÉE (RUST CACHE-MAP, ETC.)
+       ========================================================================== -->
+    <div class="modal-overlay" id="add-hotkey-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Programmer un Raccourci / Overlay</h3>
+                <button class="modal-close" onclick="closeModal('add-hotkey-modal')">&times;</button>
+            </div>
+
+            <form id="add-hotkey-form">
+                <div class="form-group">
+                    <label for="hotkey-game">Jeu Associé</label>
+                    <select id="hotkey-game" class="form-control" style="padding-left: 1rem;">
+                        <!-- Injecté JS -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="hotkey-action">Action / Description</label>
+                    <input type="text" id="hotkey-action" class="form-control" style="padding-left: 1rem;"
+                        placeholder="ex: Cache-Map, Masquer Caméra..." required>
+                </div>
+
+                <div class="form-group">
+                    <label for="hotkey-key">Touche ou Combinaison (ex: G, Shift+Alt+C)</label>
+                    <input type="text" id="hotkey-key" class="form-control" style="padding-left: 1rem;"
+                        placeholder="ex: G" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="hotkey-media">Image / Vidéo Overlay (Optionnel)</label>
+                    <input type="file" id="hotkey-media" class="form-control" style="padding-left: 1rem;"
+                        accept="image/*,video/*">
+                </div>
+
+                <button type="submit" class="btn" style="margin-top: 1rem;">Ajouter le Raccourci</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==========================================================================
+       MODAL: CONFIRMATION SUPPRESSION
+       ========================================================================== -->
+    <div class="modal-overlay" id="delete-modal">
+        <div class="modal" style="max-width: 420px; text-align: center;">
+            <i class="fa-solid fa-triangle-exclamation"
+                style="font-size: 3rem; color: var(--status-red); margin-bottom: 1rem;"></i>
+            <h3 style="margin-bottom: 0.5rem;">Confirmer la suppression</h3>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1.5rem; line-height: 1.5;">
+                Êtes-vous sûr de vouloir supprimer ce jeu ? Ses images de détection et la configuration JSON associée
+                seront effacées.
+            </p>
+
+            <div style="display: flex; gap: 1rem;">
+                <button class="btn btn-folder" style="flex: 1;" onclick="closeModal('delete-modal')">Annuler</button>
+                <button class="btn btn-stop" style="flex: 1;" id="confirm-delete-btn">Supprimer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Conteneur Toasts -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- ==========================================================================
+       LOGIQUE JAVASCRIPT
+       ========================================================================== -->
+    <script>
+        // --- ÉTAT GLOBAL DE L'APPLICATION ---
+        let isRegisterMode = false;
+        let itemToDeleteId = null;
+
+        // Jeux par défaut
+        const defaultGames = [
+            { id: 1, name: "Valorant", exe: "VALORANT-Win64-Shipping.exe", scene: "Valorant - InGame" },
+            { id: 2, name: "Overwatch", exe: "Overwatch.exe", scene: "Overwatch - InGame" },
+            { id: 3, name: "Rust", exe: "RustClient.exe", scene: "Rust - InGame" },
+            { id: 4, name: "Minecraft", exe: "javaw.exe", scene: "Minecraft - InGame" }
+        ];
+
+        // Hotkeys par défaut (ex: Cache Map Rust)
+        const defaultHotkeys = [
+            { id: 1, game: "Rust", action: "Cache-Map automatique", key: "G", media: "map_overlay_mask.png" },
+            { id: 2, game: "Valorant", action: "Masquer minimap", key: "Shift + Alt + M", media: "blur_minimap.png" }
+        ];
+
+        // --- INITIALISATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+            checkSession();
+            setupAuthListeners();
+        });
+
+        // --- AUTHENTIFICATION LOCALE ---
+        function setupAuthListeners() {
+            const authForm = document.getElementById('auth-form');
+            const authToggleBtn = document.getElementById('auth-toggle-btn');
+
+            authToggleBtn.addEventListener('click', () => {
+                isRegisterMode = !isRegisterMode;
+                document.getElementById('auth-title').innerText = isRegisterMode ? "Créer un compte" : "Connexion";
+                document.getElementById('auth-subtitle').innerText = isRegisterMode ? "Enregistrez votre compte en local" : "Accédez au centre de contrôle OBS Dynamics";
+                document.getElementById('auth-btn-text').innerText = isRegisterMode ? "S'inscrire" : "Se Connecter";
+                document.getElementById('auth-toggle-text').innerText = isRegisterMode ? "Déjà un compte ?" : "Pas encore de compte ?";
+                authToggleBtn.innerText = isRegisterMode ? "Se connecter" : "S'inscrire";
+            });
+
+            authForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                if (isRegisterMode) {
+                    localStorage.setItem('obs_user', JSON.stringify({ email, password }));
+                    showToast("Compte créé avec succès !", "success");
+                } else {
+                    const user = JSON.parse(localStorage.getItem('obs_user'));
+                    if (!user || user.email !== email || user.password !== password) {
+                        showToast("Email ou mot de passe incorrect.", "danger");
+                        return;
+                    }
+                }
+
+                localStorage.setItem('obs_logged_in', 'true');
+                localStorage.setItem('obs_current_user', email);
+                openApp(email);
+            });
+
+            document.getElementById('logout-btn').addEventListener('click', () => {
+                localStorage.removeItem('obs_logged_in');
+                document.getElementById('app-container').style.display = 'none';
+                document.getElementById('auth-wrapper').style.display = 'block';
+                showToast("Déconnecté.", "info");
+            });
+        }
+
+        function checkSession() {
+            const isLoggedIn = localStorage.getItem('obs_logged_in');
+            const currentUser = localStorage.getItem('obs_current_user');
+
+            if (isLoggedIn === 'true' && currentUser) {
+                openApp(currentUser);
+            }
+        }
+
+        function openApp(email) {
+            document.getElementById('auth-wrapper').style.display = 'none';
+            const app = document.getElementById('app-container');
+            app.style.display = 'flex';
+
+            document.getElementById('user-display-email').innerText = email;
+
+            loadGames();
+            loadHotkeys();
+            populateObsScenesMock();
+
+            // Animation avec Anime.js
+            anime({
+                targets: '#app-container',
+                opacity: [0, 1],
+                translateY: [15, 0],
+                duration: 500,
+                easing: 'easeOutQuad'
+            });
+        }
+
+        // --- NAVIGATION DANS LES ONGLETS ---
+        function switchTab(tabId, btnElement) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }
+
+        // --- THÈME CLAIR / SOMBRE ---
+        function initTheme() {
+            const savedTheme = localStorage.getItem('obs_theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+
+            document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('obs_theme', newTheme);
+            updateThemeIcon(newTheme);
+            showToast(`Mode ${newTheme === 'dark' ? 'Sombre' : 'Clair'} activé`, 'info');
+        }
+
+        function updateThemeIcon(theme) {
+            const icon = document.querySelector('#theme-toggle i');
+            icon.className = theme === 'dark' ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+        }
+
+        // --- GESTION DES JEUX ---
+        function getGames() {
+            const data = localStorage.getItem('obs_games');
+            return data ? JSON.parse(data) : defaultGames;
+        }
+
+        function saveGames(games) {
+            localStorage.setItem('obs_games', JSON.stringify(games));
+        }
+
+        function loadGames() {
+            const games = getGames();
+            const container = document.getElementById('games-container');
+            container.innerHTML = '';
+
+            games.forEach(game => {
+                const card = document.createElement('div');
+                card.className = 'game-card';
+                card.innerHTML = `
+          <div>
+            <div class="game-card-header">
+              <div class="game-card-title">
+                <h3>${game.name}</h3>
+                <p><i class="fa-solid fa-gear"></i> ${game.exe}</p>
+              </div>
+              <span class="game-card-badge">Prêt</span>
+            </div>
+            <div class="game-card-body">
+              <p><i class="fa-solid fa-tv"></i> Scène OBS: <strong>${game.scene || game.name}</strong></p>
+            </div>
+          </div>
+          <div class="game-card-footer">
+            <span style="font-size: 0.75rem; color: var(--text-muted);">
+              <i class="fa-solid fa-image"></i> Images PNG liées
+            </span>
+            <button class="btn-icon-danger" onclick="confirmDeleteGame(${game.id})" title="Supprimer">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        `;
+                container.appendChild(card);
+            });
+        }
+
+        function openAddGameModal() {
+            document.getElementById('add-game-modal').style.display = 'flex';
+        }
+
+        function toggleObsGroupDropdown(checkbox) {
+            const group = document.getElementById('obs-scene-select-group');
+            group.style.display = checkbox.checked ? 'block' : 'none';
+        }
+
+        function populateObsScenesMock() {
+            const select = document.getElementById('obs-target-scene');
+            select.innerHTML = '';
+            const scenes = ["Scène Principale", "Scène Gaming", "Overlay Stream", "In-Game Direct"];
+            scenes.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.innerText = s;
+                select.appendChild(opt);
+            });
+        }
+
+        document.getElementById('add-game-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('game-name').value;
+            const exe = document.getElementById('game-exe').value;
+
+            const games = getGames();
+            games.push({
+                id: Date.now(),
+                name,
+                exe,
+                scene: `${name} - Scene`
+            });
+
+            saveGames(games);
+            loadGames();
+            closeModal('add-game-modal');
+            document.getElementById('add-game-form').reset();
+            logConsole(`Nouveau jeu configuré : ${name} (${exe})`);
+            showToast(`Jeu ${name} ajouté avec succès !`, 'success');
+        });
+
+        // --- SUPPRESSION JEU ---
+        function confirmDeleteGame(id) {
+            itemToDeleteId = id;
+            document.getElementById('delete-modal').style.display = 'flex';
+        }
+
+        document.getElementById('confirm-delete-btn').addEventListener('click', () => {
+            if (itemToDeleteId !== null) {
+                let games = getGames();
+                games = games.filter(g => g.id !== itemToDeleteId);
+                saveGames(games);
+                loadGames();
+                closeModal('delete-modal');
+                logConsole(`Jeu ID ${itemToDeleteId} et fichiers JSON associés supprimés.`);
+                showToast("Jeu et configurations supprimés.", "info");
+            }
+        });
+
+        // --- TOUCHES PROGRAMMÉES (RUST CACHE-MAP...) ---
+        function getHotkeys() {
+            const data = localStorage.getItem('obs_hotkeys');
+            return data ? JSON.parse(data) : defaultHotkeys;
+        }
+
+        function saveHotkeys(hotkeys) {
+            localStorage.setItem('obs_hotkeys', JSON.stringify(hotkeys));
+        }
+
+        function loadHotkeys() {
+            const hotkeys = getHotkeys();
+            const container = document.getElementById('hotkeys-container');
+            container.innerHTML = '';
+
+            hotkeys.forEach(hk => {
+                const div = document.createElement('div');
+                div.className = 'hotkey-item';
+                div.innerHTML = `
+          <div class="hotkey-info">
+            <h4>[${hk.game}] - ${hk.action}</h4>
+            <p><i class="fa-solid fa-photo-film"></i> Overlay : ${hk.media || 'Aucun'}</p>
+          </div>
+          <div style="display: flex; align-items: center; gap: 1rem;">
+            <span class="hotkey-badge">${hk.key}</span>
+            <button class="btn-icon-danger" onclick="deleteHotkey(${hk.id})">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        `;
+                container.appendChild(div);
+            });
+        }
+
+        function openAddHotkeyModal() {
+            const select = document.getElementById('hotkey-game');
+            select.innerHTML = '';
+            getGames().forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.name;
+                opt.innerText = g.name;
+                select.appendChild(opt);
+            });
+            document.getElementById('add-hotkey-modal').style.display = 'flex';
+        }
+
+        document.getElementById('add-hotkey-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const game = document.getElementById('hotkey-game').value;
+            const action = document.getElementById('hotkey-action').value;
+            const key = document.getElementById('hotkey-key').value;
+
+            const hotkeys = getHotkeys();
+            hotkeys.push({
+                id: Date.now(),
+                game,
+                action,
+                key,
+                media: 'overlay_custom.png'
+            });
+
+            saveHotkeys(hotkeys);
+            loadHotkeys();
+            closeModal('add-hotkey-modal');
+            document.getElementById('add-hotkey-form').reset();
+            showToast("Raccourci ajouté !", "success");
+        });
+
+        function deleteHotkey(id) {
+            let hotkeys = getHotkeys().filter(h => h.id !== id);
+            saveHotkeys(hotkeys);
+            loadHotkeys();
+            showToast("Raccourci supprimé.", "info");
+        }
+
+        // --- CONTRÔLES SCRIPT ---
+        function handleScriptControl(action) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+
+            if (action === 'start') {
+                dot.className = 'status-dot active';
+                text.innerText = 'Script en cours d\'exécution (Scan actif)';
+                logConsole('Moteur OpenCV & psutil démarré.');
+                showToast('Script lancé !', 'success');
+            } else if (action === 'pause') {
+                dot.className = 'status-dot';
+                text.innerText = 'Script en Pause';
+                logConsole('Script mis en pause.');
+                showToast('Script en pause.', 'info');
+            } else if (action === 'stop') {
+                dot.className = 'status-dot stopped';
+                text.innerText = 'Script arrêté';
+                logConsole('Script complètement arrêté.');
+                showToast('Script arrêté.', 'danger');
+            } else if (action === 'folder') {
+                logConsole('Ouverture du dossier racine sur le bureau...');
+                showToast('Commande "Ouvrir Dossier" envoyée.', 'info');
+            }
+        }
+
+        // --- UTILITAIRES ---
+        function closeModal(id) {
+            document.getElementById(id).style.display = 'none';
+        }
+
+        function logConsole(msg) {
+            const box = document.getElementById('console-box');
+            const time = new Date().toLocaleTimeString();
+            const line = document.createElement('div');
+            line.className = 'console-line';
+            line.innerHTML = `<span class="console-timestamp">[${time}]</span> <span>${msg}</span>`;
+            box.appendChild(line);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+
+            let icon = 'fa-circle-info';
+            if (type === 'success') icon = 'fa-circle-check';
+            if (type === 'danger') icon = 'fa-triangle-exclamation';
+
+            toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 3500);
+        }
+    </script>
+</body>
+
+</html>
