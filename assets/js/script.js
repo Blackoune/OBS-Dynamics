@@ -1,4 +1,4 @@
-﻿// --- ÉTAT GLOBAL DE L'APPLICATION ---
+// --- ÉTAT GLOBAL DE L'APPLICATION ---
         let isRegisterMode = false;
         let itemToDeleteId = null;
 
@@ -161,11 +161,16 @@
           </div>
           <div class="game-card-footer">
             <span style="font-size: 0.75rem; color: var(--text-muted);">
-              <i class="fa-solid fa-image"></i> Images PNG liées
+              <i class="fa-solid fa-image"></i> ${game.menuImagesCount || 0} Menu / ${game.ingameImagesCount || 0} Jeu
             </span>
-            <button class="btn-icon-danger" onclick="confirmDeleteGame(${game.id})" title="Supprimer">
-              <i class="fa-solid fa-trash"></i>
-            </button>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn-icon-edit" onclick="openEditGameModal(${game.id})" title="Modifier">
+                <i class="fa-solid fa-gear"></i>
+              </button>
+              <button class="btn-icon-danger" onclick="confirmDeleteGame(${game.id})" title="Supprimer">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </div>
           </div>
         `;
                 container.appendChild(card);
@@ -197,13 +202,24 @@
             e.preventDefault();
             const name = document.getElementById('game-name').value;
             const exe = document.getElementById('game-exe').value;
+            
+            const menuInput = document.getElementById('game-images-menu');
+            const menuImagesCount = menuInput && menuInput.files ? menuInput.files.length : 0;
+            
+            const ingameInputs = document.querySelectorAll('#add-ingame-inputs-container .game-images-ingame');
+            let ingameImagesCount = 0;
+            ingameInputs.forEach(input => {
+                if (input.files) ingameImagesCount += input.files.length;
+            });
 
             const games = getGames();
             games.push({
                 id: Date.now(),
                 name,
                 exe,
-                scene: `${name} - Scene`
+                scene: `${name} - Scene`,
+                menuImagesCount,
+                ingameImagesCount
             });
 
             saveGames(games);
@@ -378,3 +394,61 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+
+// --- EDITION JEU ---
+let itemToEditId = null;
+function openEditGameModal(id) {
+    itemToEditId = id;
+    const game = getGames().find(g => g.id === id);
+    if (game) {
+        document.getElementById('edit-game-name').value = game.name;
+        document.getElementById('edit-game-exe').value = game.exe;
+        document.getElementById('edit-game-modal').style.display = 'flex';
+    }
+}
+
+document.getElementById('edit-game-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (itemToEditId !== null) {
+        let games = getGames();
+        const index = games.findIndex(g => g.id === itemToEditId);
+        if (index > -1) {
+            games[index].name = document.getElementById('edit-game-name').value;
+            games[index].exe = document.getElementById('edit-game-exe').value;
+            games[index].scene = games[index].name + ' - Scene';
+            
+            const editMenuInput = document.getElementById('edit-game-images-menu');
+            if (editMenuInput && editMenuInput.files && editMenuInput.files.length > 0) {
+                games[index].menuImagesCount = editMenuInput.files.length;
+            }
+            
+            const editIngameInputs = document.querySelectorAll('#edit-ingame-inputs-container .game-images-ingame');
+            let editIngameImagesCount = 0;
+            editIngameInputs.forEach(input => {
+                if (input.files) editIngameImagesCount += input.files.length;
+            });
+            if (editIngameImagesCount > 0) {
+                games[index].ingameImagesCount = editIngameImagesCount;
+            }
+
+            saveGames(games);
+            loadGames();
+            closeModal('edit-game-modal');
+            showToast('Jeu modifié avec succès !', 'success');
+        }
+    }
+});
+
+// --- DYNAMICAL FILE INPUTS ---
+function addFileInput(containerId) {
+    const container = document.getElementById(containerId);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.className = 'form-control game-images-ingame';
+    input.style.paddingLeft = '1rem';
+    input.style.marginBottom = '0.5rem';
+    input.accept = 'image/png';
+    input.multiple = true;
+    container.appendChild(input);
+}

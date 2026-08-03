@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr" data-theme="dark">
 
 <head>
@@ -240,9 +240,22 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="game-images">Images PNG de détection (Menu / InGame)</label>
-                    <input type="file" id="game-images" class="form-control" style="padding-left: 1rem;"
-                        accept="image/png" multiple required>
+                    <label>Images PNG de détection (Menu)</label>
+                    <div id="add-menu-inputs-container">
+                        <input type="file" id="game-images-menu" class="form-control game-images-menu" style="padding-left: 1rem; margin-bottom: 0.5rem;" accept="image/png" multiple required>
+                    </div>
+                    <button type="button" style="background: transparent; border: 1px dashed var(--primary-light); color: var(--primary-light); padding: 0.5rem; border-radius: 8px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 0.5rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem;" onmouseover="this.style.background='rgba(0, 240, 255, 0.1)'" onmouseout="this.style.background='transparent'" onclick="addFileInput('add-menu-inputs-container', 'game-images-menu')">
+                        <i class="fa-solid fa-plus"></i> Ajouter une autre image
+                    </button>
+                </div>
+                <div class="form-group">
+                    <label>Images PNG de détection (En Jeu)</label>
+                    <div id="add-ingame-inputs-container">
+                        <input type="file" id="game-images-ingame" class="form-control game-images-ingame" style="padding-left: 1rem; margin-bottom: 0.5rem;" accept="image/png" multiple required>
+                    </div>
+                    <button type="button" style="background: transparent; border: 1px dashed var(--primary-light); color: var(--primary-light); padding: 0.5rem; border-radius: 8px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 0.5rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem;" onmouseover="this.style.background='rgba(0, 240, 255, 0.1)'" onmouseout="this.style.background='transparent'" onclick="addFileInput('add-ingame-inputs-container', 'game-images-ingame')">
+                        <i class="fa-solid fa-plus"></i> Ajouter une autre image
+                    </button>
                 </div>
 
                 <div class="checkbox-group">
@@ -329,6 +342,47 @@
         </div>
     </div>
 
+
+    <!-- ==========================================================================
+       MODAL: EDITER UN JEU
+       ========================================================================== -->
+    <div class="modal-overlay" id="edit-game-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Modifier le Jeu</h3>
+                <button class="modal-close" onclick="closeModal('edit-game-modal')">&times;</button>
+            </div>
+            <form id="edit-game-form">
+                <div class="form-group">
+                    <label for="edit-game-name">Nom du Jeu</label>
+                    <input type="text" id="edit-game-name" class="form-control" style="padding-left: 1rem;" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-game-exe">Nom de l'exécutable (.exe)</label>
+                    <input type="text" id="edit-game-exe" class="form-control" style="padding-left: 1rem;" required>
+                </div>
+                <div class="form-group">
+                    <label>Images PNG de détection (Menu)</label>
+                    <div id="edit-menu-inputs-container">
+                        <input type="file" id="edit-game-images-menu" class="form-control game-images-menu" style="padding-left: 1rem; margin-bottom: 0.5rem;" accept="image/png" multiple>
+                    </div>
+                    <button type="button" style="background: transparent; border: 1px dashed var(--primary-light); color: var(--primary-light); padding: 0.5rem; border-radius: 8px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 0.5rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem;" onmouseover="this.style.background='rgba(0, 240, 255, 0.1)'" onmouseout="this.style.background='transparent'" onclick="addFileInput('edit-menu-inputs-container', 'game-images-menu')">
+                        <i class="fa-solid fa-plus"></i> Ajouter une autre image
+                    </button>
+                </div>
+                <div class="form-group">
+                    <label>Images PNG de détection (En Jeu)</label>
+                    <div id="edit-ingame-inputs-container">
+                        <input type="file" id="edit-game-images-ingame" class="form-control game-images-ingame" style="padding-left: 1rem; margin-bottom: 0.5rem;" accept="image/png" multiple>
+                    </div>
+                    <button type="button" style="background: transparent; border: 1px dashed var(--primary-light); color: var(--primary-light); padding: 0.5rem; border-radius: 8px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 0.5rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem;" onmouseover="this.style.background='rgba(0, 240, 255, 0.1)'" onmouseout="this.style.background='transparent'" onclick="addFileInput('edit-ingame-inputs-container', 'game-images-ingame')">
+                        <i class="fa-solid fa-plus"></i> Ajouter une autre image
+                    </button>
+                </div>
+                <button type="submit" class="btn" style="margin-top: 1rem;">Enregistrer les modifications</button>
+            </form>
+        </div>
+    </div>
     <!-- Conteneur Toasts -->
     <div class="toast-container" id="toast-container"></div>
 

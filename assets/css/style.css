@@ -778,3 +778,24 @@
 .input-wrapper .toggle-password:hover {
     color: var(--text-main);
 }
+
+
+/* Bouton Edition */
+.btn-icon-edit {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--status-blue);
+    border: none;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.btn-icon-edit:hover {
+    background: var(--status-blue);
+    color: white;
+}
