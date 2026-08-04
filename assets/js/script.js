@@ -181,6 +181,12 @@
             document.getElementById('add-game-modal').style.display = 'flex';
         }
 
+        function scanGames() {
+            logConsole('Scanning games...');
+            showToast('Scan des jeux lancé.', 'info');
+            // TODO: implement actual game scanning logic
+        }
+
         function toggleObsGroupDropdown(checkbox) {
             const group = document.getElementById('obs-scene-select-group');
             group.style.display = checkbox.checked ? 'block' : 'none';
