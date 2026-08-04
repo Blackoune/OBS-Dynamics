@@ -1,0 +1,9 @@
+﻿fastapi
+uvicorn[standard]
+obs-websocket-py
+opencv-python
+pyautogui
+psutil
+python-multipart
+pydantic
+aiofiles
