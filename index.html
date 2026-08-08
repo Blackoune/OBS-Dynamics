@@ -132,11 +132,14 @@
                             Analyse visuelle ciblée uniquement sur les exécutables actifs
                         </p>
                     </div>
-                    <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" onclick="openAddGameModal()">
-                        <i class="fa-solid fa-plus"></i> Ajouter un jeu
-                    <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" id="scan-games-btn" onclick="scanGames()">
-    <i class="fa-solid fa-magnifying-glass"></i> Scanner jeux
-</button>
+                    <div style="display: flex; gap: 0.6rem;">
+                        <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" onclick="openAddGameModal()">
+                            <i class="fa-solid fa-plus"></i> Ajouter un jeu
+                        </button>
+                        <button class="btn" style="width: auto; padding: 0.65rem 1.2rem;" id="scan-games-btn" onclick="scanGames()">
+                            <i class="fa-solid fa-magnifying-glass"></i> Scanner jeux
+                        </button>
+                    </div>
                 </div>
 
                 <div class="games-grid" id="games-container">
