@@ -9,8 +9,14 @@ build/
 *.spec
 .env
 obs_automation.log
+logs/
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Secrets: legacy config files that historically held plaintext credentials.
+# The active source of truth for secrets is `.env` (see .env.example).
+obs_config.json
+config.json
