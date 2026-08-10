@@ -1,0 +1,7 @@
+customtkinter
+simpleobsws
+opencv-python
+psutil
+pillow
+numpy
+pyinstaller

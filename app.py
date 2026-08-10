@@ -1,107 +1,87 @@
 """
-Main entry point for the OBS management backend.
+OBS Dynamics — Backend FastAPI.
+Sert le dashboard (index.html), expose les endpoints jeux/hotkeys/OBS.
 
-Step 1 scope: secure config, structured logging, resilient OBS WebSocket v5
-client with auto-reconnect, and a minimal FastAPI skeleton exposing a health
-endpoint that reports true connection state. Frontend CRUD endpoints
-(games/hotkeys) and image-detection engine are handled in later steps.
+ATTENTION: les imports core.config / core.obs_client / core.scanner supposent
+une API (get_settings, obs_client.connect/disconnect, scan_running_games).
+Adapte les appels ci-dessous si tes fichiers core/ exposent une signature différente.
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
-from core.config import Settings, get_settings
-from core.logging_config import get_logger, setup_logging
-from core.obs_client import OBSClient, OBSClientError, OBSRequestError
+from core.config import get_settings
+from core.obs_client import OBSClient
 
-# --- Fail-fast config load: crash loudly at import time rather than at
-# --- request time if secrets/config are missing or invalid. ---
-try:
-    settings: Settings = get_settings()
-except ValidationError as exc:
-    # Logging isn't configured yet at this point; print is intentional here.
-    print(f"[FATAL] Invalid configuration, refusing to start:\n{exc}")
-    raise SystemExit(1) from exc
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("obs_dynamics")
 
-logger = setup_logging(
-    log_dir=settings.log_dir,
-    level=10 if settings.debug else 20,  # DEBUG : INFO
-    max_bytes=settings.log_max_bytes,
-    backup_count=settings.log_backup_count,
-)
-app_logger = get_logger("app")
+BASE_DIR = Path(__file__).parent
+app = FastAPI(title="OBS Dynamics")
 
-obs_client = OBSClient(settings)
+# --- Static: sert index.html + assets/ ---
+app.mount("/assets", StaticFiles(directory=BASE_DIR / "assets"), name="assets")
+
+# Instance unique du client OBS (OBSClient est une classe, pas un singleton pré-fait)
+obs_client = OBSClient(get_settings())
 
 
-async def _on_obs_event(event_type: str, event_data: dict[str, Any]) -> None:
-    """Central event dispatcher. Extend here for scene/audio/recording events."""
-    if event_type == "CurrentProgramSceneChanged":
-        app_logger.info("Scene changed -> %s", event_data.get("sceneName"))
-    elif event_type == "StreamStateChanged":
-        app_logger.info("Stream state -> %s", event_data.get("outputState"))
-    elif event_type == "RecordStateChanged":
-        app_logger.info("Record state -> %s", event_data.get("outputState"))
+@app.get("/")
+async def serve_index() -> FileResponse:
+    return FileResponse(BASE_DIR / "index.html")
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    obs_client.register_event_callback(_on_obs_event)
+@app.on_event("startup")
+async def startup_event() -> None:
+    # start() = lance le superviseur avec reconnexion auto, ne bloque pas
+    # même si OBS n'est pas encore ouvert (voir core/obs_client.py)
+    await obs_client.start()
+    logger.info("Superviseur de connexion OBS démarré.")
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    await obs_client.stop()
+
+
+@app.post("/api/obs/reconnect")
+async def reconnect_obs() -> dict[str, str]:
+    """Recharge .env (OBS_WS_HOST/PORT/PASSWORD) et relance le client OBS."""
+    global obs_client
     try:
-        await obs_client.start()
-    except Exception:  # noqa: BLE001 - startup must not crash the whole app
-        app_logger.exception("OBS client failed to start; API will report degraded state.")
-    yield
-    try:
+        get_settings.cache_clear()  # get_settings() est en lru_cache -> vide le cache pour relire .env
+        new_settings = get_settings()
         await obs_client.stop()
-    except Exception:  # noqa: BLE001
-        app_logger.exception("Error during OBS client shutdown.")
+        obs_client = OBSClient(new_settings)
+        await obs_client.start()
+        return {"status": "reconnected"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-app = FastAPI(title="OBS Dynamics Control API", version="0.1.0", lifespan=lifespan)
-
-
-@app.exception_handler(OBSClientError)
-async def obs_client_error_handler(_, exc: OBSClientError) -> JSONResponse:
-    app_logger.warning("OBS client error surfaced to API: %s", exc)
-    code = 502 if not isinstance(exc, OBSRequestError) else 422
-    return JSONResponse(status_code=code, content={"error": "obs_error", "detail": str(exc)})
-
-
-@app.get("/api/health")
-async def health() -> dict[str, Any]:
-    return {
-        "api": "ok",
-        "obs_connection_state": obs_client.state.value,
-        "obs_connected": obs_client.is_connected,
-    }
-
-
-@app.get("/api/obs/version")
-async def obs_version() -> dict[str, Any]:
-    if not obs_client.is_connected:
-        raise HTTPException(status_code=503, detail="OBS is not connected.")
-    return await obs_client.call("GetVersion")
-
-
-@app.get("/api/obs/scenes")
-async def obs_scenes() -> dict[str, Any]:
-    if not obs_client.is_connected:
-        raise HTTPException(status_code=503, detail="OBS is not connected.")
-    return await obs_client.call("GetSceneList")
-
-
-def main() -> None:
-    import uvicorn
-
-    app_logger.info("Starting OBS manager on http://0.0.0.0:8000 (debug=%s)", settings.debug)
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None)
+@app.get("/api/games/scan")
+async def scan_games() -> list[dict]:
+    """Scanne les processus actifs et retourne l'état de chaque jeu configuré.
+    Import différé: core/scanner.py n'existe pas encore dans le projet."""
+    try:
+        from core.scanner import scan_running_games
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="core/scanner.py introuvable — module de scan pas encore implémenté.",
+        )
+    try:
+        return await scan_running_games()
+    except Exception as exc:
+        logger.exception("Échec scan jeux")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
