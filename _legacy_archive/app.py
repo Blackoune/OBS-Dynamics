@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -22,7 +23,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("obs_dynamics")
 
 BASE_DIR = Path(__file__).parent
-app = FastAPI(title="OBS Dynamics")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # start() = lance le superviseur avec reconnexion auto, ne bloque pas
+    # même si OBS n'est pas encore ouvert (voir core/obs_client.py)
+    await obs_client.start()
+    logger.info("Superviseur de connexion OBS démarré.")
+    yield
+    await obs_client.stop()
+
+app = FastAPI(title="OBS Dynamics", lifespan=lifespan)
 
 # --- Static: sert index.html + assets/ ---
 app.mount("/assets", StaticFiles(directory=BASE_DIR / "assets"), name="assets")
@@ -30,23 +40,9 @@ app.mount("/assets", StaticFiles(directory=BASE_DIR / "assets"), name="assets")
 # Instance unique du client OBS (OBSClient est une classe, pas un singleton pré-fait)
 obs_client = OBSClient(get_settings())
 
-
 @app.get("/")
 async def serve_index() -> FileResponse:
     return FileResponse(BASE_DIR / "index.html")
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    # start() = lance le superviseur avec reconnexion auto, ne bloque pas
-    # même si OBS n'est pas encore ouvert (voir core/obs_client.py)
-    await obs_client.start()
-    logger.info("Superviseur de connexion OBS démarré.")
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    await obs_client.stop()
 
 
 @app.post("/api/obs/reconnect")
