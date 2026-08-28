@@ -529,6 +529,32 @@ class OBSClient:
     async def set_current_scene(self, scene_name: str) -> None:
         await self.call("SetCurrentProgramScene", {"sceneName": scene_name})
 
+    async def create_scene(self, scene_name: str) -> None:
+        try:
+            await self.call("CreateScene", {"sceneName": scene_name})
+        except OBSClientError as e:
+            logger.warning(f"Erreur lors de la création de la scène '{scene_name}' (elle existe peut-être déjà) : {e}")
+
+    async def create_input(self, scene_name: str, input_name: str, input_kind: str, input_settings: dict[str, Any]) -> None:
+        try:
+            await self.call("CreateInput", {
+                "sceneName": scene_name,
+                "inputName": input_name,
+                "inputKind": input_kind,
+                "inputSettings": input_settings
+            })
+        except OBSClientError as e:
+            logger.warning(f"Erreur lors de la création de la source '{input_name}' : {e}")
+
+    async def create_scene_item(self, scene_name: str, source_name: str) -> None:
+        try:
+            await self.call("CreateSceneItem", {
+                "sceneName": scene_name,
+                "sourceName": source_name
+            })
+        except OBSClientError as e:
+            logger.warning(f"Erreur ajout '{source_name}' dans '{scene_name}' : {e}")
+
 
 # ============================================================================
 # SCAN WORKER — boucle de surveillance + bascule de scène automatique
@@ -721,15 +747,29 @@ class GameModal(ctk.CTkToplevel):
                      text_color=COL_TEXT_MUTED).grid(row=12, column=0, sticky="w", pady=(6, 2))
         self._scene_selector(scroll, 13, scene_names, self.scene_ingame_var)
 
+        self.create_scene_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(scroll, text="Créer une Scène dédiée dans OBS", variable=self.create_scene_var, font=ctk.CTkFont(size=12)).grid(row=14, column=0, sticky="w", pady=(10, 0))
+
+        self.create_group_var = ctk.BooleanVar(value=False)
+        self.chk_group = ctk.CTkCheckBox(scroll, text="Créer un Groupe de Sources OBS", variable=self.create_group_var, font=ctk.CTkFont(size=12), command=self._toggle_group)
+        self.chk_group.grid(row=15, column=0, sticky="w", pady=(10, 0))
+
+        self.target_scene_lbl = ctk.CTkLabel(scroll, text="Scène OBS de destination :", font=ctk.CTkFont(size=12), anchor="w", text_color=COL_TEXT_MUTED)
+        self.target_scene_lbl.grid(row=16, column=0, sticky="w", pady=(10, 2))
+        self.target_scene_var = ctk.StringVar(value="")
+        self.target_scene_menu = ctk.CTkOptionMenu(scroll, values=scene_names or ["(non connecté à OBS)"], variable=self.target_scene_var, fg_color=COL_BG, button_color=COL_ACCENT, button_hover_color=COL_ACCENT_HOVER)
+        self.target_scene_menu.grid(row=17, column=0, sticky="ew")
+
         self.msg_lbl = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=11))
-        self.msg_lbl.grid(row=14, column=0, sticky="w", pady=(10, 0))
+        self.msg_lbl.grid(row=18, column=0, sticky="w", pady=(10, 0))
 
         ctk.CTkButton(scroll, text="💾 Enregistrer", height=38, fg_color=COL_ACCENT,
                        hover_color=COL_ACCENT_HOVER, text_color="#0d1117",
                        font=ctk.CTkFont(weight="bold"), command=self._save).grid(
-            row=15, column=0, sticky="ew", pady=(16, 0))
+            row=19, column=0, sticky="ew", pady=(16, 0))
 
         self._toggle_source()
+        self._toggle_group()
 
     @staticmethod
     def _images_summary(paths: list[str]) -> str:
@@ -762,6 +802,10 @@ class GameModal(ctk.CTkToplevel):
         is_steam = self.source_var.get() == "steam"
         self.steam_menu.configure(state="normal" if is_steam else "disabled")
 
+    def _toggle_group(self) -> None:
+        state = "normal" if self.create_group_var.get() else "disabled"
+        self.target_scene_menu.configure(state=state)
+
     def _pick_images(self, kind: str) -> None:
         paths = filedialog.askopenfilenames(
             title="Choisir des images PNG", filetypes=[("Images PNG", "*.png")]
@@ -791,6 +835,70 @@ class GameModal(ctk.CTkToplevel):
                 self.msg_lbl.configure(text="⚠ Nom et exécutable requis.", text_color=COL_RED)
                 return
             source, active_match, appid = "manual", exe, ""
+
+        client = self._get_obs_client()
+        if client is not None and client.is_connected:
+            try:
+                created_menu = False
+                created_ingame = False
+                menu_scene = f"{name} - Menu"
+                ingame_scene = f"{name} - InGame"
+                
+                # 1. Scène dédiée
+                if self.create_scene_var.get():
+                    self._obs_loop.run_coro(client.create_scene(menu_scene)).result(timeout=5)
+                    self._obs_loop.run_coro(client.create_scene(ingame_scene)).result(timeout=5)
+                    self.scene_menu_var.set(menu_scene)
+                    self.scene_ingame_var.set(ingame_scene)
+                    created_menu = True
+                    created_ingame = True
+
+                # 2. Groupe (Scène imbriquée) & Source
+                target_scene = self.target_scene_var.get()
+                input_settings = {"executable": active_match} if active_match else {}
+                source_name = f"{name} Capture"
+
+                if self.create_group_var.get():
+                    group_scene = f"Groupe - {name}"
+                    self._obs_loop.run_coro(client.create_scene(group_scene)).result(timeout=5)
+                    # Ajout de la source dans le groupe
+                    self._obs_loop.run_coro(client.create_input(
+                        scene_name=group_scene,
+                        input_name=source_name,
+                        input_kind="game_capture",
+                        input_settings=input_settings
+                    )).result(timeout=5)
+                    
+                    # Ajouter le groupe à la scène de destination si choisie
+                    if target_scene and target_scene != "(non connecté à OBS)":
+                        self._obs_loop.run_coro(client.create_scene_item(
+                            scene_name=target_scene,
+                            source_name=group_scene
+                        )).result(timeout=5)
+                    
+                    # Si aucune scène dédiée n'a été créée, on set la scène in-game au target_scene pour simplifier
+                    if not created_ingame and target_scene and target_scene != "(non connecté à OBS)":
+                        self.scene_ingame_var.set(target_scene)
+                else:
+                    # Si on ne crée pas de groupe, on ajoute la source directement
+                    if created_ingame:
+                        self._obs_loop.run_coro(client.create_input(
+                            scene_name=ingame_scene,
+                            input_name=source_name,
+                            input_kind="game_capture",
+                            input_settings=input_settings
+                        )).result(timeout=5)
+                    elif target_scene and target_scene != "(non connecté à OBS)":
+                        self._obs_loop.run_coro(client.create_input(
+                            scene_name=target_scene,
+                            input_name=source_name,
+                            input_kind="game_capture",
+                            input_settings=input_settings
+                        )).result(timeout=5)
+                        self.scene_ingame_var.set(target_scene)
+                        
+            except Exception as e:
+                logger.warning(f"Impossible de créer toutes les scènes/sources OBS : {e}")
 
         game = Game(
             id=self._game.id if self._game else uuid.uuid4().hex,
