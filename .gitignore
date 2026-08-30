@@ -20,3 +20,5 @@ Desktop.ini
 # The active source of truth for secrets is `.env` (see .env.example).
 obs_config.json
 config.json
+
+data/
