@@ -10,8 +10,10 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import uuid
@@ -42,8 +44,6 @@ import psutil
 import simpleobsws
 from PIL import Image, ImageGrab
 
-from core.cover_service import GameCoverService
-
 try:
     import winreg  # Windows uniquement — absent sur Linux/Mac, géré en aval
 except ImportError:
@@ -66,6 +66,7 @@ GAMES_PATH = DATA_DIR / "games.json"
 ASSETS_DIR = BASE_DIR / "assets"
 ICON_PATH = ASSETS_DIR / "icon.ico"
 LOG_PATH = DATA_DIR / "obs_dynamics.log"
+I18N_PATH = BASE_DIR / "i18n.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,24 +75,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger("obs_dynamics")
 
-# --- Palette ---
-COL_BG = "#0d1117"
-COL_SIDEBAR = "#12151c"
-COL_CARD = "#161b22"
-COL_BORDER = "#22272e"
-COL_ACCENT = "#00e0ff"
-COL_ACCENT_HOVER = "#00b8d1"
-COL_TEXT_MUTED = "#8b949e"
-COL_GREEN = "#2ecc71"
-COL_YELLOW = "#f1c40f"
-COL_RED = "#e0455c"
+# --- i18n : import + init AVANT toute construction de widget CTk ---
+import i18n
+i18n.init(path=I18N_PATH)
+from i18n import t
+
+# ============================================================================
+# PALETTE — thème AAA violet sombre (Steam/Discord/Spotify inspired)
+# ============================================================================
+COL_BG = "#0F0C1B"
+COL_BG_GRADIENT_TOP = "#151024"
+COL_SIDEBAR = "#120E20"
+COL_CARD = "#1A1530"
+COL_CARD_HOVER = "#221B3D"
+COL_BORDER = "#2A2145"
+COL_BORDER_ACCENT = "#A855F7"
+COL_ACCENT = "#A855F7"
+COL_ACCENT_HOVER = "#9333EA"
+COL_ACCENT_SOFT = "#7C3AED"
+COL_TEXT = "#F3F0FA"
+COL_TEXT_MUTED = "#9B93B5"
+COL_GREEN = "#22C55E"
+COL_YELLOW = "#F1C40F"
+COL_RED = "#EF4444"
+COL_BADGE_BG_INACTIVE = "#3A1420"
+COL_BADGE_BG_ACTIVE = "#123A22"
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "Inter"
+
+
+def font(size: int, weight: str = "normal") -> ctk.CTkFont:
+    return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
+
 
 # ============================================================================
-# CONFIG .env — OBS_WS_HOST / OBS_WS_PORT / OBS_WS_PASSWORD / scan params / RAWG
+# CONFIG .env — OBS_WS_HOST / OBS_WS_PORT / OBS_WS_PASSWORD / scan params / lang
 # ============================================================================
 @dataclass
 class OBSConfig:
@@ -100,7 +121,7 @@ class OBSConfig:
     password: str = ""
     scan_interval_seconds: float = 2.0
     match_threshold: float = 0.8
-    rawg_api_key: str = ""
+    lang: str = i18n.DEFAULT_LANG
 
 
 ENV_KEYS = {
@@ -109,12 +130,12 @@ ENV_KEYS = {
     "password": "OBS_WS_PASSWORD",
     "scan_interval_seconds": "OBS_SCAN_INTERVAL_SECONDS",
     "match_threshold": "OBS_MATCH_THRESHOLD",
-    "rawg_api_key": "RAWG_API_KEY",
+    "lang": "OBS_APP_LANG",
 }
 
 
 class EnvConfigManager:
-    """Lit/écrit les clés OBS_* et RAWG_* dans .env. Préserve toute autre ligne existante."""
+    """Lit/écrit les clés OBS_* dans .env. Préserve toute autre ligne existante."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -152,8 +173,9 @@ class EnvConfigManager:
                             cfg.match_threshold = min(1.0, max(0.0, float(value)))
                         except ValueError:
                             pass
-                    elif key == ENV_KEYS["rawg_api_key"]:
-                        cfg.rawg_api_key = value
+                    elif key == ENV_KEYS["lang"]:
+                        if value in i18n.SUPPORTED_LANGS:
+                            cfg.lang = value
             except OSError:
                 logger.exception("Lecture .env échouée, valeurs par défaut utilisées.")
             return cfg
@@ -167,7 +189,7 @@ class EnvConfigManager:
                     ENV_KEYS["password"]: cfg.password,
                     ENV_KEYS["scan_interval_seconds"]: str(cfg.scan_interval_seconds),
                     ENV_KEYS["match_threshold"]: str(cfg.match_threshold),
-                    ENV_KEYS["rawg_api_key"]: cfg.rawg_api_key,
+                    ENV_KEYS["lang"]: cfg.lang,
                 }
                 seen = dict.fromkeys(updates, False)
                 lines: list[str] = []
@@ -376,6 +398,20 @@ class GameStore:
 # ============================================================================
 # DÉTECTION PROCESSUS + VISUELLE (OpenCV)
 # ============================================================================
+def _imread_unicode(path: str, flags: int = cv2.IMREAD_COLOR) -> Optional[np.ndarray]:
+    """cv2.imread() échoue silencieusement sur les chemins Windows contenant
+    des caractères accentués ou des apostrophes. Contournement fiable :
+    lecture des octets bruts via numpy.fromfile puis décodage cv2.imdecode."""
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, flags)
+    except (OSError, ValueError):
+        logger.debug("Lecture image échouée: %s", path, exc_info=True)
+        return None
+
+
 def is_game_active(game: Game) -> bool:
     """Steam: correspondance par chemin d'installation (fiable, indépendant du
     nom d'exe). Manuel: correspondance par nom de processus."""
@@ -410,7 +446,7 @@ def _capture_screen_bgr() -> Optional[np.ndarray]:
 def _best_match_score(screen_bgr: np.ndarray, template_paths: list[str]) -> float:
     best = 0.0
     for path in template_paths:
-        template = cv2.imread(path, cv2.IMREAD_COLOR)
+        template = _imread_unicode(path, cv2.IMREAD_COLOR)
         if template is None:
             continue
         th, tw = template.shape[:2]
@@ -441,6 +477,26 @@ def detect_game_state(game: Game, threshold: float) -> str:
     if max(menu_score, ingame_score) < threshold:
         return "active"
     return "in_game" if ingame_score >= menu_score else "menu"
+
+
+def state_label(state: str) -> str:
+    """Remplace l'ancien dict STATE_LABELS statique par un lookup i18n
+    dynamique — recalculé à chaque appel donc valide après un changement
+    de langue à chaud, avec mapping explicite pour éviter toute clé invalide."""
+    mapping = {
+        "inactive": "GAME_STATE_INACTIVE",
+        "active": "GAME_STATE_ACTIVE",
+        "menu": "GAME_STATE_MENU",
+        "in_game": "GAME_STATE_IN_GAME",
+    }
+    return t(mapping.get(state, "GAME_STATE_INACTIVE"))
+
+
+STATE_COLORS = {"inactive": COL_RED, "active": COL_YELLOW, "menu": COL_YELLOW, "in_game": COL_GREEN}
+STATE_BADGE_BG = {
+    "inactive": COL_BADGE_BG_INACTIVE, "active": COL_BADGE_BG_ACTIVE,
+    "menu": COL_BADGE_BG_ACTIVE, "in_game": COL_BADGE_BG_ACTIVE,
+}
 
 
 # ============================================================================
@@ -505,10 +561,10 @@ class OBSClient:
             await asyncio.wait_for(ws.connect(), timeout=timeout)
             await asyncio.wait_for(ws.wait_until_identified(), timeout=timeout)
         except Exception as exc:
-            raise OBSClientError(f"Connexion OBS échouée ({url}): {exc}") from exc
+            raise OBSClientError(t("LOG_OBS_CONNECT_FAILED", url=url, error=exc)) from exc
         self._ws = ws
         self._connected = True
-        logger.info("Connecté à OBS WebSocket sur %s", url)
+        logger.info(t("LOG_OBS_CONNECTED", url=url))
 
     async def disconnect(self) -> None:
         if self._ws is not None:
@@ -521,16 +577,16 @@ class OBSClient:
 
     async def call(self, request_type: str, request_data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         if not self.is_connected or self._ws is None:
-            raise OBSClientError(f"Non connecté à OBS (requête '{request_type}' annulée).")
+            raise OBSClientError(t("LOG_OBS_NOT_CONNECTED", request_type=request_type))
         request = simpleobsws.Request(request_type, request_data or {})
         response = await self._ws.call(request)
         ok = getattr(response, "ok", lambda: False)()
         if not ok:
             status = getattr(response, "requestStatus", None)
-            raise OBSClientError(
-                f"Requête OBS '{request_type}' refusée "
-                f"(code={getattr(status, 'code', None)}, comment={getattr(status, 'comment', None)})"
-            )
+            raise OBSClientError(t(
+                "LOG_OBS_REQUEST_REFUSED", request_type=request_type,
+                code=getattr(status, "code", None), comment=getattr(status, "comment", None),
+            ))
         return getattr(response, "responseData", None) or {}
 
     async def get_scene_list(self) -> list[str]:
@@ -608,356 +664,150 @@ class ScanWorker:
             return
         try:
             self._obs_loop.run_coro(client.set_current_scene(target_scene))
-            logger.info("Scène OBS -> '%s' (jeu=%s, état=%s)", target_scene, game.name, state)
+            logger.info(t("LOG_SCENE_SWITCH_OK", scene=target_scene, game=game.name, state=state))
         except Exception:
             logger.exception("Échec bascule de scène OBS.")
 
 
 # ============================================================================
-# COMPOSANT : CARTE JEU (pastille 3 états: rouge/jaune/vert)
+# COMPOSANT : CARTE JEU — poster 2:3, badge unique, overlay hover
 # ============================================================================
-STATE_COLORS = {"inactive": COL_RED, "active": COL_YELLOW, "menu": COL_YELLOW, "in_game": COL_GREEN}
-STATE_LABELS = {"inactive": "Inactif", "active": "Actif", "menu": "Menu", "in_game": "En jeu"}
-
-
-import tkinter as tk
-
-class ToolTip:
-    def __init__(self, widget: Any, text: str) -> None:
-        self.widget = widget
-        self.text = text
-        self.tip_window: Optional[tk.Toplevel] = None
-        self.widget.bind("<Enter>", self._on_enter, add="+")
-        self.widget.bind("<Leave>", self._on_leave, add="+")
-
-    def _on_enter(self, event: Any = None) -> None:
-        self.after_id = self.widget.after(350, self._show)
-
-    def _on_leave(self, event: Any = None) -> None:
-        if hasattr(self, "after_id"):
-            self.widget.after_cancel(self.after_id)
-        self._hide()
-
-    def _show(self) -> None:
-        if self.tip_window:
-            return
-        # Centrer au-dessus du bouton
-        x = self.widget.winfo_rootx() + (self.widget.winfo_width() // 2) - 50
-        y = self.widget.winfo_rooty() - 32
-        
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        
-        frame = ctk.CTkFrame(tw, fg_color="#12151c", border_color="#2b3342", border_width=1, corner_radius=6)
-        frame.pack()
-        lbl = ctk.CTkLabel(frame, text=self.text, font=ctk.CTkFont(size=11, weight="bold"), text_color="#e6edf3", padx=8, pady=3)
-        lbl.pack()
-
-    def _hide(self) -> None:
-        tw = self.tip_window
-        self.tip_window = None
-        if tw:
-            tw.destroy()
-
-
 class GameCard(ctk.CTkFrame):
-    _active_card: Optional[GameCard] = None
+    """Carte façon grille Steam : jaquette verticale 2:3, UN SEUL badge de
+    statut (règle stricte anti-doublon), overlay sombre révélé au survol avec
+    titre complet + source + actions Éditer/Supprimer."""
 
-    def __init__(
-        self,
-        master,
-        game: Game,
-        state: str,
-        on_edit: Callable[[Game], None],
-        on_delete: Callable[[Game], None],
-        cover_service: Optional[GameCoverService] = None,
-        post_ui: Optional[Callable[[Callable[[], None]], None]] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            master,
-            fg_color="#0e1218",
-            corner_radius=12,
-            border_width=1,
-            border_color="#1f2530",
-            width=240,
-            height=360,
-            **kwargs,
-        )
+    CARD_WIDTH = 190
+    CARD_HEIGHT = 285  # ratio 2:3
+
+    def __init__(self, master, game: Game, state: str,
+                 on_edit: Callable[[Game], None], on_delete: Callable[[Game], None], **kwargs) -> None:
+        super().__init__(master, fg_color=COL_CARD, corner_radius=12,
+                          border_width=1, border_color=COL_BORDER,
+                          width=self.CARD_WIDTH, height=self.CARD_HEIGHT, **kwargs)
         self.grid_propagate(False)
-        self.game = game
+        self.pack_propagate(False)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
         self.game_id = game.id
-        self._cover_service = cover_service
-        self._post_ui = post_ui
+        self._game = game
         self._current_state = state
-        self._ctk_image: Optional[ctk.CTkImage] = None
         self._on_edit = on_edit
         self._on_delete = on_delete
-        self._is_open: bool = False
-        self._poll_id: Optional[str] = None
 
-        # --- Image de fond (Cover plein format 2:3) ---
-        self.cover_label = ctk.CTkLabel(
-            self,
-            text="🎮",
-            font=ctk.CTkFont(size=48),
-            text_color=COL_TEXT_MUTED,
-            fg_color="#0b0e14",
-            corner_radius=12,
-        )
-        self.cover_label.place(relx=0, rely=0, relwidth=1.0, relheight=1.0)
+        # --- Zone "jaquette" : dégradé violet + icône, occupe toute la carte ---
+        self._poster = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12)
+        self._poster.grid(row=0, column=0, sticky="nsew")
+        self._poster.grid_columnconfigure(0, weight=1)
+        self._poster.grid_rowconfigure(0, weight=1)
 
-        # --- Badge d'état supérieur droit (Glass) ---
-        dot_color = STATE_COLORS.get(state, COL_RED)
-        self._badge_frame = ctk.CTkFrame(
-            self,
-            fg_color="#0e131c",
-            corner_radius=8,
-            border_width=1,
-            border_color="#2b3342",
-        )
-        self._badge_frame.place(relx=1.0, rely=0.0, x=-10, y=10, anchor="ne")
+        icon_lbl = ctk.CTkLabel(self._poster, text="🎮", font=font(46))
+        icon_lbl.place(relx=0.5, rely=0.42, anchor="center")
 
-        self._dot = ctk.CTkLabel(self._badge_frame, text="●", font=ctk.CTkFont(size=12), text_color=dot_color)
-        self._dot.pack(side="left", padx=(8, 3), pady=3)
-        self._status_lbl = ctk.CTkLabel(
-            self._badge_frame,
-            text=STATE_LABELS.get(state, state),
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=dot_color,
-        )
-        self._status_lbl.pack(side="left", padx=(0, 8), pady=3)
+        title_static = ctk.CTkLabel(self._poster, text=game.name, font=font(13, "bold"),
+                                     text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24, justify="center")
+        title_static.place(relx=0.5, rely=0.82, anchor="center")
 
-        # --- Pill de titre par défaut (en bas, style Steam playtime) ---
-        display_name = game.name if len(game.name) <= 24 else game.name[:22] + "…"
-        self._default_pill = ctk.CTkFrame(
-            self,
-            fg_color="#0e131c",
-            corner_radius=8,
-            border_width=1,
-            border_color="#2b3342",
-        )
-        self._default_pill_lbl = ctk.CTkLabel(
-            self._default_pill,
-            text=display_name,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#e6edf3",
-        )
-        self._default_pill_lbl.pack(padx=12, pady=5)
-        self._default_pill.place(relx=0.5, rely=1.0, y=-12, anchor="s")
+        # --- Badge unique de statut (top-right) — jamais plus d'un par carte ---
+        self._badge = ctk.CTkFrame(self._poster, fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE),
+                                    corner_radius=10, border_width=1,
+                                    border_color=STATE_COLORS.get(state, COL_RED))
+        self._badge.place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
+        self._badge_dot = ctk.CTkLabel(self._badge, text="●", font=font(9),
+                                        text_color=STATE_COLORS.get(state, COL_RED))
+        self._badge_dot.pack(side="left", padx=(8, 2), pady=3)
+        self._badge_lbl = ctk.CTkLabel(self._badge, text=state_label(state), font=font(10, "bold"),
+                                        text_color=STATE_COLORS.get(state, COL_RED))
+        self._badge_lbl.pack(side="left", padx=(0, 8), pady=3)
 
-        # --- Overlay Glass d'actions au survol (Invisible par défaut) ---
-        self.glass_overlay = ctk.CTkFrame(
-            self,
-            fg_color="#090d14",
-            corner_radius=12,
-            border_width=1,
-            border_color="#364254",
-        )
+        # --- Overlay hover : masqué par défaut, révélé au survol ---
+        self._overlay = ctk.CTkFrame(self, fg_color="#08060F", corner_radius=12)
+        self._overlay_visible = False
 
-        self._overlay_name = ctk.CTkLabel(
-            self.glass_overlay,
-            text=game.name,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#ffffff",
-            wraplength=210,
-            justify="center",
-        )
-        self._overlay_name.pack(padx=12, pady=(12, 3))
+        source_txt = t("GAME_SOURCE_STEAM") if game.source == "steam" else t("GAME_SOURCE_MANUAL")
+        self._overlay_title = ctk.CTkLabel(self._overlay, text=game.name, font=font(13, "bold"),
+                                            text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24, justify="center")
+        self._overlay_title.place(relx=0.5, rely=0.30, anchor="center")
+        self._overlay_source = ctk.CTkLabel(self._overlay, text=source_txt, font=font(10),
+                                             text_color=COL_TEXT_MUTED)
+        self._overlay_source.place(relx=0.5, rely=0.42, anchor="center")
 
-        source_txt = "Steam" if game.source == "steam" else "Manuel (exe)"
-        self._overlay_sub = ctk.CTkLabel(
-            self.glass_overlay,
-            text=source_txt,
-            font=ctk.CTkFont(size=11),
-            text_color=COL_TEXT_MUTED,
-        )
-        self._overlay_sub.pack(pady=(0, 10))
+        btn_row = ctk.CTkFrame(self._overlay, fg_color="transparent")
+        btn_row.place(relx=0.5, rely=0.68, anchor="center")
+        self._edit_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_EDIT"), width=76, height=28,
+                                        fg_color=COL_ACCENT_SOFT, hover_color=COL_ACCENT_HOVER,
+                                        font=font(11), corner_radius=8,
+                                        command=lambda: self._on_edit(self._game))
+        self._edit_btn.pack(side="left", padx=3)
+        self._delete_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_DELETE"), width=90, height=28,
+                                          fg_color="#3A1420", hover_color=COL_RED,
+                                          font=font(11), corner_radius=8,
+                                          command=lambda: self._on_delete(self._game))
+        self._delete_btn.pack(side="left", padx=3)
 
-        btn_row = ctk.CTkFrame(self.glass_overlay, fg_color="transparent")
-        btn_row.pack(padx=10, pady=(0, 14))
+        # Overlay opacity simulé via couleur sombre unie (CTk ne supporte pas
+        # l'alpha réel) : contraste net et lisible sans dépendance externe.
+        for widget in (self, self._poster, icon_lbl, title_static):
+            widget.bind("<Enter>", self._show_overlay)
+        self._overlay.bind("<Leave>", self._hide_overlay)
+        self._poster.bind("<Leave>", self._on_poster_leave)
 
-        self.edit_btn = ctk.CTkButton(
-            btn_row,
-            text="✏",
-            width=48,
-            height=36,
-            fg_color="#19202c",
-            hover_color="#2b364a",
-            text_color="#ffffff",
-            font=ctk.CTkFont(size=16),
-            corner_radius=6,
-            command=lambda: self._on_edit(self.game),
-        )
-        self.edit_btn.pack(side="left", padx=4)
-        ToolTip(self.edit_btn, "Modifier la configuration")
-
-        self.reload_btn = ctk.CTkButton(
-            btn_row,
-            text="⟳",
-            width=48,
-            height=36,
-            fg_color="#19202c",
-            hover_color="#2b364a",
-            text_color="#ffffff",
-            font=ctk.CTkFont(size=16),
-            corner_radius=6,
-            command=self.reload_cover,
-        )
-        self.reload_btn.pack(side="left", padx=4)
-        ToolTip(self.reload_btn, "Actualiser la jaquette")
-
-        self.del_btn = ctk.CTkButton(
-            btn_row,
-            text="✕",
-            width=48,
-            height=36,
-            fg_color="#19202c",
-            hover_color=COL_RED,
-            text_color="#ffffff",
-            font=ctk.CTkFont(size=16),
-            corner_radius=6,
-            command=lambda: self._on_delete(self.game),
-        )
-        self.del_btn.pack(side="left", padx=4)
-        ToolTip(self.del_btn, "Supprimer le jeu")
-
-        # Lier les événements de survol (Hover Glass Effect)
-        self._bind_hover(self)
-
-        # Chargement de la jaquette
-        self._load_cover()
-
-    def _bind_hover(self, widget: Any) -> None:
-        def on_enter(e=None):
-            self._show_overlay()
-
-        def on_leave(e=None):
-            self.after(30, self._check_leave)
-
-        try:
-            self.bind("<Enter>", on_enter, add="+")
-            self.bind("<Leave>", on_leave, add="+")
-            self.cover_label.bind("<Enter>", on_enter, add="+")
-            self.cover_label.bind("<Leave>", on_leave, add="+")
-        except Exception:
-            pass
-
-    def _is_mouse_inside(self) -> bool:
-        try:
-            x = self.winfo_pointerx()
-            y = self.winfo_pointery()
-            rx = self.winfo_rootx()
-            ry = self.winfo_rooty()
-            rw = self.winfo_width()
-            rh = self.winfo_height()
-            return (rx <= x <= rx + rw) and (ry <= y <= ry + rh)
-        except Exception:
-            return False
-
-    def _show_overlay(self) -> None:
-        if self._is_open:
+    def _show_overlay(self, _event: Any = None) -> None:
+        if self._overlay_visible:
             return
+        self._overlay_visible = True
+        self._overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._overlay.lift()
 
-        # Ferme immédiatement toute autre carte ouverte (garantie d'un seul overlay actif)
-        if GameCard._active_card is not None and GameCard._active_card is not self:
-            GameCard._active_card._hide_overlay()
-        GameCard._active_card = self
+    def _on_poster_leave(self, event: Any) -> None:
+        # Tolère les micro-déplacements entre poster et overlay (évite un
+        # flicker d'ouverture/fermeture lors du passage de souris entre les
+        # deux widgets superposés).
+        self.after(60, self._maybe_hide, event.widget.winfo_pointerxy())
 
-        self._is_open = True
-        self.configure(border_color=COL_ACCENT)
-        self._default_pill.place_forget()
-        self.glass_overlay.place(relx=0.0, rely=1.0, relwidth=1.0, y=0, anchor="sw")
-
-        # Surveille en continu la position de la souris tant que l'overlay est visible
-        self._schedule_poll()
-
-    def _schedule_poll(self) -> None:
-        if self._poll_id is not None:
-            self.after_cancel(self._poll_id)
-            self._poll_id = None
-        if self._is_open:
-            self._poll_id = self.after(50, self._poll_hover)
-
-    def _poll_hover(self) -> None:
-        self._poll_id = None
-        if not self._is_open or GameCard._active_card is not self:
-            return
-        if not self._is_mouse_inside():
-            self._hide_overlay()
-        else:
-            self._schedule_poll()
-
-    def _check_leave(self) -> None:
-        if not self._is_mouse_inside():
+    def _maybe_hide(self, pointer_xy: tuple[int, int]) -> None:
+        x, y = pointer_xy
+        try:
+            widget_under = self.winfo_containing(x, y)
+        except Exception:
+            widget_under = None
+        if widget_under is None or not self._is_descendant(widget_under):
             self._hide_overlay()
 
-    def _hide_overlay(self) -> None:
-        if not self._is_open:
+    def _is_descendant(self, widget: Any) -> bool:
+        current = widget
+        while current is not None:
+            if current == self:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _hide_overlay(self, _event: Any = None) -> None:
+        if not self._overlay_visible:
             return
+        self._overlay_visible = False
+        self._overlay.place_forget()
 
-        if self._poll_id is not None:
-            self.after_cancel(self._poll_id)
-            self._poll_id = None
-
-        if GameCard._active_card is self:
-            GameCard._active_card = None
-
-        self._is_open = False
-        self.configure(border_color="#1f2530")
-        self.glass_overlay.place_forget()
-        self._default_pill.place(relx=0.5, rely=1.0, y=-12, anchor="s")
-
-    def _load_cover(self, force: bool = False) -> None:
-        if self._cover_service is None:
-            return
-        self._cover_service.request_cover(self.game, self._on_cover_received, force=force)
-
-    def reload_cover(self) -> None:
-        self.cover_label.configure(image="", text="⏳")
-        self._load_cover(force=True)
-
-    def _on_cover_received(self, pil_image: Optional[Image.Image]) -> None:
-        def _apply() -> None:
-            try:
-                if not self.winfo_exists():
-                    return
-                if pil_image is None:
-                    self.cover_label.configure(image="", text="🎮")
-                else:
-                    self._apply_cover_image(pil_image)
-            except Exception:
-                pass
-
-        if self._post_ui is not None:
-            self._post_ui(_apply)
-        else:
-            try:
-                self.after(0, _apply)
-            except Exception:
-                pass
-
-    def _apply_cover_image(self, pil_image: Image.Image) -> None:
-        try:
-            self._ctk_image = ctk.CTkImage(
-                light_image=pil_image,
-                dark_image=pil_image,
-                size=(240, 360),
-            )
-            self.cover_label.configure(image=self._ctk_image, text="")
-        except Exception:
-            logger.debug("Erreur lors de l'application de l'image de cover pour %s", self.game.name)
+    def refresh_labels(self) -> None:
+        """Recharge les libellés dynamiques (source, boutons, badge) après un
+        changement de langue à chaud — sans recréer les widgets."""
+        source_txt = t("GAME_SOURCE_STEAM") if self._game.source == "steam" else t("GAME_SOURCE_MANUAL")
+        self._overlay_source.configure(text=source_txt)
+        self._edit_btn.configure(text=t("GAME_CARD_BTN_EDIT"))
+        self._delete_btn.configure(text=t("GAME_CARD_BTN_DELETE"))
+        self._badge_lbl.configure(text=state_label(self._current_state))
 
     def set_state(self, state: str) -> None:
-        """Met à jour uniquement la pastille d'état, sans recréer le widget
+        """Met à jour uniquement le badge d'état, sans recréer le widget
         (appelé à chaque cycle de scan — doit rester O(1) et sans flicker)."""
         if state == self._current_state:
             return
         self._current_state = state
         color = STATE_COLORS.get(state, COL_RED)
-        self._dot.configure(text_color=color)
-        self._status_lbl.configure(text=STATE_LABELS.get(state, state), text_color=color)
+        self._badge.configure(fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE), border_color=color)
+        self._badge_dot.configure(text_color=color)
+        self._badge_lbl.configure(text=state_label(state), text_color=color)
 
 
 # ============================================================================
@@ -969,7 +819,7 @@ class GameModal(ctk.CTkToplevel):
                  on_saved: Callable[[], None], steam_candidates: list[dict[str, str]],
                  game: Optional[Game] = None) -> None:
         super().__init__(master)
-        self.title("Modifier le jeu" if game else "Ajouter un jeu")
+        self.title(t("GAME_MODAL_TITLE_EDIT") if game else t("GAME_MODAL_TITLE_ADD"))
         self.geometry("480x640")
         self.configure(fg_color=COL_BG)
         self.transient(master)
@@ -992,14 +842,16 @@ class GameModal(ctk.CTkToplevel):
         self.source_var = ctk.StringVar(value=(game.source if game else "manual"))
         source_row = ctk.CTkFrame(scroll, fg_color="transparent")
         source_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        ctk.CTkRadioButton(source_row, text="Jeu Steam détecté", variable=self.source_var,
+        ctk.CTkRadioButton(source_row, text=t("GAME_MODAL_SOURCE_STEAM"), variable=self.source_var,
+                            fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
                             value="steam", command=self._toggle_source).pack(side="left", padx=(0, 16))
-        ctk.CTkRadioButton(source_row, text="Manuel (exe)", variable=self.source_var,
+        ctk.CTkRadioButton(source_row, text=t("GAME_MODAL_SOURCE_MANUAL"), variable=self.source_var,
+                            fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
                             value="manual", command=self._toggle_source).pack(side="left")
 
         # --- Steam: dropdown des jeux détectés non encore ajoutés ---
         self.steam_var = ctk.StringVar()
-        steam_names = [f"{g['name']} (appid {g['appid']})" for g in steam_candidates] or ["Aucun jeu Steam détecté — lance un scan"]
+        steam_names = [f"{g['name']} (appid {g['appid']})" for g in steam_candidates] or [t("GAME_MODAL_STEAM_NONE_DETECTED")]
         self.steam_menu = ctk.CTkOptionMenu(scroll, values=steam_names, variable=self.steam_var,
                                              fg_color=COL_BG, button_color=COL_ACCENT,
                                              button_hover_color=COL_ACCENT_HOVER)
@@ -1008,69 +860,64 @@ class GameModal(ctk.CTkToplevel):
         # --- Manuel: nom + exe ---
         self.name_var = ctk.StringVar(value=game.name if game else "")
         self.exe_var = ctk.StringVar(value=game.active_match if (game and game.source == "manual") else "")
-        self._labeled_entry(scroll, 2, "Nom du jeu", self.name_var)
-        self._labeled_entry(scroll, 3, "Nom de l'exécutable (ex: VALORANT-Win64-Shipping.exe)", self.exe_var)
+        self._labeled_entry(scroll, 2, t("GAME_MODAL_LABEL_NAME"), self.name_var)
+        self._labeled_entry(scroll, 3, t("GAME_MODAL_LABEL_EXE"), self.exe_var)
 
         # --- Images ---
-        ctk.CTkLabel(scroll, text="Images de détection — Menu", font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_MENU"), font=font(12, "bold"),
                      anchor="w").grid(row=4, column=0, sticky="w", pady=(10, 2))
         self.menu_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._menu_images),
-                                           text_color=COL_TEXT_MUTED, anchor="w", font=ctk.CTkFont(size=11))
+                                           text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
         self.menu_list_lbl.grid(row=5, column=0, sticky="w")
-        ctk.CTkButton(scroll, text="📁 Choisir images Menu", height=30,
+        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_MENU_IMAGES"), height=30, fg_color=COL_CARD,
+                       hover_color=COL_CARD_HOVER,
                        command=lambda: self._pick_images("menu")).grid(row=6, column=0, sticky="ew", pady=(4, 10))
 
-        ctk.CTkLabel(scroll, text="Images de détection — En jeu", font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_INGAME"), font=font(12, "bold"),
                      anchor="w").grid(row=7, column=0, sticky="w", pady=(4, 2))
         self.ingame_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._ingame_images),
-                                             text_color=COL_TEXT_MUTED, anchor="w", font=ctk.CTkFont(size=11))
+                                             text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
         self.ingame_list_lbl.grid(row=8, column=0, sticky="w")
-        ctk.CTkButton(scroll, text="📁 Choisir images En jeu", height=30,
+        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_INGAME_IMAGES"), height=30, fg_color=COL_CARD,
+                       hover_color=COL_CARD_HOVER,
                        command=lambda: self._pick_images("ingame")).grid(row=9, column=0, sticky="ew", pady=(4, 10))
 
         # --- Scènes OBS ---
         scene_names = self._fetch_scene_names()
         self.scene_menu_var = ctk.StringVar(value=game.obs_scene_menu if game else "")
         self.scene_ingame_var = ctk.StringVar(value=game.obs_scene_ingame if game else "")
-        ctk.CTkLabel(scroll, text="Scène OBS — Menu", font=ctk.CTkFont(size=12), anchor="w",
+        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_MENU"), font=font(12), anchor="w",
                      text_color=COL_TEXT_MUTED).grid(row=10, column=0, sticky="w", pady=(6, 2))
         self._scene_selector(scroll, 11, scene_names, self.scene_menu_var)
-        ctk.CTkLabel(scroll, text="Scène OBS — En jeu", font=ctk.CTkFont(size=12), anchor="w",
+        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_INGAME"), font=font(12), anchor="w",
                      text_color=COL_TEXT_MUTED).grid(row=12, column=0, sticky="w", pady=(6, 2))
         self._scene_selector(scroll, 13, scene_names, self.scene_ingame_var)
 
-        self.msg_lbl = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=11))
+        self.msg_lbl = ctk.CTkLabel(scroll, text="", font=font(11))
         self.msg_lbl.grid(row=14, column=0, sticky="w", pady=(10, 0))
 
-        ctk.CTkButton(scroll, text="💾 Enregistrer", height=38, fg_color=COL_ACCENT,
-                       hover_color=COL_ACCENT_HOVER, text_color="#0d1117",
-                       font=ctk.CTkFont(weight="bold"), command=self._save).grid(
+        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_SAVE"), height=38, fg_color=COL_ACCENT,
+                       hover_color=COL_ACCENT_HOVER, text_color="#0F0C1B",
+                       font=font(13, "bold"), command=self._save).grid(
             row=15, column=0, sticky="ew", pady=(16, 0))
 
         self._toggle_source()
 
     @staticmethod
-    def _images_summary(imgs: list[str]) -> str:
-        if not imgs:
-            return "Aucune image sélectionnée"
-        names = [Path(p).name for p in imgs]
-        if len(names) <= 2:
-            return ", ".join(names)
-        return f"{names[0]}, {names[1]} (+{len(names)-2})"
+    def _images_summary(paths: list[str]) -> str:
+        return t("GAME_MODAL_IMAGES_COUNT", count=len(paths)) if paths else t("GAME_MODAL_IMAGES_NONE")
 
     def _labeled_entry(self, parent, row: int, label: str, var: ctk.StringVar) -> None:
-        ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=12), anchor="w",
-                     text_color=COL_TEXT_MUTED).grid(row=row, column=0, sticky="w", pady=(6, 2))
-        ctk.CTkEntry(parent, textvariable=var, height=34, fg_color=COL_CARD,
-                     border_color=COL_BORDER).grid(row=row, column=0, sticky="ew", pady=(0, 6))
+        ctk.CTkLabel(parent, text=label, font=font(12), text_color=COL_TEXT_MUTED,
+                     anchor="w").grid(row=row, column=0, sticky="w", pady=(4, 2))
+        entry = ctk.CTkEntry(parent, textvariable=var, fg_color=COL_BG, border_color=COL_BORDER)
+        entry.grid(row=row, column=0, sticky="ew", pady=(20, 8))
 
     def _scene_selector(self, parent, row: int, scene_names: list[str], var: ctk.StringVar) -> None:
-        values = ["(Aucune)"] + scene_names if scene_names else ["(Aucune)"]
-        initial = var.get() if (var.get() and var.get() in values) else "(Aucune)"
-        var.set(initial)
-        ctk.CTkOptionMenu(parent, values=values, variable=var, fg_color=COL_CARD,
-                          button_color=COL_ACCENT, button_hover_color=COL_ACCENT_HOVER
-                          ).grid(row=row, column=0, sticky="ew", pady=(0, 6))
+        values = scene_names or [t("GAME_MODAL_SCENE_NOT_CONNECTED")]
+        ctk.CTkOptionMenu(parent, values=values, variable=var, fg_color=COL_BG,
+                           button_color=COL_ACCENT, button_hover_color=COL_ACCENT_HOVER
+                           ).grid(row=row, column=0, sticky="ew")
 
     def _fetch_scene_names(self) -> list[str]:
         client = self._get_obs_client()
@@ -1078,51 +925,45 @@ class GameModal(ctk.CTkToplevel):
             return []
         try:
             future = self._obs_loop.run_coro(client.get_scene_list())
-            return future.result(timeout=3)
+            return future.result(timeout=5)
         except Exception:
-            logger.exception("Échec récupération des scènes OBS pour le modal.")
+            logger.debug("Impossible de récupérer la liste des scènes OBS.", exc_info=True)
             return []
 
     def _toggle_source(self) -> None:
         is_steam = self.source_var.get() == "steam"
-        if is_steam:
-            self.steam_menu.grid()
-        else:
-            self.steam_menu.grid_remove()
+        self.steam_menu.configure(state="normal" if is_steam else "disabled")
 
     def _pick_images(self, kind: str) -> None:
-        files = filedialog.askopenfilenames(
-            title="Choisir des images PNG",
-            filetypes=[("Images PNG", "*.png"), ("Toutes les images", "*.*")],
+        paths = filedialog.askopenfilenames(
+            title=t("GAME_MODAL_FILEDIALOG_TITLE"),
+            filetypes=[(t("GAME_MODAL_FILEDIALOG_FILTER_LABEL"), "*.png")],
         )
-        if not files:
+        if not paths:
             return
         if kind == "menu":
-            self._menu_images = list(files)
+            self._menu_images = list(paths)
             self.menu_list_lbl.configure(text=self._images_summary(self._menu_images))
         else:
-            self._ingame_images = list(files)
+            self._ingame_images = list(paths)
             self.ingame_list_lbl.configure(text=self._images_summary(self._ingame_images))
 
     def _save(self) -> None:
-        source = self.source_var.get()
-        if source == "steam":
-            selected = self.steam_var.get()
-            match = next((g for g in self._steam_candidates if f"{g['name']} (appid {g['appid']})" == selected), None)
-            if not match and not self._game:
-                self.msg_lbl.configure(text="⚠ Sélectionne un jeu Steam valide.", text_color=COL_RED)
+        if self.source_var.get() == "steam":
+            selection = self.steam_var.get()
+            match = next((g for g in self._steam_candidates
+                          if f"{g['name']} (appid {g['appid']})" == selection), None)
+            if match is None:
+                self.msg_lbl.configure(text=t("GAME_MODAL_ERR_INVALID_STEAM_SELECTION"), text_color=COL_RED)
                 return
-            name = match["name"] if match else (self._game.name if self._game else "")
-            appid = match["appid"] if match else (self._game.appid if self._game else "")
-            active_match = match["install_dir"] if match else (self._game.active_match if self._game else "")
+            name, source, active_match, appid = match["name"], "steam", match["install_dir"], match["appid"]
         else:
             name = self.name_var.get().strip()
             exe = self.exe_var.get().strip()
             if not name or not exe:
-                self.msg_lbl.configure(text="⚠ Nom et exécutable requis.", text_color=COL_RED)
+                self.msg_lbl.configure(text=t("GAME_MODAL_ERR_MISSING_NAME_EXE"), text_color=COL_RED)
                 return
-            appid = ""
-            active_match = exe
+            source, active_match, appid = "manual", exe, ""
 
         game = Game(
             id=self._game.id if self._game else uuid.uuid4().hex,
@@ -1134,24 +975,24 @@ class GameModal(ctk.CTkToplevel):
             self._on_saved()
             self.destroy()
         else:
-            self.msg_lbl.configure(text="✗ Échec de la sauvegarde.", text_color=COL_RED)
+            self.msg_lbl.configure(text=t("GAME_MODAL_ERR_SAVE_FAILED"), text_color=COL_RED)
 
 
 # ============================================================================
-# VUE : DASHBOARD
+# VUE : DASHBOARD (Bibliothèque — grille poster style Steam)
 # ============================================================================
 class DashboardView(ctk.CTkFrame):
+    GRID_COLUMNS = 5
+
     def __init__(self, master, store: GameStore, obs_loop: AsyncLoopThread,
                  obs_client_getter: Callable[[], Optional[OBSClient]],
-                 steam_scanner: SteamScanner, post_ui: Callable[[Callable[[], None]], None],
-                 cover_service: Optional[GameCoverService] = None, **kwargs) -> None:
+                 steam_scanner: SteamScanner, post_ui: Callable[[Callable[[], None]], None], **kwargs) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
         self._store = store
         self._obs_loop = obs_loop
         self._get_obs_client = obs_client_getter
         self._steam_scanner = steam_scanner
         self._post_ui = post_ui
-        self._cover_service = cover_service
         self._latest_states: dict[str, str] = {}
         self._steam_candidates: list[dict[str, str]] = []
         self._cards: dict[str, GameCard] = {}
@@ -1161,29 +1002,37 @@ class DashboardView(ctk.CTkFrame):
         self.grid_rowconfigure(2, weight=1)
 
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 8))
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(28, 8))
         header.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(header, text="Jeux configurés", font=ctk.CTkFont(size=20, weight="bold")
-                     ).grid(row=0, column=0, sticky="w")
+        title_col = ctk.CTkFrame(header, fg_color="transparent")
+        title_col.grid(row=0, column=0, sticky="w")
+        self._title_lbl = ctk.CTkLabel(title_col, text=t("DASHBOARD_TITLE"), font=font(22, "bold"),
+                                        text_color=COL_TEXT)
+        self._title_lbl.pack(anchor="w")
+        self._subtitle_lbl = ctk.CTkLabel(title_col, text="", font=font(11), text_color=COL_TEXT_MUTED)
+        self._subtitle_lbl.pack(anchor="w", pady=(2, 0))
 
         btns = ctk.CTkFrame(header, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e")
-        ctk.CTkButton(btns, text="＋ Ajouter", width=110, height=34, fg_color=COL_CARD,
-                      hover_color=COL_BORDER, command=self._open_add_modal).pack(side="left", padx=(0, 8))
-        self.scan_btn = ctk.CTkButton(btns, text="🔍 Scanner Steam", width=150, height=34,
+        self._add_btn = ctk.CTkButton(btns, text=t("DASHBOARD_BTN_ADD"), width=110, height=36,
+                                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
+                                       border_width=1, border_color=COL_BORDER, corner_radius=9,
+                                       font=font(12), command=self._open_add_modal)
+        self._add_btn.pack(side="left", padx=(0, 8))
+        self.scan_btn = ctk.CTkButton(btns, text=t("DASHBOARD_BTN_SCAN_STEAM"), width=160, height=36,
                                        fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
-                                       text_color="#0d1117", font=ctk.CTkFont(weight="bold"),
+                                       text_color="#0F0C1B", font=font(12, "bold"), corner_radius=9,
                                        command=self.scan_steam_library)
         self.scan_btn.pack(side="left")
 
-        self.status_lbl = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
+        self.status_lbl = ctk.CTkLabel(self, text="", font=font(11),
                                         text_color=COL_TEXT_MUTED, anchor="w")
-        self.status_lbl.grid(row=1, column=0, sticky="w", padx=26)
+        self.status_lbl.grid(row=1, column=0, sticky="w", padx=30)
 
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.scroll.grid(row=2, column=0, sticky="nsew", padx=20, pady=10)
-        for c in range(3):
+        self.scroll.grid(row=2, column=0, sticky="nsew", padx=22, pady=10)
+        for c in range(self.GRID_COLUMNS):
             self.scroll.grid_columnconfigure(c, weight=1)
         self._enable_smooth_scroll(self.scroll)
 
@@ -1191,35 +1040,45 @@ class DashboardView(ctk.CTkFrame):
 
     @staticmethod
     def _enable_smooth_scroll(scrollable: ctk.CTkScrollableFrame) -> None:
-        """Remplace le gestionnaire de molette interne pour synchroniser le rafraîchissement
-        du canvas et éliminer définitivement l'effet de rémanence / fondu (ghosting)."""
+        """Remplace le binding molette par défaut de CTkScrollableFrame (pas
+        grossier, un seul 'saut' par cran) par un défilement à granularité
+        fine sur le canvas interne, pour un rendu fluide haute fréquence
+        plutôt qu'un défilement par paliers saccadés."""
         canvas = getattr(scrollable, "_parent_canvas", None)
         if canvas is None:
-            return
+            return  # version de customtkinter sans canvas exposé — no-op sûr
 
-        def _custom_mouse_wheel(event: Any) -> str:
-            if not scrollable._check_if_valid_scroll(event.widget):
-                return ""
-            if event.delta:
-                # Ferme immédiatement toute carte active pour éviter les calculs pendant le défilement
-                if GameCard._active_card is not None:
-                    GameCard._active_card._hide_overlay()
+        def _on_wheel(event: Any) -> str:
+            steps = max(1, abs(int(event.delta / 40)))
+            direction = -1 if event.delta > 0 else 1
+            for _ in range(steps):
+                canvas.yview_scroll(direction, "units")
+            return "break"
 
-                # Défilement réactif et fluide
-                units = -int(event.delta / 4)
-                if canvas.yview() != (0.0, 1.0):
-                    canvas.yview_scroll(units, "units")
-                    # Force la synchronisation immédiate de tous les composants enfants (cartes/images)
-                    canvas.update_idletasks()
-                return "break"
-            return ""
-
-        scrollable._mouse_wheel_all = _custom_mouse_wheel
+        canvas.bind("<MouseWheel>", _on_wheel)
+        for child in scrollable.winfo_children():
+            child.bind("<MouseWheel>", _on_wheel)
 
     def _clear(self) -> None:
         for widget in self.scroll.winfo_children():
             widget.destroy()
         self._cards.clear()
+
+    def refresh_labels(self) -> None:
+        """Rechargement à chaud de tous les libellés statiques après un
+        changement de langue — pas de rebuild des cartes, juste leurs textes."""
+        self._title_lbl.configure(text=t("DASHBOARD_TITLE"))
+        self._add_btn.configure(text=t("DASHBOARD_BTN_ADD"))
+        self.scan_btn.configure(text=t("DASHBOARD_BTN_SCAN_STEAM"))
+        self._update_subtitle()
+        for card in self._cards.values():
+            card.refresh_labels()
+        if not self._cards and not self._store.load():
+            self.render_games()
+
+    def _update_subtitle(self) -> None:
+        count = len(self._store.load())
+        self._subtitle_lbl.configure(text=t("DASHBOARD_SUBTITLE", count=count))
 
     def render_games(self) -> None:
         """Reconstruction complète de la grille — appelée uniquement quand la
@@ -1228,16 +1087,17 @@ class DashboardView(ctk.CTkFrame):
         self._clear()
         games = self._store.load()
         self._rendered_ids = tuple(g.id for g in games)
+        self._update_subtitle()
         if not games:
-            ctk.CTkLabel(self.scroll, text="Aucun jeu — scanne Steam ou ajoute un jeu manuellement.",
-                         text_color=COL_TEXT_MUTED).grid(row=0, column=0, padx=10, pady=20)
+            ctk.CTkLabel(self.scroll, text=t("DASHBOARD_EMPTY_STATE"),
+                         text_color=COL_TEXT_MUTED, font=font(12)).grid(row=0, column=0, padx=10, pady=30)
             return
         for i, game in enumerate(games):
             state = self._latest_states.get(game.id, "inactive")
             card = GameCard(self.scroll, game=game, state=state,
-                             on_edit=self._open_edit_modal, on_delete=self._delete_game,
-                             cover_service=self._cover_service, post_ui=self._post_ui)
-            card.grid(row=i // 3, column=i % 3, padx=12, pady=14)
+                             on_edit=self._open_edit_modal, on_delete=self._delete_game)
+            card.grid(row=i // self.GRID_COLUMNS, column=i % self.GRID_COLUMNS,
+                      sticky="n", padx=10, pady=10)
             self._cards[game.id] = card
 
     def apply_scan_results(self, results: list[dict[str, Any]]) -> None:
@@ -1246,11 +1106,12 @@ class DashboardView(ctk.CTkFrame):
         recréer les widgets si la liste de jeux n'a pas changé, sous peine de
         provoquer le flicker + reset du scroll de CTkScrollableFrame observés
         précédemment. Diff par ID : rebuild complet seulement si le set/ordre
-        des jeux a changé, sinon simple mise à jour de la pastille d'état."""
+        des jeux a changé, sinon simple mise à jour du badge d'état."""
         new_states = {r["id"]: r["state"] for r in results}
         active_count = sum(1 for r in results if r["active"])
         self.status_lbl.configure(
-            text=f"{len(results)} jeu(x) suivi(s) — {active_count} actif(s)", text_color=COL_TEXT_MUTED
+            text=t("DASHBOARD_STATUS_SUMMARY", count=len(results), active=active_count),
+            text_color=COL_TEXT_MUTED,
         )
 
         new_ids = tuple(r["id"] for r in results)
@@ -1270,8 +1131,8 @@ class DashboardView(ctk.CTkFrame):
         self._latest_states = new_states
 
     def scan_steam_library(self) -> None:
-        self.scan_btn.configure(state="disabled", text="Scan...")
-        self.status_lbl.configure(text="Analyse des bibliothèques Steam locales...")
+        self.scan_btn.configure(state="disabled", text=t("DASHBOARD_BTN_SCAN_STEAM_PROGRESS"))
+        self.status_lbl.configure(text=t("DASHBOARD_SCAN_IN_PROGRESS"))
         threading.Thread(target=self._scan_steam_bg, daemon=True).start()
 
     def _scan_steam_bg(self) -> None:
@@ -1286,12 +1147,12 @@ class DashboardView(ctk.CTkFrame):
         self._post_ui(lambda: self._on_scan_done(len(found), added, error))
 
     def _on_scan_done(self, total_found: int, added: int, error: Optional[str]) -> None:
-        self.scan_btn.configure(state="normal", text="🔍 Scanner Steam")
+        self.scan_btn.configure(state="normal", text=t("DASHBOARD_BTN_SCAN_STEAM"))
         if error:
-            self.status_lbl.configure(text=f"Erreur scan Steam : {error}", text_color=COL_RED)
+            self.status_lbl.configure(text=t("DASHBOARD_SCAN_ERROR", error=error), text_color=COL_RED)
             return
         self.status_lbl.configure(
-            text=f"{total_found} jeu(x) Steam détecté(s), {added} nouveau(x) ajouté(s).",
+            text=t("DASHBOARD_SCAN_RESULT", found=total_found, added=added),
             text_color=COL_GREEN if added else COL_TEXT_MUTED,
         )
         self.render_games()
@@ -1307,7 +1168,7 @@ class DashboardView(ctk.CTkFrame):
                   steam_candidates=self._steam_candidates, game=game)
 
     def _delete_game(self, game: Game) -> None:
-        if messagebox.askyesno("Confirmer", f"Supprimer '{game.name}' ?"):
+        if messagebox.askyesno(t("CONFIRM_DIALOG_TITLE"), t("CONFIRM_DELETE_GAME", name=game.name)):
             self._store.delete(game.id)
             self.render_games()
 
@@ -1322,62 +1183,74 @@ class SettingsView(ctk.CTkFrame):
         self.on_saved = on_saved
         self.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self, text="Paramètres", font=ctk.CTkFont(size=20, weight="bold")
-                     ).grid(row=0, column=0, sticky="w", padx=24, pady=(24, 16))
+        self._title_lbl = ctk.CTkLabel(self, text=t("SETTINGS_TITLE"), font=font(22, "bold"), text_color=COL_TEXT)
+        self._title_lbl.grid(row=0, column=0, sticky="w", padx=28, pady=(28, 16))
 
         card = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=14, border_width=1, border_color=COL_BORDER)
-        card.grid(row=1, column=0, sticky="ew", padx=24)
+        card.grid(row=1, column=0, sticky="ew", padx=28)
         card.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(card, text="Connexion OBS WebSocket", font=ctk.CTkFont(size=14, weight="bold")
-                     ).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(18, 12))
+        self._section_lbl = ctk.CTkLabel(card, text=t("SETTINGS_SECTION_OBS_WS"), font=font(14, "bold"),
+                                          text_color=COL_TEXT)
+        self._section_lbl.grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(18, 12))
 
         self.host_var = ctk.StringVar()
         self.port_var = ctk.StringVar()
         self.pwd_var = ctk.StringVar()
         self.interval_var = ctk.StringVar()
         self.threshold_var = ctk.StringVar()
-        self.rawg_api_key_var = ctk.StringVar()
 
-        self._field(card, 1, "Adresse (host)", self.host_var)
-        self._field(card, 2, "Port", self.port_var)
-        self._password_field(card, 3, "Mot de passe", self.pwd_var)
-        self._field(card, 4, "Intervalle scan (s)", self.interval_var)
-        self._field(card, 5, "Seuil détection visuelle (0-1)", self.threshold_var)
+        self._field_labels: dict[str, ctk.CTkLabel] = {}
+        self._field_labels["host"] = self._field(card, 1, t("SETTINGS_LABEL_HOST"), self.host_var)
+        self._field_labels["port"] = self._field(card, 2, t("SETTINGS_LABEL_PORT"), self.port_var)
+        self._field_labels["password"] = self._password_field(card, 3, t("SETTINGS_LABEL_PASSWORD"), self.pwd_var)
+        self._field_labels["interval"] = self._field(card, 4, t("SETTINGS_LABEL_SCAN_INTERVAL"), self.interval_var)
+        self._field_labels["threshold"] = self._field(card, 5, t("SETTINGS_LABEL_MATCH_THRESHOLD"), self.threshold_var)
 
-        # Section Base de données RAWG
-        ctk.CTkLabel(card, text="Base de données Jeux (RAWG)", font=ctk.CTkFont(size=14, weight="bold")
-                     ).grid(row=6, column=0, columnspan=2, sticky="w", padx=20, pady=(18, 6))
-        self._field(card, 7, "Clé API RAWG (optionnelle)", self.rawg_api_key_var)
-
-        self.msg_lbl = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=11))
-        self.msg_lbl.grid(row=8, column=0, columnspan=2, sticky="w", padx=20, pady=(4, 0))
+        self.msg_lbl = ctk.CTkLabel(card, text="", font=font(11))
+        self.msg_lbl.grid(row=6, column=0, columnspan=2, sticky="w", padx=20, pady=(4, 0))
 
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
-        btn_row.grid(row=9, column=0, columnspan=2, sticky="ew", padx=20, pady=18)
-        ctk.CTkButton(btn_row, text="💾 Enregistrer", width=150, height=36, fg_color=COL_ACCENT,
-                      hover_color=COL_ACCENT_HOVER, text_color="#0d1117",
-                      font=ctk.CTkFont(weight="bold"), command=self._save).pack(side="left")
+        btn_row.grid(row=7, column=0, columnspan=2, sticky="ew", padx=20, pady=18)
+        self._save_btn = ctk.CTkButton(btn_row, text=t("SETTINGS_BTN_SAVE"), width=160, height=38,
+                                        fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+                                        text_color="#0F0C1B", corner_radius=9,
+                                        font=font(13, "bold"), command=self._save)
+        self._save_btn.pack(side="left")
+
+        # --- Sélecteur de langue : segmented control géométriquement stable ---
+        lang_card = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=14, border_width=1, border_color=COL_BORDER)
+        lang_card.grid(row=2, column=0, sticky="ew", padx=28, pady=(20, 0))
+        lang_card.grid_columnconfigure(1, weight=1)
+
+        self._lang_section_lbl = ctk.CTkLabel(lang_card, text=t("SETTINGS_SECTION_LANGUAGE"),
+                                               font=font(14, "bold"), text_color=COL_TEXT)
+        self._lang_section_lbl.grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(18, 12))
+
+        self._lang_seg = LanguageSegmentedControl(lang_card, on_select=self._on_lang_selected)
+        self._lang_seg.grid(row=1, column=0, sticky="w", padx=20, pady=(0, 18))
 
         self._load_into_form()
 
-    def _field(self, parent, row: int, label: str, var: ctk.StringVar) -> None:
-        ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=12), text_color=COL_TEXT_MUTED
-                     ).grid(row=row, column=0, sticky="w", padx=20, pady=6)
-        ctk.CTkEntry(parent, textvariable=var, width=220, height=34, fg_color=COL_BG,
+    def _field(self, parent, row: int, label: str, var: ctk.StringVar) -> ctk.CTkLabel:
+        lbl = ctk.CTkLabel(parent, text=label, font=font(12), text_color=COL_TEXT_MUTED)
+        lbl.grid(row=row, column=0, sticky="w", padx=20, pady=6)
+        ctk.CTkEntry(parent, textvariable=var, width=200, height=34, fg_color=COL_BG,
                      border_color=COL_BORDER).grid(row=row, column=1, sticky="e", padx=20, pady=6)
+        return lbl
 
-    def _password_field(self, parent, row: int, label: str, var: ctk.StringVar) -> None:
-        ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=12), text_color=COL_TEXT_MUTED
-                     ).grid(row=row, column=0, sticky="w", padx=20, pady=6)
+    def _password_field(self, parent, row: int, label: str, var: ctk.StringVar) -> ctk.CTkLabel:
+        lbl = ctk.CTkLabel(parent, text=label, font=font(12), text_color=COL_TEXT_MUTED)
+        lbl.grid(row=row, column=0, sticky="w", padx=20, pady=6)
         wrapper = ctk.CTkFrame(parent, fg_color="transparent")
         wrapper.grid(row=row, column=1, sticky="e", padx=20, pady=6)
-        self._pwd_entry = ctk.CTkEntry(wrapper, textvariable=var, width=180, height=34, show="•",
+        self._pwd_entry = ctk.CTkEntry(wrapper, textvariable=var, width=160, height=34, show="•",
                                         fg_color=COL_BG, border_color=COL_BORDER)
         self._pwd_entry.pack(side="left")
         self._pwd_visible = False
         ctk.CTkButton(wrapper, text="👁", width=34, height=34, fg_color=COL_BG,
                       hover_color=COL_BORDER, command=self._toggle_pwd).pack(side="left", padx=(4, 0))
+        return lbl
 
     def _toggle_pwd(self) -> None:
         self._pwd_visible = not self._pwd_visible
@@ -1390,30 +1263,119 @@ class SettingsView(ctk.CTkFrame):
         self.pwd_var.set(cfg.password)
         self.interval_var.set(str(cfg.scan_interval_seconds))
         self.threshold_var.set(str(cfg.match_threshold))
-        self.rawg_api_key_var.set(cfg.rawg_api_key)
+        self._lang_seg.set_active(cfg.lang, notify=False)
+
+    def _on_lang_selected(self, lang: str) -> None:
+        """Applique le changement de langue à chaud (i18n.set_lang notifie
+        tous les listeners) puis persiste le choix dans .env, sans jamais
+        redémarrer l'application ni casser les libellés déjà affichés."""
+        if not i18n.set_lang(lang):
+            return
+        cfg = self.config_mgr.load()
+        cfg.lang = lang
+        self.config_mgr.save(cfg)
+
+    def refresh_labels(self) -> None:
+        """Rechargement à chaud après changement de langue."""
+        self._title_lbl.configure(text=t("SETTINGS_TITLE"))
+        self._section_lbl.configure(text=t("SETTINGS_SECTION_OBS_WS"))
+        self._lang_section_lbl.configure(text=t("SETTINGS_SECTION_LANGUAGE"))
+        self._field_labels["host"].configure(text=t("SETTINGS_LABEL_HOST"))
+        self._field_labels["port"].configure(text=t("SETTINGS_LABEL_PORT"))
+        self._field_labels["password"].configure(text=t("SETTINGS_LABEL_PASSWORD"))
+        self._field_labels["interval"].configure(text=t("SETTINGS_LABEL_SCAN_INTERVAL"))
+        self._field_labels["threshold"].configure(text=t("SETTINGS_LABEL_MATCH_THRESHOLD"))
+        self._save_btn.configure(text=t("SETTINGS_BTN_SAVE"))
+        self._lang_seg.refresh_labels()
 
     def _save(self) -> None:
         try:
             port = int(self.port_var.get())
             if not (0 < port <= 65535):
-                raise ValueError("Port hors plage 1-65535")
+                raise ValueError(t("SETTINGS_ERR_PORT_RANGE"))
             interval = max(0.5, float(self.interval_var.get()))
             threshold = min(1.0, max(0.0, float(self.threshold_var.get())))
         except ValueError as exc:
-            self.msg_lbl.configure(text=f"⚠ Valeur invalide : {exc}", text_color=COL_RED)
+            self.msg_lbl.configure(text=t("SETTINGS_ERR_INVALID_VALUE", error=exc), text_color=COL_RED)
             return
 
         cfg = OBSConfig(
             host=self.host_var.get().strip() or "localhost",
             port=port, password=self.pwd_var.get(),
             scan_interval_seconds=interval, match_threshold=threshold,
-            rawg_api_key=self.rawg_api_key_var.get().strip(),
+            lang=i18n.current_lang(),
         )
         if self.config_mgr.save(cfg):
-            self.msg_lbl.configure(text="✓ Configuration enregistrée.", text_color=COL_GREEN)
+            self.msg_lbl.configure(text=t("SETTINGS_SAVE_SUCCESS"), text_color=COL_GREEN)
             self.on_saved()
         else:
-            self.msg_lbl.configure(text="✗ Échec de la sauvegarde.", text_color=COL_RED)
+            self.msg_lbl.configure(text=t("SETTINGS_SAVE_FAILED"), text_color=COL_RED)
+
+
+class LanguageSegmentedControl(ctk.CTkFrame):
+    """Sélecteur de langue en groupe de boutons segmentés à géométrie fixe :
+    chaque bouton a une largeur figée (LANG_BTN_WIDTH) et le highlight actif
+    ne fait que changer de couleur de fond — il ne redimensionne, ne déplace
+    et ne pousse jamais les widgets voisins, quelle que soit la langue active
+    (corrige le bug de décalage du sélecteur mentionné dans les specs)."""
+
+    LANG_BTN_WIDTH = 64
+    LANG_BTN_HEIGHT = 34
+    COL_ACTIVE = "#3B82F6"
+    COL_ACTIVE_HOVER = "#2563EB"
+    COL_INACTIVE = COL_BG
+    COL_INACTIVE_HOVER = COL_BORDER
+
+    def __init__(self, master, on_select: Callable[[str], None], **kwargs) -> None:
+        super().__init__(master, fg_color=COL_BG, corner_radius=10,
+                          border_width=1, border_color=COL_BORDER, **kwargs)
+        self._on_select = on_select
+        self._buttons: dict[str, ctk.CTkButton] = {}
+        self._active_lang = i18n.current_lang()
+
+        for i, lang in enumerate(("fr", "en", "es")):
+            btn = ctk.CTkButton(
+                self, text=t(f"LANG_{lang.upper()}"), width=self.LANG_BTN_WIDTH, height=self.LANG_BTN_HEIGHT,
+                corner_radius=8, font=font(12, "bold"),
+                fg_color=self.COL_INACTIVE, hover_color=self.COL_INACTIVE_HOVER,
+                text_color=COL_TEXT_MUTED, border_width=0,
+                command=lambda l=lang: self._select(l),
+            )
+            btn.grid(row=0, column=i, padx=3, pady=3)
+            self._buttons[lang] = btn
+
+        self._apply_active_style()
+
+    def _select(self, lang: str) -> None:
+        if lang == self._active_lang:
+            return
+        self._active_lang = lang
+        self._apply_active_style()
+        self._on_select(lang)
+
+    def set_active(self, lang: str, notify: bool = True) -> None:
+        if lang not in self._buttons:
+            return
+        self._active_lang = lang
+        self._apply_active_style()
+        if notify:
+            self._on_select(lang)
+
+    def _apply_active_style(self) -> None:
+        # Géométrie strictement inchangée : seule fg_color/text_color change,
+        # jamais width/height/padx/pady -> le carré actif reste verrouillé
+        # dans son footprint sans décaler les boutons adjacents.
+        for lang, btn in self._buttons.items():
+            is_active = lang == self._active_lang
+            btn.configure(
+                fg_color=self.COL_ACTIVE if is_active else self.COL_INACTIVE,
+                hover_color=self.COL_ACTIVE_HOVER if is_active else self.COL_INACTIVE_HOVER,
+                text_color="#FFFFFF" if is_active else COL_TEXT_MUTED,
+            )
+
+    def refresh_labels(self) -> None:
+        for lang, btn in self._buttons.items():
+            btn.configure(text=t(f"LANG_{lang.upper()}"))
 
 
 # ============================================================================
@@ -1421,56 +1383,80 @@ class SettingsView(ctk.CTkFrame):
 # ============================================================================
 class Sidebar(ctk.CTkFrame):
     def __init__(self, master, on_nav: Callable[[str], None],
-                 on_start: Callable[[], None], on_stop: Callable[[], None], **kwargs) -> None:
-        super().__init__(master, fg_color=COL_SIDEBAR, corner_radius=0, width=230, **kwargs)
+                 on_start: Callable[[], None], on_stop: Callable[[], None],
+                 on_open_folder: Callable[[], None], **kwargs) -> None:
+        super().__init__(master, fg_color=COL_SIDEBAR, corner_radius=0, width=240, **kwargs)
         self.grid_propagate(False)
         self.grid_rowconfigure(6, weight=1)
         self.on_nav = on_nav
 
         brand = ctk.CTkFrame(self, fg_color="transparent")
-        brand.grid(row=0, column=0, sticky="ew", padx=20, pady=(24, 28))
-        ctk.CTkLabel(brand, text="⚡ OBS", font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=COL_ACCENT).pack(side="left")
-        ctk.CTkLabel(brand, text=" Dynamics", font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(26, 30))
+        self._brand_icon_lbl = ctk.CTkLabel(brand, text=t("SIDEBAR_BRAND_ICON"), font=font(19, "bold"),
+                                             text_color=COL_ACCENT)
+        self._brand_icon_lbl.pack(side="left")
+        self._brand_suffix_lbl = ctk.CTkLabel(brand, text=t("SIDEBAR_BRAND_SUFFIX"), font=font(19, "bold"),
+                                               text_color=COL_TEXT)
+        self._brand_suffix_lbl.pack(side="left")
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
-        self._nav_btn("dashboard", "🏠  Tableau de bord", row=1)
-        self._nav_btn("settings", "⚙️  Paramètres", row=2)
+        self._nav_btn("dashboard", t("SIDEBAR_NAV_DASHBOARD"), row=1)
+        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=2)
+
+        self._folder_btn = ctk.CTkButton(self, text=t("SIDEBAR_BTN_OPEN_FOLDER"), anchor="w", height=36,
+                                          corner_radius=8, fg_color="transparent", hover_color=COL_CARD,
+                                          text_color=COL_TEXT_MUTED, font=font(12), command=on_open_folder)
+        self._folder_btn.grid(row=3, column=0, sticky="ew", padx=12, pady=(10, 3))
 
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
         ctrl.grid(row=6, column=0, sticky="sew", padx=16, pady=20)
 
-        self.status_dot = ctk.CTkLabel(ctrl, text="●", text_color=COL_RED, font=ctk.CTkFont(size=14))
+        self.status_dot = ctk.CTkLabel(ctrl, text="●", text_color=COL_RED, font=font(14))
         self.status_dot.pack(anchor="w")
-        self.status_text = ctk.CTkLabel(ctrl, text="Surveillance arrêtée", font=ctk.CTkFont(size=11),
-                                         text_color=COL_TEXT_MUTED, wraplength=190, justify="left", anchor="w")
+        self.status_text = ctk.CTkLabel(ctrl, text=t("SIDEBAR_STATUS_STOPPED"), font=font(11),
+                                         text_color=COL_TEXT_MUTED, wraplength=195, justify="left", anchor="w")
         self.status_text.pack(anchor="w", pady=(0, 10), fill="x")
 
-        self.start_btn = ctk.CTkButton(ctrl, text="▶ Démarrer", height=36, fg_color=COL_GREEN,
-                                        hover_color="#27ae60", font=ctk.CTkFont(size=12),
+        self.start_btn = ctk.CTkButton(ctrl, text=t("SIDEBAR_BTN_START"), height=38, fg_color=COL_GREEN,
+                                        hover_color="#16A34A", font=font(12, "bold"), corner_radius=9,
                                         command=on_start)
         self.start_btn.pack(fill="x", pady=2)
-        self.stop_btn = ctk.CTkButton(ctrl, text="■ Arrêter", height=36, fg_color=COL_RED,
-                                       hover_color="#c0392b", font=ctk.CTkFont(size=12),
+        self.stop_btn = ctk.CTkButton(ctrl, text=t("SIDEBAR_BTN_STOP"), height=38, fg_color=COL_RED,
+                                       hover_color="#DC2626", font=font(12, "bold"), corner_radius=9,
                                        command=on_stop, state="disabled")
         self.stop_btn.pack(fill="x", pady=2)
 
+        self._is_running = False
+
     def _nav_btn(self, key: str, text: str, row: int) -> None:
-        btn = ctk.CTkButton(self, text=text, anchor="w", height=40, corner_radius=8,
-                             fg_color="transparent", hover_color=COL_CARD, font=ctk.CTkFont(size=13),
-                             command=lambda: self.on_nav(key))
+        btn = ctk.CTkButton(self, text=text, anchor="w", height=42, corner_radius=9,
+                             fg_color="transparent", hover_color=COL_CARD, text_color=COL_TEXT,
+                             font=font(13), command=lambda: self.on_nav(key))
         btn.grid(row=row, column=0, sticky="ew", padx=12, pady=3)
         self.nav_buttons[key] = btn
 
     def set_active(self, key: str) -> None:
         for k, btn in self.nav_buttons.items():
-            btn.configure(fg_color=COL_CARD if k == key else "transparent")
+            btn.configure(fg_color=COL_CARD if k == key else "transparent",
+                          border_width=1 if k == key else 0,
+                          border_color=COL_BORDER_ACCENT if k == key else COL_BORDER)
 
     def set_running_state(self, running: bool) -> None:
+        self._is_running = running
         self.status_dot.configure(text_color=COL_GREEN if running else COL_RED)
-        self.status_text.configure(text="Surveillance active" if running else "Surveillance arrêtée")
+        self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if running else t("SIDEBAR_STATUS_STOPPED"))
         self.start_btn.configure(state="disabled" if running else "normal")
         self.stop_btn.configure(state="normal" if running else "disabled")
+
+    def refresh_labels(self) -> None:
+        self._brand_icon_lbl.configure(text=t("SIDEBAR_BRAND_ICON"))
+        self._brand_suffix_lbl.configure(text=t("SIDEBAR_BRAND_SUFFIX"))
+        self.nav_buttons["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
+        self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
+        self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
+        self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
+        self.start_btn.configure(text=t("SIDEBAR_BTN_START"))
+        self.stop_btn.configure(text=t("SIDEBAR_BTN_STOP"))
 
 
 # ============================================================================
@@ -1479,18 +1465,20 @@ class Sidebar(ctk.CTkFrame):
 class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("OBS Dynamics")
-        self.geometry("1100x750")
-        self.minsize(920, 620)
+        self.title(t("APP_TITLE_WINDOW"))
+        self.geometry("1180x720")
+        self.minsize(960, 620)
         self.configure(fg_color=COL_BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._set_window_icon()
 
         self.config_mgr = EnvConfigManager(ENV_PATH)
+        # Applique la langue persistée en .env avant toute construction de vue.
+        _saved_cfg = self.config_mgr.load()
+        i18n.set_lang(_saved_cfg.lang)
+
         self.store = GameStore(GAMES_PATH)
         self.steam_scanner = SteamScanner()
-        self.covers_dir = DATA_DIR / "covers"
-        self.cover_service = GameCoverService(self.covers_dir, self.config_mgr.load().rawg_api_key)
         self.obs_loop = AsyncLoopThread()
         self._obs_client: Optional[OBSClient] = None
         self.scan_worker = ScanWorker(self.store, self.obs_loop, lambda: self._obs_client,
@@ -1501,7 +1489,8 @@ class App(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.sidebar = Sidebar(self, on_nav=self._navigate, on_start=self._start, on_stop=self._stop)
+        self.sidebar = Sidebar(self, on_nav=self._navigate, on_start=self._start, on_stop=self._stop,
+                                on_open_folder=self._open_data_folder)
         self.sidebar.grid(row=0, column=0, sticky="ns")
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
@@ -1511,12 +1500,23 @@ class App(ctk.CTk):
 
         self.dashboard = DashboardView(self.content, store=self.store, obs_loop=self.obs_loop,
                                         obs_client_getter=lambda: self._obs_client,
-                                        steam_scanner=self.steam_scanner, post_ui=self.post_ui,
-                                        cover_service=self.cover_service)
+                                        steam_scanner=self.steam_scanner, post_ui=self.post_ui)
         self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
         self.views: dict[str, ctk.CTkFrame] = {"dashboard": self.dashboard, "settings": self.settings}
         self._navigate("dashboard")
+
+        # --- Rechargement à chaud : toute vue exposant refresh_labels() est
+        # notifiée à chaque changement de langue, sans jamais redémarrer
+        # l'application ni recréer les widgets structurels.
+        i18n.on_change(self._on_lang_changed)
+
         self._pump_ui_queue()
+
+    def _on_lang_changed(self, _lang: str) -> None:
+        self.title(t("APP_TITLE_WINDOW"))
+        self.sidebar.refresh_labels()
+        self.dashboard.refresh_labels()
+        self.settings.refresh_labels()
 
     # -- Icône fenêtre + barre des tâches --------------------------------- #
     def _set_window_icon(self) -> None:
@@ -1532,6 +1532,17 @@ class App(ctk.CTk):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OBSDynamics.App.1")
         except Exception:
             logger.debug("SetCurrentProcessExplicitAppUserModelID indisponible (non-Windows).", exc_info=True)
+
+    def _open_data_folder(self) -> None:
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(DATA_DIR))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(DATA_DIR)])
+            else:
+                subprocess.Popen(["xdg-open", str(DATA_DIR)])
+        except Exception:
+            logger.exception("Impossible d'ouvrir le dossier de données.")
 
     # -- File d'attente UI thread-safe ------------------------------------ #
     def post_ui(self, callback: Callable[[], None]) -> None:
@@ -1558,8 +1569,8 @@ class App(ctk.CTk):
 
     # -- Démarrage / arrêt de la surveillance ------------------------------#
     def _start(self) -> None:
-        self.sidebar.start_btn.configure(state="disabled", text="Démarrage...")
-        self.sidebar.status_text.configure(text="Connexion à OBS...")
+        self.sidebar.start_btn.configure(state="disabled", text=t("SIDEBAR_BTN_START_PROGRESS"))
+        self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_CONNECTING_OBS"))
         threading.Thread(target=self._start_bg, daemon=True).start()
 
     def _start_bg(self) -> None:
@@ -1580,14 +1591,14 @@ class App(ctk.CTk):
 
     def _on_start_done(self, obs_error: Optional[str]) -> None:
         self.sidebar.set_running_state(True)
-        self.sidebar.start_btn.configure(text="▶ Démarrer")
+        self.sidebar.start_btn.configure(text=t("SIDEBAR_BTN_START"))
         if obs_error:
-            self.sidebar.status_text.configure(text=f"Surveillance active (OBS: {obs_error[:40]})")
+            self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING_OBS_ERROR", error=obs_error[:40]))
         else:
-            self.sidebar.status_text.configure(text="Surveillance active — OBS connecté")
+            self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING_OBS_OK"))
 
     def _stop(self) -> None:
-        self.sidebar.stop_btn.configure(state="disabled", text="Arrêt...")
+        self.sidebar.stop_btn.configure(state="disabled", text=t("SIDEBAR_BTN_STOP_PROGRESS"))
         threading.Thread(target=self._stop_bg, daemon=True).start()
 
     def _stop_bg(self) -> None:
@@ -1602,12 +1613,10 @@ class App(ctk.CTk):
 
     def _on_stop_done(self) -> None:
         self.sidebar.set_running_state(False)
-        self.sidebar.stop_btn.configure(text="■ Arrêter")
+        self.sidebar.stop_btn.configure(text=t("SIDEBAR_BTN_STOP"))
 
     def _on_settings_saved(self) -> None:
-        """Met à jour les services et reconnecte OBS si la surveillance tourne."""
-        cfg = self.config_mgr.load()
-        self.cover_service.set_api_key(cfg.rawg_api_key)
+        """Reconnecte OBS avec les nouveaux paramètres si la surveillance tourne déjà."""
         if not self.scan_worker.is_running:
             return
         threading.Thread(target=self._reconnect_obs_bg, daemon=True).start()
@@ -1623,11 +1632,11 @@ class App(ctk.CTk):
         try:
             self.obs_loop.run_coro(client.connect()).result(timeout=10)
             self._obs_client = client
-            self.post_ui(lambda: self.sidebar.status_text.configure(text="Surveillance active — OBS reconnecté"))
+            self.post_ui(lambda: self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING_OBS_RECONNECTED")))
         except Exception as exc:
             self._obs_client = None
             logger.warning("Reconnexion OBS échouée : %s", exc)
-            self.post_ui(lambda: self.sidebar.status_text.configure(text=f"Surveillance active (OBS: {exc})"))
+            self.post_ui(lambda: self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING_OBS_ERROR", error=exc)))
 
     def _on_close(self) -> None:
         self.scan_worker.stop()
