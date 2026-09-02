@@ -2,7 +2,6 @@
   "fr": {
     "APP_NAME": "OBS Dynamics",
     "APP_TITLE_WINDOW": "OBS Dynamics",
-
     "SIDEBAR_BRAND_ICON": "⚡ OBS",
     "SIDEBAR_BRAND_SUFFIX": " Dynamics",
     "SIDEBAR_NAV_DASHBOARD": "🏠  Bibliothèque",
@@ -19,7 +18,6 @@
     "SIDEBAR_BTN_STOP_PROGRESS": "Arrêt...",
     "SIDEBAR_BTN_OPEN_FOLDER": "📂 Dossier de données",
     "SIDEBAR_LANG_LABEL": "Langue",
-
     "DASHBOARD_TITLE": "Bibliothèque de jeux",
     "DASHBOARD_SUBTITLE": "{count} jeu(x) configuré(s)",
     "DASHBOARD_BTN_ADD": "＋ Ajouter",
@@ -30,7 +28,6 @@
     "DASHBOARD_STATUS_SUMMARY": "{count} jeu(x) suivi(s) — {active} actif(s)",
     "DASHBOARD_SCAN_RESULT": "{found} jeu(x) Steam détecté(s), {added} nouveau(x) ajouté(s).",
     "DASHBOARD_SCAN_ERROR": "Erreur scan Steam : {error}",
-
     "GAME_SOURCE_STEAM": "Steam",
     "GAME_SOURCE_MANUAL": "Manuel",
     "GAME_STATE_INACTIVE": "Inactif",
@@ -39,10 +36,8 @@
     "GAME_STATE_IN_GAME": "En jeu",
     "GAME_CARD_BTN_EDIT": "✎  Éditer",
     "GAME_CARD_BTN_DELETE": "🗑  Supprimer",
-
     "CONFIRM_DIALOG_TITLE": "Confirmer",
     "CONFIRM_DELETE_GAME": "Supprimer '{name}' ?",
-
     "GAME_MODAL_TITLE_EDIT": "Modifier le jeu",
     "GAME_MODAL_TITLE_ADD": "Ajouter un jeu",
     "GAME_MODAL_SOURCE_STEAM": "Jeu Steam détecté",
@@ -65,7 +60,6 @@
     "GAME_MODAL_ERR_INVALID_STEAM_SELECTION": "⚠ Sélectionne un jeu Steam valide.",
     "GAME_MODAL_ERR_MISSING_NAME_EXE": "⚠ Nom et exécutable requis.",
     "GAME_MODAL_ERR_SAVE_FAILED": "✗ Échec de la sauvegarde.",
-
     "SETTINGS_TITLE": "Paramètres",
     "SETTINGS_SECTION_OBS_WS": "Connexion OBS WebSocket",
     "SETTINGS_SECTION_LANGUAGE": "Langue de l'interface",
@@ -79,21 +73,29 @@
     "SETTINGS_SAVE_FAILED": "✗ Échec de la sauvegarde.",
     "SETTINGS_ERR_INVALID_VALUE": "⚠ Valeur invalide : {error}",
     "SETTINGS_ERR_PORT_RANGE": "Port hors plage 1-65535",
-
     "LANG_FR": "FR",
     "LANG_EN": "EN",
     "LANG_ES": "ES",
-
     "LOG_OBS_CONNECT_FAILED": "Connexion OBS échouée ({url}): {error}",
     "LOG_OBS_CONNECTED": "Connecté à OBS WebSocket sur {url}",
     "LOG_OBS_REQUEST_REFUSED": "Requête OBS '{request_type}' refusée (code={code}, comment={comment})",
     "LOG_OBS_NOT_CONNECTED": "Non connecté à OBS (requête '{request_type}' annulée).",
-    "LOG_SCENE_SWITCH_OK": "Scène OBS -> '{scene}' (jeu={game}, état={state})"
+    "LOG_SCENE_SWITCH_OK": "Scène OBS -> '{scene}' (jeu={game}, état={state})",
+    "GAME_MODAL_CHK_CREATE_SCENES": "Créer automatiquement les scènes dans OBS",
+    "GAME_MODAL_CHK_CREATE_SCENES_HINT": "Crée « <jeu> - Menu » et « <jeu> - En jeu » avec une source de capture, puis les sélectionne ci-dessus. OBS doit être connecté.",
+    "GAME_MODAL_ERR_SCENES_NEED_OBS": "OBS n'est pas connecté : impossible de créer les scènes.",
+    "GAME_MODAL_ERR_SCENES_FAILED": "Création des scènes échouée : {error}",
+    "LOG_HOTKEY_FORCED_STATE": "Hotkey : état forcé à « {state} » pour les jeux actifs.",
+    "LOG_OBS_CONNECTION_LOST": "Connexion OBS perdue : {error}",
+    "LOG_OBS_SCENE_CREATE_SKIPPED": "Scène « {scene} » non créée (elle existe probablement déjà) : {error}",
+    "LOG_OBS_INPUT_CREATE_SKIPPED": "Source « {source} » non créée : {error}",
+    "LOG_OBS_SCENE_ITEM_SKIPPED": "Ajout de « {source} » dans « {scene} » échoué : {error}",
+    "LOG_OBS_RECONNECT_ATTEMPT": "Reconnexion OBS, tentative {attempt} (prochain essai dans {delay}s)...",
+    "LOG_OBS_RECONNECTED": "Reconnexion à OBS réussie."
   },
   "en": {
     "APP_NAME": "OBS Dynamics",
     "APP_TITLE_WINDOW": "OBS Dynamics",
-
     "SIDEBAR_BRAND_ICON": "⚡ OBS",
     "SIDEBAR_BRAND_SUFFIX": " Dynamics",
     "SIDEBAR_NAV_DASHBOARD": "🏠  Library",
@@ -110,7 +112,6 @@
     "SIDEBAR_BTN_STOP_PROGRESS": "Stopping...",
     "SIDEBAR_BTN_OPEN_FOLDER": "📂 Data folder",
     "SIDEBAR_LANG_LABEL": "Language",
-
     "DASHBOARD_TITLE": "Game Library",
     "DASHBOARD_SUBTITLE": "{count} game(s) configured",
     "DASHBOARD_BTN_ADD": "＋ Add",
@@ -121,7 +122,6 @@
     "DASHBOARD_STATUS_SUMMARY": "{count} game(s) tracked — {active} active",
     "DASHBOARD_SCAN_RESULT": "{found} Steam game(s) found, {added} new added.",
     "DASHBOARD_SCAN_ERROR": "Steam scan error: {error}",
-
     "GAME_SOURCE_STEAM": "Steam",
     "GAME_SOURCE_MANUAL": "Manual",
     "GAME_STATE_INACTIVE": "Inactive",
@@ -130,10 +130,8 @@
     "GAME_STATE_IN_GAME": "In-game",
     "GAME_CARD_BTN_EDIT": "✎  Edit",
     "GAME_CARD_BTN_DELETE": "🗑  Delete",
-
     "CONFIRM_DIALOG_TITLE": "Confirm",
     "CONFIRM_DELETE_GAME": "Delete '{name}'?",
-
     "GAME_MODAL_TITLE_EDIT": "Edit Game",
     "GAME_MODAL_TITLE_ADD": "Add Game",
     "GAME_MODAL_SOURCE_STEAM": "Detected Steam game",
@@ -156,7 +154,6 @@
     "GAME_MODAL_ERR_INVALID_STEAM_SELECTION": "⚠ Select a valid Steam game.",
     "GAME_MODAL_ERR_MISSING_NAME_EXE": "⚠ Name and executable required.",
     "GAME_MODAL_ERR_SAVE_FAILED": "✗ Save failed.",
-
     "SETTINGS_TITLE": "Settings",
     "SETTINGS_SECTION_OBS_WS": "OBS WebSocket connection",
     "SETTINGS_SECTION_LANGUAGE": "Interface language",
@@ -170,21 +167,29 @@
     "SETTINGS_SAVE_FAILED": "✗ Save failed.",
     "SETTINGS_ERR_INVALID_VALUE": "⚠ Invalid value: {error}",
     "SETTINGS_ERR_PORT_RANGE": "Port out of range 1-65535",
-
     "LANG_FR": "FR",
     "LANG_EN": "EN",
     "LANG_ES": "ES",
-
     "LOG_OBS_CONNECT_FAILED": "OBS connection failed ({url}): {error}",
     "LOG_OBS_CONNECTED": "Connected to OBS WebSocket at {url}",
     "LOG_OBS_REQUEST_REFUSED": "OBS request '{request_type}' refused (code={code}, comment={comment})",
     "LOG_OBS_NOT_CONNECTED": "Not connected to OBS (request '{request_type}' cancelled).",
-    "LOG_SCENE_SWITCH_OK": "OBS scene -> '{scene}' (game={game}, state={state})"
+    "LOG_SCENE_SWITCH_OK": "OBS scene -> '{scene}' (game={game}, state={state})",
+    "GAME_MODAL_CHK_CREATE_SCENES": "Automatically create scenes in OBS",
+    "GAME_MODAL_CHK_CREATE_SCENES_HINT": "Creates \"<game> - Menu\" and \"<game> - En jeu\" with a capture source, then selects them above. OBS must be connected.",
+    "GAME_MODAL_ERR_SCENES_NEED_OBS": "OBS is not connected: cannot create scenes.",
+    "GAME_MODAL_ERR_SCENES_FAILED": "Scene creation failed: {error}",
+    "LOG_HOTKEY_FORCED_STATE": "Hotkey: state forced to \"{state}\" for running games.",
+    "LOG_OBS_CONNECTION_LOST": "OBS connection lost: {error}",
+    "LOG_OBS_SCENE_CREATE_SKIPPED": "Scene \"{scene}\" not created (it probably already exists): {error}",
+    "LOG_OBS_INPUT_CREATE_SKIPPED": "Source \"{source}\" not created: {error}",
+    "LOG_OBS_SCENE_ITEM_SKIPPED": "Failed to add \"{source}\" to \"{scene}\": {error}",
+    "LOG_OBS_RECONNECT_ATTEMPT": "Reconnecting to OBS, attempt {attempt} (next try in {delay}s)...",
+    "LOG_OBS_RECONNECTED": "Successfully reconnected to OBS."
   },
   "es": {
     "APP_NAME": "OBS Dynamics",
     "APP_TITLE_WINDOW": "OBS Dynamics",
-
     "SIDEBAR_BRAND_ICON": "⚡ OBS",
     "SIDEBAR_BRAND_SUFFIX": " Dynamics",
     "SIDEBAR_NAV_DASHBOARD": "🏠  Biblioteca",
@@ -201,7 +206,6 @@
     "SIDEBAR_BTN_STOP_PROGRESS": "Deteniendo...",
     "SIDEBAR_BTN_OPEN_FOLDER": "📂 Carpeta de datos",
     "SIDEBAR_LANG_LABEL": "Idioma",
-
     "DASHBOARD_TITLE": "Biblioteca de juegos",
     "DASHBOARD_SUBTITLE": "{count} juego(s) configurado(s)",
     "DASHBOARD_BTN_ADD": "＋ Añadir",
@@ -212,7 +216,6 @@
     "DASHBOARD_STATUS_SUMMARY": "{count} juego(s) monitoreado(s) — {active} activo(s)",
     "DASHBOARD_SCAN_RESULT": "{found} juego(s) de Steam encontrado(s), {added} nuevo(s) añadido(s).",
     "DASHBOARD_SCAN_ERROR": "Error al escanear Steam: {error}",
-
     "GAME_SOURCE_STEAM": "Steam",
     "GAME_SOURCE_MANUAL": "Manual",
     "GAME_STATE_INACTIVE": "Inactivo",
@@ -221,10 +224,8 @@
     "GAME_STATE_IN_GAME": "En juego",
     "GAME_CARD_BTN_EDIT": "✎  Editar",
     "GAME_CARD_BTN_DELETE": "🗑  Eliminar",
-
     "CONFIRM_DIALOG_TITLE": "Confirmar",
     "CONFIRM_DELETE_GAME": "¿Eliminar '{name}'?",
-
     "GAME_MODAL_TITLE_EDIT": "Editar juego",
     "GAME_MODAL_TITLE_ADD": "Añadir juego",
     "GAME_MODAL_SOURCE_STEAM": "Juego de Steam detectado",
@@ -247,7 +248,6 @@
     "GAME_MODAL_ERR_INVALID_STEAM_SELECTION": "⚠ Selecciona un juego de Steam válido.",
     "GAME_MODAL_ERR_MISSING_NAME_EXE": "⚠ Nombre y ejecutable requeridos.",
     "GAME_MODAL_ERR_SAVE_FAILED": "✗ Error al guardar.",
-
     "SETTINGS_TITLE": "Ajustes",
     "SETTINGS_SECTION_OBS_WS": "Conexión OBS WebSocket",
     "SETTINGS_SECTION_LANGUAGE": "Idioma de la interfaz",
@@ -261,15 +261,24 @@
     "SETTINGS_SAVE_FAILED": "✗ Error al guardar.",
     "SETTINGS_ERR_INVALID_VALUE": "⚠ Valor inválido: {error}",
     "SETTINGS_ERR_PORT_RANGE": "Puerto fuera de rango 1-65535",
-
     "LANG_FR": "FR",
     "LANG_EN": "EN",
     "LANG_ES": "ES",
-
     "LOG_OBS_CONNECT_FAILED": "Conexión a OBS fallida ({url}): {error}",
     "LOG_OBS_CONNECTED": "Conectado a OBS WebSocket en {url}",
     "LOG_OBS_REQUEST_REFUSED": "Solicitud OBS '{request_type}' rechazada (code={code}, comment={comment})",
     "LOG_OBS_NOT_CONNECTED": "No conectado a OBS (solicitud '{request_type}' cancelada).",
-    "LOG_SCENE_SWITCH_OK": "Escena OBS -> '{scene}' (juego={game}, estado={state})"
+    "LOG_SCENE_SWITCH_OK": "Escena OBS -> '{scene}' (juego={game}, estado={state})",
+    "GAME_MODAL_CHK_CREATE_SCENES": "Crear automáticamente las escenas en OBS",
+    "GAME_MODAL_CHK_CREATE_SCENES_HINT": "Crea «<juego> - Menu» y «<juego> - En jeu» con una fuente de captura y las selecciona arriba. OBS debe estar conectado.",
+    "GAME_MODAL_ERR_SCENES_NEED_OBS": "OBS no está conectado: no se pueden crear las escenas.",
+    "GAME_MODAL_ERR_SCENES_FAILED": "Error al crear las escenas: {error}",
+    "LOG_HOTKEY_FORCED_STATE": "Atajo: estado forzado a «{state}» para los juegos activos.",
+    "LOG_OBS_CONNECTION_LOST": "Conexión con OBS perdida: {error}",
+    "LOG_OBS_SCENE_CREATE_SKIPPED": "Escena «{scene}» no creada (probablemente ya existe): {error}",
+    "LOG_OBS_INPUT_CREATE_SKIPPED": "Fuente «{source}» no creada: {error}",
+    "LOG_OBS_SCENE_ITEM_SKIPPED": "No se pudo añadir «{source}» a «{scene}»: {error}",
+    "LOG_OBS_RECONNECT_ATTEMPT": "Reconectando a OBS, intento {attempt} (siguiente en {delay}s)...",
+    "LOG_OBS_RECONNECTED": "Reconexión a OBS correcta."
   }
 }

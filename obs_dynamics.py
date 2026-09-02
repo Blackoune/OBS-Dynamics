@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import logging.handlers
 import os
 import queue
 import re
@@ -17,7 +18,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any, Callable, Optional
@@ -61,17 +62,30 @@ def get_base_path() -> Path:
 BASE_DIR = get_base_path()
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
+COVERS_DIR = DATA_DIR / "covers"
 ENV_PATH = BASE_DIR / ".env"
 GAMES_PATH = DATA_DIR / "games.json"
+HOTKEYS_PATH = DATA_DIR / "hotkeys.json"
 ASSETS_DIR = BASE_DIR / "assets"
 ICON_PATH = ASSETS_DIR / "icon.ico"
 LOG_PATH = DATA_DIR / "obs_dynamics.log"
 I18N_PATH = BASE_DIR / "i18n.json"
 
+# Rotation des logs : sans elle obs_dynamics.log grossit indéfiniment (la
+# boucle de scan écrit à chaque bascule de scène). 2 Mo x 3 fichiers = 6 Mo
+# au maximum sur disque. Le handler fichier est best-effort : si le dossier
+# est en lecture seule, on continue en console seule plutôt que de planter.
+_log_handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+try:
+    _log_handlers.insert(0, logging.handlers.RotatingFileHandler(
+        LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"))
+except OSError:
+    print(f"[warn] Journalisation fichier désactivée ({LOG_PATH} inaccessible).", file=sys.stderr)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
+    handlers=_log_handlers,
 )
 logger = logging.getLogger("obs_dynamics")
 
@@ -79,6 +93,10 @@ logger = logging.getLogger("obs_dynamics")
 import i18n
 i18n.init(path=I18N_PATH)
 from i18n import t
+
+# Modules locaux (racine du projet, embarqués par build.spec).
+from cover_service import GameCoverService
+from hotkeys import HotkeyManager, load_bindings
 
 # ============================================================================
 # PALETTE — thème AAA violet sombre (Steam/Discord/Spotify inspired)
@@ -122,6 +140,7 @@ class OBSConfig:
     scan_interval_seconds: float = 2.0
     match_threshold: float = 0.8
     lang: str = i18n.DEFAULT_LANG
+    rawg_api_key: str = ""
 
 
 ENV_KEYS = {
@@ -131,6 +150,7 @@ ENV_KEYS = {
     "scan_interval_seconds": "OBS_SCAN_INTERVAL_SECONDS",
     "match_threshold": "OBS_MATCH_THRESHOLD",
     "lang": "OBS_APP_LANG",
+    "rawg_api_key": "RAWG_API_KEY",
 }
 
 
@@ -140,9 +160,24 @@ class EnvConfigManager:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
+        # Cache invalidé par (mtime, taille) : ScanWorker appelle load() à
+        # chaque cycle (toutes les 0.5-2s), relire et reparser le .env à
+        # chaque fois est du pur gaspillage d'I/O.
+        self._cached: Optional[OBSConfig] = None
+        self._cache_stamp: Optional[tuple[float, int]] = None
+
+    def _stamp(self) -> Optional[tuple[float, int]]:
+        try:
+            st = self._path.stat()
+            return (st.st_mtime, st.st_size)
+        except OSError:
+            return None
 
     def load(self) -> OBSConfig:
         with self._lock:
+            stamp = self._stamp()
+            if self._cached is not None and stamp is not None and stamp == self._cache_stamp:
+                return replace(self._cached)  # copie : l'appelant peut muter sans polluer le cache
             cfg = OBSConfig()
             if not self._path.exists():
                 return cfg
@@ -176,8 +211,12 @@ class EnvConfigManager:
                     elif key == ENV_KEYS["lang"]:
                         if value in i18n.SUPPORTED_LANGS:
                             cfg.lang = value
+                    elif key == ENV_KEYS["rawg_api_key"]:
+                        cfg.rawg_api_key = value
             except OSError:
                 logger.exception("Lecture .env échouée, valeurs par défaut utilisées.")
+                return cfg
+            self._cached, self._cache_stamp = replace(cfg), stamp
             return cfg
 
     def save(self, cfg: OBSConfig) -> bool:
@@ -190,6 +229,7 @@ class EnvConfigManager:
                     ENV_KEYS["scan_interval_seconds"]: str(cfg.scan_interval_seconds),
                     ENV_KEYS["match_threshold"]: str(cfg.match_threshold),
                     ENV_KEYS["lang"]: cfg.lang,
+                    ENV_KEYS["rawg_api_key"]: cfg.rawg_api_key,
                 }
                 seen = dict.fromkeys(updates, False)
                 lines: list[str] = []
@@ -209,6 +249,7 @@ class EnvConfigManager:
                 tmp = self._path.with_suffix(".tmp")
                 tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 tmp.replace(self._path)
+                self._cached, self._cache_stamp = None, None  # invalide le cache
                 return True
             except OSError:
                 logger.exception("Échec sauvegarde .env.")
@@ -339,9 +380,23 @@ class GameStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
+        # Même motif que EnvConfigManager : load() est appelé à chaque cycle
+        # de scan ET plusieurs fois par rendu de la grille.
+        self._cached: Optional[list[Game]] = None
+        self._cache_stamp: Optional[tuple[float, int]] = None
+
+    def _stamp(self) -> Optional[tuple[float, int]]:
+        try:
+            st = self._path.stat()
+            return (st.st_mtime, st.st_size)
+        except OSError:
+            return None
 
     def load(self) -> list[Game]:
         with self._lock:
+            stamp = self._stamp()
+            if self._cached is not None and stamp is not None and stamp == self._cache_stamp:
+                return list(self._cached)  # copie de liste : pas de mutation croisée
             if not self._path.exists():
                 return []
             try:
@@ -350,10 +405,12 @@ class GameStore:
                 # ([...]) au lieu du format {"games": [...]}. On accepte les
                 # deux ; save() réécrit toujours au format canonique ensuite.
                 games_raw = raw if isinstance(raw, list) else raw.get("games", [])
-                return [Game.from_dict(g) for g in games_raw]
+                games = [Game.from_dict(g) for g in games_raw]
             except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError):
                 logger.exception("games.json invalide.")
                 return []
+            self._cached, self._cache_stamp = list(games), stamp
+            return games
 
     def save(self, games: list[Game]) -> bool:
         with self._lock:
@@ -362,6 +419,7 @@ class GameStore:
                 tmp = self._path.with_suffix(".tmp")
                 tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(self._path)
+                self._cached, self._cache_stamp = None, None  # invalide le cache
                 return True
             except OSError:
                 logger.exception("Échec sauvegarde games.json.")
@@ -443,18 +501,77 @@ def _capture_screen_bgr() -> Optional[np.ndarray]:
         return None
 
 
-def _best_match_score(screen_bgr: np.ndarray, template_paths: list[str]) -> float:
+# Facteur de réduction appliqué à l'écran ET aux templates avant matchTemplate.
+# matchTemplate coûte O(W·H·w·h) : diviser les deux dimensions par 2 divise le
+# coût par ~16. La corrélation normalisée reste fiable à cette échelle pour de
+# la détection de HUD/menu, qui ne joue pas sur le détail fin.
+DETECT_SCALE = 0.5
+
+
+def _downscale(img: np.ndarray, scale: float = DETECT_SCALE) -> np.ndarray:
+    if scale >= 1.0:
+        return img
+    h, w = img.shape[:2]
+    nh, nw = max(1, int(h * scale)), max(1, int(w * scale))
+    return cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+
+
+class _TemplateCache:
+    """Garde en mémoire les templates déjà décodés ET déjà réduits.
+
+    Avant, _best_match_score rappelait _imread_unicode à CHAQUE cycle de scan
+    pour CHAQUE image de référence : relecture disque + décodage JPEG/PNG
+    toutes les 2 secondes, pour des fichiers qui ne changent jamais.
+    L'entrée est invalidée sur (mtime, taille) pour que remplacer une image
+    de référence soit pris en compte sans redémarrer l'application.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[tuple[float, int], Optional[np.ndarray]]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, path: str) -> Optional[np.ndarray]:
+        try:
+            st = os.stat(path)
+            stamp = (st.st_mtime, st.st_size)
+        except OSError:
+            with self._lock:
+                self._entries.pop(path, None)
+            return None
+
+        with self._lock:
+            hit = self._entries.get(path)
+            if hit is not None and hit[0] == stamp:
+                return hit[1]
+
+        raw = _imread_unicode(path, cv2.IMREAD_COLOR)
+        tpl = _downscale(raw) if raw is not None else None
+        with self._lock:
+            self._entries[path] = (stamp, tpl)
+        return tpl
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+_TEMPLATES = _TemplateCache()
+
+
+def _best_match_score(screen_small: np.ndarray, template_paths: list[str]) -> float:
+    """`screen_small` doit DÉJÀ être réduit par _downscale — les templates le
+    sont aussi via le cache, sinon les échelles ne correspondraient pas."""
     best = 0.0
+    sh, sw = screen_small.shape[:2]
     for path in template_paths:
-        template = _imread_unicode(path, cv2.IMREAD_COLOR)
+        template = _TEMPLATES.get(path)
         if template is None:
             continue
         th, tw = template.shape[:2]
-        sh, sw = screen_bgr.shape[:2]
         if th > sh or tw > sw:
             continue
         try:
-            result = cv2.matchTemplate(screen_bgr, template, cv2.TM_CCOEFF_NORMED)
+            result = cv2.matchTemplate(screen_small, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(result)
             best = max(best, float(max_val))
         except cv2.error:
@@ -462,18 +579,28 @@ def _best_match_score(screen_bgr: np.ndarray, template_paths: list[str]) -> floa
     return best
 
 
-def detect_game_state(game: Game, threshold: float) -> str:
+def detect_game_state(game: Game, threshold: float,
+                      screen_small: Optional[np.ndarray] = None) -> str:
     """'inactive' | 'active' (process seul, sans images de référence) |
-    'menu' | 'in_game' (avec correspondance visuelle OpenCV)."""
+    'menu' | 'in_game' (avec correspondance visuelle OpenCV).
+
+    `screen_small` est la capture d'écran DÉJÀ réduite, partagée par tous les
+    jeux d'un même cycle de scan. Avant, chaque jeu déclenchait son propre
+    ImageGrab.grab() plein écran : 10 jeux configurés = 10 captures toutes les
+    2 secondes. Laisser le paramètre à None reste possible (la capture est
+    alors faite ici) pour les appels isolés et les tests.
+    """
     if not is_game_active(game):
         return "inactive"
     if not game.menu_images and not game.ingame_images:
         return "active"
-    screen = _capture_screen_bgr()
-    if screen is None:
-        return "active"
-    menu_score = _best_match_score(screen, game.menu_images) if game.menu_images else 0.0
-    ingame_score = _best_match_score(screen, game.ingame_images) if game.ingame_images else 0.0
+    if screen_small is None:
+        raw = _capture_screen_bgr()
+        if raw is None:
+            return "active"
+        screen_small = _downscale(raw)
+    menu_score = _best_match_score(screen_small, game.menu_images) if game.menu_images else 0.0
+    ingame_score = _best_match_score(screen_small, game.ingame_images) if game.ingame_images else 0.0
     if max(menu_score, ingame_score) < threshold:
         return "active"
     return "in_game" if ingame_score >= menu_score else "menu"
@@ -579,7 +706,15 @@ class OBSClient:
         if not self.is_connected or self._ws is None:
             raise OBSClientError(t("LOG_OBS_NOT_CONNECTED", request_type=request_type))
         request = simpleobsws.Request(request_type, request_data or {})
-        response = await self._ws.call(request)
+        try:
+            response = await self._ws.call(request)
+        except (OSError, ConnectionError, asyncio.TimeoutError) as exc:
+            # La socket est morte (OBS fermé, réseau coupé). On bascule l'état
+            # à "déconnecté" pour que le superviseur déclenche la reconnexion :
+            # sans ça `_connected` restait True indéfiniment et les bascules de
+            # scène échouaient en silence jusqu'à un Stop/Start manuel.
+            self._connected = False
+            raise OBSClientError(t("LOG_OBS_CONNECTION_LOST", error=exc)) from exc
         ok = getattr(response, "ok", lambda: False)()
         if not ok:
             status = getattr(response, "requestStatus", None)
@@ -595,6 +730,61 @@ class OBSClient:
 
     async def set_current_scene(self, scene_name: str) -> None:
         await self.call("SetCurrentProgramScene", {"sceneName": scene_name})
+
+    # -- Création de scènes / sources (à l'ajout d'un jeu) ------------------ #
+    # Chaque helper tolère l'échec « existe déjà » : recréer un jeu déjà
+    # configuré ne doit pas faire échouer l'enregistrement du formulaire.
+
+    async def create_scene(self, scene_name: str) -> bool:
+        try:
+            await self.call("CreateScene", {"sceneName": scene_name})
+            return True
+        except OBSClientError as exc:
+            logger.warning(t("LOG_OBS_SCENE_CREATE_SKIPPED", scene=scene_name, error=exc))
+            return False
+
+    async def create_input(self, scene_name: str, input_name: str,
+                           input_kind: str, input_settings: dict[str, Any]) -> bool:
+        try:
+            await self.call("CreateInput", {
+                "sceneName": scene_name,
+                "inputName": input_name,
+                "inputKind": input_kind,
+                "inputSettings": input_settings,
+            })
+            return True
+        except OBSClientError as exc:
+            logger.warning(t("LOG_OBS_INPUT_CREATE_SKIPPED", source=input_name, error=exc))
+            return False
+
+    async def create_scene_item(self, scene_name: str, source_name: str) -> bool:
+        try:
+            await self.call("CreateSceneItem", {
+                "sceneName": scene_name, "sourceName": source_name,
+            })
+            return True
+        except OBSClientError as exc:
+            logger.warning(t("LOG_OBS_SCENE_ITEM_SKIPPED", source=source_name,
+                             scene=scene_name, error=exc))
+            return False
+
+    async def setup_game_scenes(self, game_name: str, executable: str) -> tuple[str, str]:
+        """Crée les deux scènes d'un jeu ('<jeu> - Menu' et '<jeu> - En jeu')
+        et y ajoute une source de capture de jeu. Retourne les deux noms de
+        scènes, à réinjecter dans le formulaire."""
+        menu_scene = f"{game_name} - Menu"
+        ingame_scene = f"{game_name} - En jeu"
+        await self.create_scene(menu_scene)
+        await self.create_scene(ingame_scene)
+
+        # game_capture n'existe que sous Windows ; ailleurs OBS refusera et le
+        # helper loguera sans interrompre la création des scènes.
+        settings: dict[str, Any] = {"capture_mode": "any_fullscreen"}
+        if executable:
+            settings = {"capture_mode": "window", "window": executable}
+        await self.create_input(ingame_scene, f"{game_name} — Capture",
+                                "game_capture", settings)
+        return menu_scene, ingame_scene
 
 
 # ============================================================================
@@ -612,6 +802,7 @@ class ScanWorker:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_states: dict[str, str] = {}
+        self._forced_states: dict[str, str] = {}  # rempli par les hotkeys
 
     @property
     def is_running(self) -> bool:
@@ -631,22 +822,66 @@ class ScanWorker:
         self._thread = None
 
     def _loop(self, on_update: Callable[[list[dict[str, Any]]], None]) -> None:
+        # `cfg` est initialisé AVANT la boucle : l'ancienne version testait
+        # `if "cfg" in locals()` dans le wait() final, ce qui retombait sur un
+        # délai codé en dur si le tout premier chargement échouait, puis
+        # gardait indéfiniment la dernière valeur chargée avec succès.
+        cfg = self._config_mgr.load()
         while not self._stop_event.is_set():
             try:
                 cfg = self._config_mgr.load()
                 games = self._store.load()
+
+                # UNE seule capture d'écran par cycle, partagée par tous les
+                # jeux, et uniquement si au moins un jeu actif a des images
+                # de référence à comparer.
+                screen_small: Optional[np.ndarray] = None
+                if any(g.menu_images or g.ingame_images for g in games):
+                    raw = _capture_screen_bgr()
+                    if raw is not None:
+                        screen_small = _downscale(raw)
+
                 results: list[dict[str, Any]] = []
                 for game in games:
-                    state = detect_game_state(game, cfg.match_threshold)
+                    state = detect_game_state(game, cfg.match_threshold, screen_small)
+                    forced = self._forced_states.get(game.id)
+                    if forced is not None and state != "inactive":
+                        # Une hotkey a forcé un état : il prime tant que le
+                        # jeu tourne, et se purge dès qu'il se ferme.
+                        state = forced
                     results.append({
                         "id": game.id, "name": game.name, "exe": game.active_match,
                         "state": state, "active": state != "inactive",
                     })
                     self._maybe_switch_scene(game, state)
+
+                self._prune_state_maps({g.id for g in games})
                 self._post_ui(lambda r=results: on_update(r))
             except Exception:
                 logger.exception("Erreur dans la boucle de surveillance.")
-            self._stop_event.wait(max(0.5, cfg.scan_interval_seconds) if "cfg" in locals() else 2.0)
+            self._stop_event.wait(max(0.5, cfg.scan_interval_seconds))
+
+    def _prune_state_maps(self, live_ids: set[str]) -> None:
+        """Purge les jeux supprimés. Sans ça `_last_states` grossissait sans
+        fin, et un jeu supprimé puis recréé gardait son ancien état — donc la
+        bascule de scène ne se redéclenchait jamais pour lui."""
+        for stale in [gid for gid in self._last_states if gid not in live_ids]:
+            del self._last_states[stale]
+        for stale in [gid for gid in self._forced_states if gid not in live_ids]:
+            del self._forced_states[stale]
+
+    def force_state(self, state: str) -> None:
+        """Force l'état de tous les jeux actuellement actifs (hotkeys)."""
+        applied = False
+        for game in self._store.load():
+            if is_game_active(game):
+                self._forced_states[game.id] = state
+                applied = True
+        if applied:
+            logger.info(t("LOG_HOTKEY_FORCED_STATE", state=state))
+
+    def clear_forced_states(self) -> None:
+        self._forced_states.clear()
 
     def _maybe_switch_scene(self, game: Game, state: str) -> None:
         if state == self._last_states.get(game.id):
@@ -681,7 +916,8 @@ class GameCard(ctk.CTkFrame):
     CARD_HEIGHT = 285  # ratio 2:3
 
     def __init__(self, master, game: Game, state: str,
-                 on_edit: Callable[[Game], None], on_delete: Callable[[Game], None], **kwargs) -> None:
+                 on_edit: Callable[[Game], None], on_delete: Callable[[Game], None],
+                 cover_service: Optional[GameCoverService] = None, **kwargs) -> None:
         super().__init__(master, fg_color=COL_CARD, corner_radius=12,
                           border_width=1, border_color=COL_BORDER,
                           width=self.CARD_WIDTH, height=self.CARD_HEIGHT, **kwargs)
@@ -695,19 +931,29 @@ class GameCard(ctk.CTkFrame):
         self._current_state = state
         self._on_edit = on_edit
         self._on_delete = on_delete
+        self._cover_service = cover_service
+        self._ctk_image: Optional[ctk.CTkImage] = None
 
-        # --- Zone "jaquette" : dégradé violet + icône, occupe toute la carte ---
+        # --- Zone "jaquette" : image si disponible, sinon icône + titre ---
         self._poster = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12)
         self._poster.grid(row=0, column=0, sticky="nsew")
         self._poster.grid_columnconfigure(0, weight=1)
         self._poster.grid_rowconfigure(0, weight=1)
 
-        icon_lbl = ctk.CTkLabel(self._poster, text="🎮", font=font(46))
-        icon_lbl.place(relx=0.5, rely=0.42, anchor="center")
+        # Le label de jaquette occupe toute la carte et sert aussi de
+        # placeholder (emoji) tant que l'image n'est pas arrivée.
+        self._cover_lbl = ctk.CTkLabel(self._poster, text="🎮", font=font(46),
+                                        text_color=COL_TEXT_MUTED, fg_color=COL_CARD,
+                                        corner_radius=12)
+        self._cover_lbl.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        title_static = ctk.CTkLabel(self._poster, text=game.name, font=font(13, "bold"),
-                                     text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24, justify="center")
-        title_static.place(relx=0.5, rely=0.82, anchor="center")
+        icon_lbl = self._cover_lbl  # conservé pour les bindings de survol
+
+        self._title_static = ctk.CTkLabel(self._poster, text=game.name, font=font(13, "bold"),
+                                           text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24,
+                                           justify="center")
+        self._title_static.place(relx=0.5, rely=0.82, anchor="center")
+        title_static = self._title_static
 
         # --- Badge unique de statut (top-right) — jamais plus d'un par carte ---
         self._badge = ctk.CTkFrame(self._poster, fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE),
@@ -752,6 +998,40 @@ class GameCard(ctk.CTkFrame):
             widget.bind("<Enter>", self._show_overlay)
         self._overlay.bind("<Leave>", self._hide_overlay)
         self._poster.bind("<Leave>", self._on_poster_leave)
+
+        # Demandé en dernier : la carte est entièrement construite, donc le
+        # callback (remis sur le thread UI par le service) trouvera des
+        # widgets valides quelle que soit la vitesse du cache.
+        self._request_cover()
+
+    # -- Jaquette ---------------------------------------------------------- #
+
+    def _request_cover(self, force: bool = False) -> None:
+        if self._cover_service is None:
+            return
+        self._cover_service.request_cover(self._game, self._on_cover_received, force=force)
+
+    def _on_cover_received(self, pil_image: Optional[Image.Image]) -> None:
+        """Appelé sur le thread UI (garanti par le contrat de dispatch du
+        service). La carte peut avoir été détruite entre-temps par un rebuild
+        de la grille : winfo_exists() évite le TclError."""
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        if pil_image is None:
+            return  # on garde le placeholder emoji + titre
+        try:
+            self._ctk_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image,
+                                           size=(self.CARD_WIDTH, self.CARD_HEIGHT))
+            self._cover_lbl.configure(image=self._ctk_image, text="")
+            # La jaquette porte déjà le titre du jeu : afficher le nôtre
+            # par-dessus ferait doublon illisible.
+            self._title_static.place_forget()
+        except Exception:
+            logger.debug("Application de la jaquette échouée pour %s.", self._game.name,
+                         exc_info=True)
 
     def _show_overlay(self, _event: Any = None) -> None:
         if self._overlay_visible:
@@ -838,10 +1118,16 @@ class GameModal(ctk.CTkToplevel):
         scroll.pack(fill="both", expand=True, padx=16, pady=16)
         scroll.grid_columnconfigure(0, weight=1)
 
+        # Compteur de lignes : les numéros de grille étaient codés en dur
+        # (row=0..15), ce qui rendait toute insertion de champ risquée et
+        # avait déjà conduit à empiler un label et son champ dans la MÊME
+        # cellule, chevauchement rattrapé à coups de padding.
+        self._row = 0
+
         # --- Source ---
         self.source_var = ctk.StringVar(value=(game.source if game else "manual"))
         source_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        source_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        source_row.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 10))
         ctk.CTkRadioButton(source_row, text=t("GAME_MODAL_SOURCE_STEAM"), variable=self.source_var,
                             fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
                             value="steam", command=self._toggle_source).pack(side="left", padx=(0, 16))
@@ -855,63 +1141,92 @@ class GameModal(ctk.CTkToplevel):
         self.steam_menu = ctk.CTkOptionMenu(scroll, values=steam_names, variable=self.steam_var,
                                              fg_color=COL_BG, button_color=COL_ACCENT,
                                              button_hover_color=COL_ACCENT_HOVER)
-        self.steam_menu.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.steam_menu.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 10))
 
         # --- Manuel: nom + exe ---
         self.name_var = ctk.StringVar(value=game.name if game else "")
         self.exe_var = ctk.StringVar(value=game.active_match if (game and game.source == "manual") else "")
-        self._labeled_entry(scroll, 2, t("GAME_MODAL_LABEL_NAME"), self.name_var)
-        self._labeled_entry(scroll, 3, t("GAME_MODAL_LABEL_EXE"), self.exe_var)
+        self.name_entry = self._labeled_entry(scroll, t("GAME_MODAL_LABEL_NAME"), self.name_var)
+        self.exe_entry = self._labeled_entry(scroll, t("GAME_MODAL_LABEL_EXE"), self.exe_var)
 
         # --- Images ---
         ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_MENU"), font=font(12, "bold"),
-                     anchor="w").grid(row=4, column=0, sticky="w", pady=(10, 2))
+                     anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(10, 2))
         self.menu_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._menu_images),
                                            text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
-        self.menu_list_lbl.grid(row=5, column=0, sticky="w")
+        self.menu_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
         ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_MENU_IMAGES"), height=30, fg_color=COL_CARD,
                        hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("menu")).grid(row=6, column=0, sticky="ew", pady=(4, 10))
+                       command=lambda: self._pick_images("menu")).grid(
+            row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
 
         ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_INGAME"), font=font(12, "bold"),
-                     anchor="w").grid(row=7, column=0, sticky="w", pady=(4, 2))
+                     anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(4, 2))
         self.ingame_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._ingame_images),
                                              text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
-        self.ingame_list_lbl.grid(row=8, column=0, sticky="w")
+        self.ingame_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
         ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_INGAME_IMAGES"), height=30, fg_color=COL_CARD,
                        hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("ingame")).grid(row=9, column=0, sticky="ew", pady=(4, 10))
+                       command=lambda: self._pick_images("ingame")).grid(
+            row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
 
         # --- Scènes OBS ---
         scene_names = self._fetch_scene_names()
         self.scene_menu_var = ctk.StringVar(value=game.obs_scene_menu if game else "")
         self.scene_ingame_var = ctk.StringVar(value=game.obs_scene_ingame if game else "")
         ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_MENU"), font=font(12), anchor="w",
-                     text_color=COL_TEXT_MUTED).grid(row=10, column=0, sticky="w", pady=(6, 2))
-        self._scene_selector(scroll, 11, scene_names, self.scene_menu_var)
+                     text_color=COL_TEXT_MUTED).grid(row=self._next_row(), column=0,
+                                                     sticky="w", pady=(6, 2))
+        self._scene_selector(scroll, self._next_row(), scene_names, self.scene_menu_var)
         ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_INGAME"), font=font(12), anchor="w",
-                     text_color=COL_TEXT_MUTED).grid(row=12, column=0, sticky="w", pady=(6, 2))
-        self._scene_selector(scroll, 13, scene_names, self.scene_ingame_var)
+                     text_color=COL_TEXT_MUTED).grid(row=self._next_row(), column=0,
+                                                     sticky="w", pady=(6, 2))
+        self._scene_selector(scroll, self._next_row(), scene_names, self.scene_ingame_var)
+
+        # --- Création automatique des scènes dans OBS ---
+        self.create_scenes_var = ctk.BooleanVar(value=False)
+        self.create_scenes_cb = ctk.CTkCheckBox(
+            scroll, text=t("GAME_MODAL_CHK_CREATE_SCENES"), variable=self.create_scenes_var,
+            font=font(12), fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+            text_color=COL_TEXT_MUTED)
+        self.create_scenes_cb.grid(row=self._next_row(), column=0, sticky="w", pady=(12, 2))
+        self.create_scenes_hint = ctk.CTkLabel(
+            scroll, text=t("GAME_MODAL_CHK_CREATE_SCENES_HINT"), font=font(10),
+            text_color=COL_TEXT_MUTED, anchor="w", wraplength=420, justify="left")
+        self.create_scenes_hint.grid(row=self._next_row(), column=0, sticky="w", pady=(0, 6))
 
         self.msg_lbl = ctk.CTkLabel(scroll, text="", font=font(11))
-        self.msg_lbl.grid(row=14, column=0, sticky="w", pady=(10, 0))
+        self.msg_lbl.grid(row=self._next_row(), column=0, sticky="w", pady=(10, 0))
 
         ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_SAVE"), height=38, fg_color=COL_ACCENT,
                        hover_color=COL_ACCENT_HOVER, text_color="#0F0C1B",
                        font=font(13, "bold"), command=self._save).grid(
-            row=15, column=0, sticky="ew", pady=(16, 0))
+            row=self._next_row(), column=0, sticky="ew", pady=(16, 0))
 
         self._toggle_source()
+
+    def _next_row(self) -> int:
+        row = self._row
+        self._row += 1
+        return row
 
     @staticmethod
     def _images_summary(paths: list[str]) -> str:
         return t("GAME_MODAL_IMAGES_COUNT", count=len(paths)) if paths else t("GAME_MODAL_IMAGES_NONE")
 
-    def _labeled_entry(self, parent, row: int, label: str, var: ctk.StringVar) -> None:
+    def _labeled_entry(self, parent, label: str, var: ctk.StringVar) -> ctk.CTkEntry:
+        """Le label et le champ occupent DEUX lignes distinctes.
+
+        Avant, les deux étaient placés dans la même cellule (row identique,
+        column=0) et ne se chevauchaient pas seulement grâce à un pady=(20,8)
+        calibré à la main : n'importe quel changement de police, d'échelle DPI
+        ou de langue faisait repasser le texte du label sous le champ.
+        """
         ctk.CTkLabel(parent, text=label, font=font(12), text_color=COL_TEXT_MUTED,
-                     anchor="w").grid(row=row, column=0, sticky="w", pady=(4, 2))
+                     anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(6, 2))
         entry = ctk.CTkEntry(parent, textvariable=var, fg_color=COL_BG, border_color=COL_BORDER)
-        entry.grid(row=row, column=0, sticky="ew", pady=(20, 8))
+        entry.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 8))
+        return entry
 
     def _scene_selector(self, parent, row: int, scene_names: list[str], var: ctk.StringVar) -> None:
         values = scene_names or [t("GAME_MODAL_SCENE_NOT_CONNECTED")]
@@ -931,8 +1246,17 @@ class GameModal(ctk.CTkToplevel):
             return []
 
     def _toggle_source(self) -> None:
+        """Active exactement le jeu de champs correspondant à la source.
+
+        Avant, seul le menu Steam était grisé : en mode Steam les champs Nom
+        et Exécutable restaient éditables alors que _save() les ignorait
+        totalement — l'utilisateur pouvait saisir un nom qui était
+        silencieusement jeté.
+        """
         is_steam = self.source_var.get() == "steam"
         self.steam_menu.configure(state="normal" if is_steam else "disabled")
+        for entry in (self.name_entry, self.exe_entry):
+            entry.configure(state="disabled" if is_steam else "normal")
 
     def _pick_images(self, kind: str) -> None:
         paths = filedialog.askopenfilenames(
@@ -947,6 +1271,24 @@ class GameModal(ctk.CTkToplevel):
         else:
             self._ingame_images = list(paths)
             self.ingame_list_lbl.configure(text=self._images_summary(self._ingame_images))
+
+    def _create_obs_scenes(self, name: str, active_match: str) -> Optional[tuple[str, str]]:
+        """Crée les scènes du jeu dans OBS. Retourne (menu, en_jeu) ou None si
+        OBS n'est pas joignable — dans ce cas le message d'erreur est affiché
+        et l'enregistrement est interrompu pour ne pas écrire des noms de
+        scènes qui n'existent pas."""
+        client = self._get_obs_client()
+        if client is None or not client.is_connected:
+            self.msg_lbl.configure(text=t("GAME_MODAL_ERR_SCENES_NEED_OBS"), text_color=COL_RED)
+            return None
+        try:
+            future = self._obs_loop.run_coro(client.setup_game_scenes(name, active_match))
+            return future.result(timeout=15)
+        except Exception as exc:
+            logger.exception("Création des scènes OBS échouée.")
+            self.msg_lbl.configure(text=t("GAME_MODAL_ERR_SCENES_FAILED", error=str(exc)[:60]),
+                                   text_color=COL_RED)
+            return None
 
     def _save(self) -> None:
         if self.source_var.get() == "steam":
@@ -965,11 +1307,22 @@ class GameModal(ctk.CTkToplevel):
                 return
             source, active_match, appid = "manual", exe, ""
 
+        scene_menu = self.scene_menu_var.get()
+        scene_ingame = self.scene_ingame_var.get()
+
+        if self.create_scenes_var.get():
+            created = self._create_obs_scenes(name, active_match)
+            if created is None:
+                return  # message d'erreur déjà affiché
+            scene_menu, scene_ingame = created
+            self.scene_menu_var.set(scene_menu)
+            self.scene_ingame_var.set(scene_ingame)
+
         game = Game(
             id=self._game.id if self._game else uuid.uuid4().hex,
             name=name, source=source, active_match=active_match, appid=appid,
             menu_images=self._menu_images, ingame_images=self._ingame_images,
-            obs_scene_menu=self.scene_menu_var.get(), obs_scene_ingame=self.scene_ingame_var.get(),
+            obs_scene_menu=scene_menu, obs_scene_ingame=scene_ingame,
         )
         if self._store.upsert(game):
             self._on_saved()
@@ -982,17 +1335,23 @@ class GameModal(ctk.CTkToplevel):
 # VUE : DASHBOARD (Bibliothèque — grille poster style Steam)
 # ============================================================================
 class DashboardView(ctk.CTkFrame):
-    GRID_COLUMNS = 5
+    GRID_COLUMNS = 5          # repli si la largeur réelle n'est pas encore connue
+    MIN_COLUMNS = 2
+    MAX_COLUMNS = 8
 
     def __init__(self, master, store: GameStore, obs_loop: AsyncLoopThread,
                  obs_client_getter: Callable[[], Optional[OBSClient]],
-                 steam_scanner: SteamScanner, post_ui: Callable[[Callable[[], None]], None], **kwargs) -> None:
+                 steam_scanner: SteamScanner, post_ui: Callable[[Callable[[], None]], None],
+                 cover_service: Optional[GameCoverService] = None, **kwargs) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
         self._store = store
         self._obs_loop = obs_loop
         self._get_obs_client = obs_client_getter
         self._steam_scanner = steam_scanner
         self._post_ui = post_ui
+        self._cover_service = cover_service
+        self._columns = self.GRID_COLUMNS
+        self._resize_job: Optional[str] = None
         self._latest_states: dict[str, str] = {}
         self._steam_candidates: list[dict[str, str]] = []
         self._cards: dict[str, GameCard] = {}
@@ -1032,18 +1391,43 @@ class DashboardView(ctk.CTkFrame):
 
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.scroll.grid(row=2, column=0, sticky="nsew", padx=22, pady=10)
-        for c in range(self.GRID_COLUMNS):
+        for c in range(self.MAX_COLUMNS):
             self.scroll.grid_columnconfigure(c, weight=1)
         self._enable_smooth_scroll(self.scroll)
+        self.scroll.bind("<Configure>", self._on_scroll_resize)
 
         self.render_games()
 
-    @staticmethod
-    def _enable_smooth_scroll(scrollable: ctk.CTkScrollableFrame) -> None:
+    # -- Grille responsive -------------------------------------------------- #
+
+    def _columns_for_width(self, width: int) -> int:
+        """Nombre de colonnes tenant dans `width`, carte + gouttière comprises."""
+        slot = GameCard.CARD_WIDTH + 20  # 2 x padx=10
+        return max(self.MIN_COLUMNS, min(self.MAX_COLUMNS, max(1, width // slot)))
+
+    def _on_scroll_resize(self, event: Any) -> None:
+        """<Configure> part en rafale pendant un redimensionnement : on
+        débounce pour ne reconstruire la grille qu'une fois stabilisée."""
+        wanted = self._columns_for_width(event.width)
+        if wanted == self._columns:
+            return
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(120, lambda w=wanted: self._apply_columns(w))
+
+    def _apply_columns(self, columns: int) -> None:
+        self._resize_job = None
+        if columns == self._columns:
+            return
+        self._columns = columns
+        self.render_games()
+
+    def _enable_smooth_scroll(self, scrollable: ctk.CTkScrollableFrame) -> None:
         """Remplace le binding molette par défaut de CTkScrollableFrame (pas
         grossier, un seul 'saut' par cran) par un défilement à granularité
         fine sur le canvas interne, pour un rendu fluide haute fréquence
         plutôt qu'un défilement par paliers saccadés."""
+        self._wheel_handler: Optional[Callable[[Any], str]] = None
         canvas = getattr(scrollable, "_parent_canvas", None)
         if canvas is None:
             return  # version de customtkinter sans canvas exposé — no-op sûr
@@ -1055,9 +1439,27 @@ class DashboardView(ctk.CTkFrame):
                 canvas.yview_scroll(direction, "units")
             return "break"
 
+        self._wheel_handler = _on_wheel
         canvas.bind("<MouseWheel>", _on_wheel)
         for child in scrollable.winfo_children():
             child.bind("<MouseWheel>", _on_wheel)
+
+    def _bind_wheel_recursive(self, widget: Any) -> None:
+        """Applique le handler molette à une carte ET à toute sa descendance.
+
+        L'ancien code ne bindait que les enfants existant au moment de
+        l'appel : les GameCard créées ensuite avalaient l'événement molette,
+        et la grille restait bloquée dès que le curseur passait sur une carte.
+        """
+        handler = getattr(self, "_wheel_handler", None)
+        if handler is None:
+            return
+        try:
+            widget.bind("<MouseWheel>", handler)
+            for child in widget.winfo_children():
+                self._bind_wheel_recursive(child)
+        except Exception:
+            logger.debug("Binding molette impossible sur %r.", widget, exc_info=True)
 
     def _clear(self) -> None:
         for widget in self.scroll.winfo_children():
@@ -1092,13 +1494,15 @@ class DashboardView(ctk.CTkFrame):
             ctk.CTkLabel(self.scroll, text=t("DASHBOARD_EMPTY_STATE"),
                          text_color=COL_TEXT_MUTED, font=font(12)).grid(row=0, column=0, padx=10, pady=30)
             return
+        cols = max(1, self._columns)
         for i, game in enumerate(games):
             state = self._latest_states.get(game.id, "inactive")
             card = GameCard(self.scroll, game=game, state=state,
-                             on_edit=self._open_edit_modal, on_delete=self._delete_game)
-            card.grid(row=i // self.GRID_COLUMNS, column=i % self.GRID_COLUMNS,
-                      sticky="n", padx=10, pady=10)
+                             on_edit=self._open_edit_modal, on_delete=self._delete_game,
+                             cover_service=self._cover_service)
+            card.grid(row=i // cols, column=i % cols, sticky="n", padx=10, pady=10)
             self._cards[game.id] = card
+            self._bind_wheel_recursive(card)
 
     def apply_scan_results(self, results: list[dict[str, Any]]) -> None:
         """Appelé depuis ScanWorker (via la file UI thread-safe) à chaque cycle
@@ -1486,6 +1890,20 @@ class App(ctk.CTk):
 
         self._ui_queue: "queue.Queue[Callable[[], None]]" = queue.Queue()
 
+        # Jaquettes : le service remet TOUS ses callbacks via post_ui, donc
+        # aucun widget Tk n'est touché depuis le thread de téléchargement.
+        self.cover_service = GameCoverService(COVERS_DIR, _saved_cfg.rawg_api_key,
+                                              dispatch=self.post_ui)
+
+        # Hotkeys globales : forcent un état de jeu quand la détection
+        # visuelle se trompe. Démarrées avec la surveillance, pas avant.
+        self.hotkey_manager = HotkeyManager(on_hotkey=self._on_hotkey,
+                                            bindings=load_bindings(HOTKEYS_PATH))
+
+        # Superviseur de reconnexion OBS (backoff exponentiel).
+        self._reconnect_stop = threading.Event()
+        self._reconnect_thread: Optional[threading.Thread] = None
+
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -1500,7 +1918,8 @@ class App(ctk.CTk):
 
         self.dashboard = DashboardView(self.content, store=self.store, obs_loop=self.obs_loop,
                                         obs_client_getter=lambda: self._obs_client,
-                                        steam_scanner=self.steam_scanner, post_ui=self.post_ui)
+                                        steam_scanner=self.steam_scanner, post_ui=self.post_ui,
+                                        cover_service=self.cover_service)
         self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
         self.views: dict[str, ctk.CTkFrame] = {"dashboard": self.dashboard, "settings": self.settings}
         self._navigate("dashboard")
@@ -1587,7 +2006,62 @@ class App(ctk.CTk):
             logger.warning("Connexion OBS échouée, la surveillance démarre quand même sans bascule de scène : %s", exc)
             self._obs_client = None
         self.scan_worker.start(on_update=lambda results: self.post_ui(lambda: self.dashboard.apply_scan_results(results)))
+        self.hotkey_manager.start()
+        self._start_reconnect_supervisor()
         self.post_ui(lambda: self._on_start_done(obs_error))
+
+    # -- Reconnexion OBS automatique --------------------------------------- #
+
+    def _start_reconnect_supervisor(self) -> None:
+        if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
+            return
+        self._reconnect_stop.clear()
+        self._reconnect_thread = threading.Thread(target=self._reconnect_supervisor,
+                                                   daemon=True, name="obs-reconnect")
+        self._reconnect_thread.start()
+
+    def _stop_reconnect_supervisor(self) -> None:
+        self._reconnect_stop.set()
+        if self._reconnect_thread is not None:
+            self._reconnect_thread.join(timeout=5)
+            self._reconnect_thread = None
+
+    def _reconnect_supervisor(self) -> None:
+        """Retente la connexion OBS avec un backoff exponentiel plafonné.
+
+        Sans ce superviseur, une coupure d'OBS (fermeture, redémarrage, plantage)
+        arrêtait définitivement les bascules de scène : le client restait marqué
+        connecté et les requêtes échouaient en silence jusqu'à ce que
+        l'utilisateur fasse Stop puis Start à la main.
+        """
+        base_delay, max_delay = 2.0, 60.0
+        attempt = 0
+        while not self._reconnect_stop.is_set():
+            self._reconnect_stop.wait(base_delay)
+            if self._reconnect_stop.is_set() or not self.scan_worker.is_running:
+                continue
+            client = self._obs_client
+            if client is not None and client.is_connected:
+                attempt = 0  # connexion saine, on remet le backoff à zéro
+                continue
+
+            attempt += 1
+            delay = min(max_delay, base_delay * (2 ** min(attempt, 5)))
+            logger.info(t("LOG_OBS_RECONNECT_ATTEMPT", attempt=attempt, delay=round(delay, 1)))
+            cfg = self.config_mgr.load()
+            new_client = OBSClient(cfg.host, cfg.port, cfg.password)
+            try:
+                self.obs_loop.run_coro(new_client.connect()).result(timeout=10)
+            except Exception as exc:
+                logger.debug("Reconnexion OBS échouée (tentative %d) : %s", attempt, exc)
+                self._reconnect_stop.wait(delay)
+                continue
+
+            self._obs_client = new_client
+            attempt = 0
+            logger.info(t("LOG_OBS_RECONNECTED"))
+            self.post_ui(lambda: self.sidebar.status_text.configure(
+                text=t("SIDEBAR_STATUS_RUNNING_OBS_RECONNECTED")))
 
     def _on_start_done(self, obs_error: Optional[str]) -> None:
         self.sidebar.set_running_state(True)
@@ -1601,8 +2075,18 @@ class App(ctk.CTk):
         self.sidebar.stop_btn.configure(state="disabled", text=t("SIDEBAR_BTN_STOP_PROGRESS"))
         threading.Thread(target=self._stop_bg, daemon=True).start()
 
+    def _on_hotkey(self, state: str) -> None:
+        """Appelé depuis le thread pynput : on ne touche à rien d'autre que
+        le worker (thread-safe), et l'UI se met à jour au cycle suivant."""
+        if not self.scan_worker.is_running:
+            return
+        self.scan_worker.force_state(state)
+
     def _stop_bg(self) -> None:
         self.scan_worker.stop()
+        self.hotkey_manager.stop()
+        self.scan_worker.clear_forced_states()
+        self._stop_reconnect_supervisor()
         if self._obs_client is not None:
             try:
                 self.obs_loop.run_coro(self._obs_client.disconnect()).result(timeout=5)
@@ -1636,10 +2120,19 @@ class App(ctk.CTk):
         except Exception as exc:
             self._obs_client = None
             logger.warning("Reconnexion OBS échouée : %s", exc)
-            self.post_ui(lambda: self.sidebar.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING_OBS_ERROR", error=exc)))
+            # `exc` est supprimé par Python à la sortie du bloc except ; le lambda
+            # étant différé (exécuté ~50ms plus tard par _pump_ui_queue sur le
+            # thread UI), il faut figer le message MAINTENANT sous peine de
+            # NameError sur variable libre au moment de l'exécution.
+            err_text = str(exc)[:40]
+            self.post_ui(lambda: self.sidebar.status_text.configure(
+                text=t("SIDEBAR_STATUS_RUNNING_OBS_ERROR", error=err_text)))
 
     def _on_close(self) -> None:
         self.scan_worker.stop()
+        self.hotkey_manager.stop()
+        self._stop_reconnect_supervisor()
+        self.cover_service.stop()
         if self._obs_client is not None:
             try:
                 self.obs_loop.run_coro(self._obs_client.disconnect()).result(timeout=3)

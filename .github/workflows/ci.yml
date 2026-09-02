@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # L'application est Windows-only (winreg, game_capture, ImageGrab), et la
+    # suite tourne sans OBS ni Steam : un runner Windows suffit.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install -r requirements-dev.txt
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Vérifier la cohérence i18n
+        # Échoue si une clé t("...") du code n'existe pas dans i18n.json, ou
+        # si une langue secondaire est incomplète.
+        run: |
+          python -c "
+          import sys, build
+          missing = build.check_i18n_integrity()
+          if missing:
+              print('Cles i18n manquantes :', missing); sys.exit(1)
+          gaps = build.check_all_langs_consistent()
+          if gaps:
+              print('Langues incompletes :', gaps); sys.exit(1)
+          print('i18n OK')
+          "
+
+      - name: Vérifier que l'application s'importe
+        run: python -c "import obs_dynamics; print('import OK')"

@@ -1,0 +1,5 @@
+# Outillage de développement (non requis pour exécuter l'application).
+-r requirements.txt
+
+pyinstaller          # packaging de l'exécutable via build.py / build.spec
+pytest               # suite de tests (dossier tests/)

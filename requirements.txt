@@ -1,18 +1,15 @@
-fastapi
-uvicorn[standard]
-simpleobsws
-opencv-python
-pyautogui
-psutil
-python-multipart
-pydantic
-pydantic-settings
-aiofiles
-bcrypt
-itsdangerous
-email-validator
-pynput
-customtkinter
-requests
-pyinstaller
-Pillow
+# Dépendances runtime d'OBS Dynamics (application CustomTkinter autonome).
+#
+# Les paquets de l'ancienne architecture FastAPI/web (fastapi, uvicorn,
+# python-multipart, pydantic, pydantic-settings, aiofiles, bcrypt,
+# itsdangerous, email-validator, pyautogui) ont été retirés : plus aucun
+# fichier actif ne les importe depuis l'abandon du frontend web.
+
+customtkinter        # interface graphique
+opencv-python        # détection visuelle (matchTemplate)
+numpy                # manipulé directement par obs_dynamics.py et cover_service
+Pillow               # capture d'écran (ImageGrab) + traitement des jaquettes
+psutil               # détection des processus de jeu
+simpleobsws          # client OBS WebSocket v5
+requests             # téléchargement des jaquettes (cover_service)
+pynput               # hotkeys globales (dégradation propre si absent)

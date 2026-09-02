@@ -6,7 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.spec
+# *.spec  -> build.spec est un fichier source requis par build.py, il DOIT etre versionne
 .env
 obs_automation.log
 logs/
@@ -22,3 +22,16 @@ obs_config.json
 config.json
 
 data/
+
+# Artefacts Visual Studio (index Copilot, sqlite de session).
+.vs/
+
+# Exécutables packagés : ne jamais versionner (74 Mo par build).
+*.exe
+dist_release/
+
+# Sauvegardes locales de .env produites par les scripts de maintenance.
+.env.backup
+
+# Cache pytest.
+.pytest_cache/
