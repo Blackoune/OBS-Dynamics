@@ -6,6 +6,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -224,9 +225,18 @@ def test_overlay_preloads_media_without_cache_buster(served):
     le moindre pixel — ressenti comme un temps de réaction."""
     srv, rule = served
     _, _, body = _get(srv, f"/overlay/{rule.id}")
+    # Pas d'horodatage : ce paramètre-là changeait à CHAQUE déclenchement et
+    # forçait un rechargement réseau avant le premier pixel.
     assert b"?t=" not in body
-    assert b'img.src = MEDIA_URL' in body        # préchargé une fois
-    assert b"visibility" in body                  # bascule CSS, pas de rechargement
+    assert b"Date.now()" not in body
+    # Le média est chargé une fois au chargement de la page...
+    assert b"loadMedia();" in body
+    # ...et l'URL ne porte qu'une empreinte STABLE, qui ne bouge que si le
+    # fichier lui-même a changé.
+    assert b'"?v=" + encodeURIComponent(mediaStamp)' in body
+    # Afficher/masquer n'est qu'une bascule CSS.
+    assert b"visibility" in body
+    assert b'classList.add("on")' in body
 
 
 def test_overlay_handles_hide_action(served):
@@ -321,6 +331,92 @@ def test_fire_without_source_reports_zero(served):
     diagnostic principal quand « ça ne marche pas »."""
     srv, rule = served
     assert srv.fire(rule.id) == 0
+
+
+def test_event_carries_current_duration(served):
+    """Régression signalée par l'utilisateur : changer la durée dans l'app
+    n'avait aucun effet sur une source OBS déjà ouverte. La page était figée
+    sur la valeur reçue au chargement, donc une règle passée un jour par
+    « Maintien » restait en maintien pour toujours. La config courante doit
+    voyager avec CHAQUE événement."""
+    srv, rule = served
+    received: list[dict] = []
+
+    def listen(n):
+        with urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}", timeout=10) as r:
+            for raw in r:
+                line = raw.decode().strip()
+                if line.startswith("data:"):
+                    received.append(json.loads(line[5:].strip()))
+                    if len(received) == n:
+                        return
+
+    threading.Thread(target=listen, args=(2,), daemon=True).start()
+    deadline = time.time() + 5
+    while srv.listener_count(rule.id) == 0 and time.time() < deadline:
+        time.sleep(0.05)
+
+    rule.duration_ms = 10_000          # l'utilisateur choisit 10 s
+    srv.fire(rule.id)
+    rule.duration_ms = 0               # puis bascule sur Maintien
+    srv.fire(rule.id)
+
+    deadline = time.time() + 5
+    while len(received) < 2 and time.time() < deadline:
+        time.sleep(0.05)
+    assert [e["duration"] for e in received] == [10_000, 0]
+
+
+def test_event_carries_media_stamp_and_kind(served):
+    """L'empreinte du média permet à la page de détecter un fichier remplacé
+    et de le recharger, sans perdre le préchargement le reste du temps."""
+    srv, rule = served
+    payload_seen: list[dict] = []
+
+    def listen():
+        with urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}", timeout=10) as r:
+            for raw in r:
+                line = raw.decode().strip()
+                if line.startswith("data:"):
+                    payload_seen.append(json.loads(line[5:].strip()))
+                    return
+
+    threading.Thread(target=listen, daemon=True).start()
+    deadline = time.time() + 5
+    while srv.listener_count(rule.id) == 0 and time.time() < deadline:
+        time.sleep(0.05)
+    srv.fire(rule.id)
+    deadline = time.time() + 5
+    while not payload_seen and time.time() < deadline:
+        time.sleep(0.05)
+
+    ev = payload_seen[0]
+    assert ev["kind"] == "image"
+    assert ev["media"] and "-" in ev["media"]     # mtime-taille
+
+
+def test_media_stamp_changes_when_file_changes(served, tmp_path):
+    from overlay_server import OverlayServer
+    srv, rule = served
+    before = OverlayServer.media_stamp(rule)
+    Path(rule.media_path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"1" * 999)
+    assert OverlayServer.media_stamp(rule) != before
+
+
+def test_media_stamp_is_empty_for_missing_file():
+    from overlay_server import OverlayServer
+    assert OverlayServer.media_stamp(TriggerRule(id="x", media_path="nexistepas.png")) == ""
+
+
+def test_overlay_page_uses_mutable_config_not_constants(served):
+    """La page doit lire des variables réassignables, pas des const figées."""
+    srv, rule = served
+    _, _, body = _get(srv, f"/overlay/{rule.id}")
+    assert b"let duration =" in body
+    assert b"let kind =" in body
+    assert b"let mediaStamp =" in body
+    assert b"const DURATION" not in body      # l'ancienne constante a disparu
+    assert b"d.duration" in body               # et la valeur vient de l'événement
 
 
 def test_saturated_queue_evicts_oldest_not_newest():

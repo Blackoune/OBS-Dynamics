@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import os
 import queue
 import threading
 import time
@@ -116,9 +117,15 @@ _OVERLAY_HTML = """<!doctype html>
 <audio id="audio"></audio>
 <script>
 const RULE = __RULE_ID__;
-const KIND = __MEDIA_TYPE__;
-const DURATION = __DURATION__;   // 0 = mode maintien (masque au relachement)
 const MEDIA_URL = "/media/" + RULE;
+
+// Etat COURANT de la regle. Ces valeurs sont initialisees au chargement puis
+// reactualisees a chaque evenement : OBS garde la page ouverte des heures, et
+// figer la configuration au chargement rendait tout changement de reglage
+// invisible sur une source deja ouverte.
+let kind = __MEDIA_TYPE__;
+let duration = __DURATION__;      // 0 = mode maintien (masque au relachement)
+let mediaStamp = __MEDIA_STAMP__;
 
 const img = document.getElementById("img");
 const video = document.getElementById("video");
@@ -126,54 +133,62 @@ const audio = document.getElementById("audio");
 let hideTimer = null;
 
 // --- Prechargement -------------------------------------------------------
-// Le media est telecharge et decode UNE SEULE FOIS, au chargement de la page.
-// Auparavant chaque declenchement reassignait src avec un parametre
-// anti-cache, ce qui imposait un aller-retour HTTP + un redecodage avant le
-// moindre pixel affiche : plusieurs dizaines de millisecondes, ressenties
-// comme un temps de reaction. Desormais afficher ne coute qu'un toggle CSS.
-if (KIND === "image") {
-  img.src = MEDIA_URL;
-} else if (KIND === "video") {
-  video.src = MEDIA_URL;
-  video.preload = "auto";
-  video.load();
-} else {
-  audio.src = MEDIA_URL;
-  audio.preload = "auto";
-  audio.load();
+// Le media est telecharge et decode UNE SEULE FOIS, puis reutilise. Afficher
+// ne coute alors qu'un toggle CSS. On ne recharge que si l'empreinte du
+// fichier a change (media remplace dans l'application).
+function loadMedia() {
+  const url = MEDIA_URL + (mediaStamp ? "?v=" + encodeURIComponent(mediaStamp) : "");
+  if (kind === "image") {
+    img.src = url;
+  } else if (kind === "video") {
+    video.src = url; video.preload = "auto"; video.load();
+  } else {
+    audio.src = url; audio.preload = "auto"; audio.load();
+  }
 }
+loadMedia();
 
 function show() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-  if (KIND === "sound") {
+  if (kind === "sound") {
     audio.currentTime = 0;
     audio.play().catch(e => console.warn("lecture audio refusee", e));
     return;
   }
-  if (KIND === "video") {
+  if (kind === "video") {
     video.classList.add("on");
     video.currentTime = 0;
     video.play().catch(e => console.warn("lecture video refusee", e));
-    if (DURATION > 0) hideTimer = setTimeout(hide, DURATION);
+    if (duration > 0) hideTimer = setTimeout(hide, duration);
     return;
   }
   img.classList.add("on");
-  if (DURATION > 0) hideTimer = setTimeout(hide, DURATION);
+  if (duration > 0) hideTimer = setTimeout(hide, duration);
 }
 
 function hide() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   img.classList.remove("on");
   video.classList.remove("on");
-  if (KIND === "video") { try { video.pause(); } catch (e) {} }
-  if (KIND === "sound") { try { audio.pause(); } catch (e) {} }
+  try { video.pause(); } catch (e) {}
+  try { audio.pause(); } catch (e) {}
 }
 
 function onEvent(ev) {
-  let action = "show";
-  try { action = (JSON.parse(ev.data).action) || "show"; } catch (e) {}
-  // En mode minute, on ignore le relachement : la duree fait foi.
-  if (action === "hide") { if (DURATION === 0) hide(); return; }
+  let d = {};
+  try { d = JSON.parse(ev.data) || {}; } catch (e) {}
+
+  // Reprise de la configuration courante, envoyee avec chaque evenement.
+  if (typeof d.duration === "number") duration = d.duration;
+  let needsReload = false;
+  if (d.kind && d.kind !== kind) { kind = d.kind; needsReload = true; }
+  if (typeof d.media === "string" && d.media !== mediaStamp) {
+    mediaStamp = d.media; needsReload = true;
+  }
+  if (needsReload) { hide(); loadMedia(); }
+
+  // Le relachement ne masque qu'en mode maintien : sinon la duree fait foi.
+  if (d.action === "hide") { if (duration === 0) hide(); return; }
   show();
 }
 
@@ -286,7 +301,8 @@ class _Handler(BaseHTTPRequestHandler):
         html = (_OVERLAY_HTML
                 .replace("__RULE_ID__", json.dumps(rule.id))
                 .replace("__MEDIA_TYPE__", json.dumps(rule.media_type))
-                .replace("__DURATION__", str(int(rule.duration_ms))))
+                .replace("__DURATION__", str(int(rule.duration_ms)))
+                .replace("__MEDIA_STAMP__", json.dumps(OverlayServer.media_stamp(rule))))
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
     def _serve_media(self, rule: Any) -> None:
@@ -428,13 +444,41 @@ class OverlayServer:
         self._thread = None
         logger.info("Serveur overlay arrêté.")
 
+    @staticmethod
+    def media_stamp(rule: Any) -> str:
+        """Empreinte du fichier média (mtime + taille).
+
+        Permet à la page de détecter qu'on a changé le fichier et de le
+        recharger — sans cette empreinte, elle continuerait d'afficher le
+        média préchargé au premier chargement.
+        """
+        path = getattr(rule, "media_path", "") or ""
+        try:
+            st = os.stat(path)
+            return f"{int(st.st_mtime)}-{st.st_size}"
+        except OSError:
+            return ""
+
     def fire(self, rule_id: str, action: str = "show") -> int:
         """Déclenche l'affichage (`show`) ou le masquage (`hide`).
+
+        L'événement transporte la configuration COURANTE de la règle (durée,
+        type, empreinte du média). C'est indispensable : OBS charge la page
+        une seule fois et la garde ouverte des heures. Tant que ces valeurs
+        étaient figées dans le HTML au chargement, modifier la durée dans
+        l'application n'avait aucun effet sur une source déjà ouverte — elle
+        restait bloquée sur l'ancien réglage.
 
         Retourne le nombre de sources notifiées : 0 signifie que la source
         navigateur n'est pas ouverte dans OBS.
         """
-        return self._broker.publish(rule_id, {"id": rule_id, "action": action})
+        payload: dict[str, Any] = {"id": rule_id, "action": action}
+        rule = self._rule_getter(rule_id)
+        if rule is not None:
+            payload["duration"] = int(getattr(rule, "duration_ms", 0) or 0)
+            payload["kind"] = getattr(rule, "media_type", "image")
+            payload["media"] = self.media_stamp(rule)
+        return self._broker.publish(rule_id, payload)
 
     def listener_count(self, rule_id: str) -> int:
         return self._broker.listener_count(rule_id)
