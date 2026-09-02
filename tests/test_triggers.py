@@ -40,9 +40,16 @@ def test_unknown_media_type_falls_back_to_image():
 
 
 def test_duration_is_clamped():
-    assert TriggerRule.from_dict({"id": "a", "duration_ms": 10}).duration_ms == 100
+    assert TriggerRule.from_dict({"id": "a", "duration_ms": 10}).duration_ms == 50
     assert TriggerRule.from_dict({"id": "a", "duration_ms": 999_999}).duration_ms == 60_000
     assert TriggerRule.from_dict({"id": "a", "duration_ms": "nan"}).duration_ms == 3000
+
+
+def test_zero_duration_means_hold_and_escapes_the_floor():
+    """0 n'est pas une durée invalide à corriger : c'est le mode maintien."""
+    from triggers import DURATION_HOLD
+    assert TriggerRule.from_dict({"id": "a", "duration_ms": 0}).duration_ms == DURATION_HOLD
+    assert TriggerRule.from_dict({"id": "a", "duration_ms": -5}).duration_ms == DURATION_HOLD
 
 
 def test_roundtrip_and_upsert(store):
@@ -119,9 +126,48 @@ def test_listener_releases_modifiers():
     got = []
     lst = hotkeys.ComboListener(on_combo=got.append)
     lst._on_press(_Key(name="ctrl_l"))
-    lst._on_release(_Key(name="ctrl_l"))
+    lst._handle_release(_Key(name="ctrl_l"))
     lst._on_press(_Key(char="a"))
     assert got == ["a"]      # plus de ctrl actif
+
+
+def test_key_repeat_does_not_refire():
+    """Windows répète l'événement press tant que la touche est maintenue :
+    sans garde, un maintien enverrait des dizaines de déclenchements/seconde."""
+    got = []
+    lst = hotkeys.ComboListener(on_combo=got.append)
+    for _ in range(20):
+        lst._on_press(_Key(name="f5"))
+    assert got == ["f5"]
+
+
+def test_release_emits_the_combo_that_was_fired():
+    """Le relâchement est ancré sur la touche principale : lâcher Ctrl avant
+    la lettre ne doit pas empêcher le hide de partir."""
+    pressed, released = [], []
+    lst = hotkeys.ComboListener(on_combo=pressed.append, on_release=released.append)
+    lst._on_press(_Key(name="ctrl_l"))
+    lst._on_press(_Key(char="m"))
+    lst._handle_release(_Key(name="ctrl_l"))   # modificateur lâché en premier
+    lst._handle_release(_Key(char="m"))
+    assert pressed == ["ctrl+m"]
+    assert released == ["ctrl+m"]
+
+
+def test_release_without_prior_press_emits_nothing():
+    released = []
+    lst = hotkeys.ComboListener(on_combo=lambda c: None, on_release=released.append)
+    lst._handle_release(_Key(name="f7"))
+    assert released == []
+
+
+def test_press_after_release_fires_again():
+    got = []
+    lst = hotkeys.ComboListener(on_combo=got.append)
+    lst._on_press(_Key(name="f5"))
+    lst._handle_release(_Key(name="f5"))
+    lst._on_press(_Key(name="f5"))
+    assert got == ["f5", "f5"]
 
 
 def test_modifier_alone_emits_nothing():
@@ -169,6 +215,51 @@ def test_overlay_page_embeds_rule_parameters(served):
     status, ctype, body = _get(srv, f"/overlay/{rule.id}")
     assert status == 200 and "text/html" in ctype
     assert b'"rule1"' in body and b"1234" in body and b'"image"' in body
+
+
+def test_overlay_preloads_media_without_cache_buster(served):
+    """Régression latence : le média doit être chargé UNE fois au chargement
+    de la page. L'ancienne version réassignait src avec ?t=<timestamp> à
+    chaque déclenchement, imposant un aller-retour HTTP + un redécodage avant
+    le moindre pixel — ressenti comme un temps de réaction."""
+    srv, rule = served
+    _, _, body = _get(srv, f"/overlay/{rule.id}")
+    assert b"?t=" not in body
+    assert b'img.src = MEDIA_URL' in body        # préchargé une fois
+    assert b"visibility" in body                  # bascule CSS, pas de rechargement
+
+
+def test_overlay_handles_hide_action(served):
+    srv, rule = served
+    _, _, body = _get(srv, f"/overlay/{rule.id}")
+    assert b'action === "hide"' in body
+    assert b"function hide()" in body
+
+
+def test_fire_carries_the_action(served):
+    srv, rule = served
+    received: list[str] = []
+
+    def listen():
+        with urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}", timeout=10) as r:
+            for raw in r:
+                line = raw.decode().strip()
+                if line.startswith("data:"):
+                    received.append(line[5:].strip())
+                    if len(received) == 2:
+                        return
+
+    threading.Thread(target=listen, daemon=True).start()
+    deadline = time.time() + 5
+    while srv.listener_count(rule.id) == 0 and time.time() < deadline:
+        time.sleep(0.05)
+
+    srv.fire(rule.id, action="show")
+    srv.fire(rule.id, action="hide")
+    deadline = time.time() + 5
+    while len(received) < 2 and time.time() < deadline:
+        time.sleep(0.05)
+    assert [json.loads(r)["action"] for r in received] == ["show", "hide"]
 
 
 def test_overlay_template_has_no_unsubstituted_token(served):
@@ -230,6 +321,24 @@ def test_fire_without_source_reports_zero(served):
     diagnostic principal quand « ça ne marche pas »."""
     srv, rule = served
     assert srv.fire(rule.id) == 0
+
+
+def test_saturated_queue_evicts_oldest_not_newest():
+    """Sécurité du mode maintien : si la file sature, c'est le plus ANCIEN
+    événement qui saute. Jeter le plus récent pourrait perdre un « hide » et
+    laisser l'overlay collé à l'écran par-dessus le jeu."""
+    from overlay_server import _Broker
+    broker = _Broker()
+    q = broker.subscribe("r")
+    for i in range(50):                       # bien au-delà de maxsize
+        broker.publish("r", {"n": i, "action": "show"})
+    broker.publish("r", {"n": 999, "action": "hide"})
+
+    drained = []
+    while not q.empty():
+        drained.append(json.loads(q.get_nowait()))
+    assert drained[-1]["action"] == "hide"    # le plus récent a survécu
+    assert drained[-1]["n"] == 999
 
 
 def test_port_fallback_when_busy(served):

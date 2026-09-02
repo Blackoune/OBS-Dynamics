@@ -30,6 +30,15 @@ MEDIA_EXTENSIONS: dict[str, tuple[str, ...]] = {
 
 DEFAULT_DURATION_MS = 3000
 
+# duration_ms == 0 : mode MAINTIEN. Le média reste affiché tant que la touche
+# est enfoncée et disparaît au relâchement. C'est le mode adapté au masquage
+# d'une minimap : on appuie, on regarde, on relâche — aucune minuterie à
+# calibrer, et la réactivité suit exactement le doigt.
+DURATION_HOLD = 0
+
+# Presets proposés dans l'interface, du plus vif au plus long.
+DURATION_PRESETS_MS = (DURATION_HOLD, 150, 300, 500, 1000, 2000, 3000, 5000, 10000)
+
 
 @dataclass
 class TriggerRule:
@@ -62,12 +71,14 @@ class TriggerRule:
             duration = int(data.get("duration_ms", DEFAULT_DURATION_MS))
         except (TypeError, ValueError):
             duration = DEFAULT_DURATION_MS
+        # 0 est une valeur légitime (mode maintien) et échappe au plancher.
+        duration = DURATION_HOLD if duration <= 0 else max(50, min(60_000, duration))
         return TriggerRule(
             id=str(data.get("id") or uuid.uuid4().hex),
             hotkey=str(data.get("hotkey", "")).strip().lower(),
             media_type=media_type,
             media_path=str(data.get("media_path", "")),
-            duration_ms=max(100, min(60_000, duration)),
+            duration_ms=duration,
             enabled=bool(data.get("enabled", True)),
         )
 

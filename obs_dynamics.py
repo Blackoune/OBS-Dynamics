@@ -99,7 +99,8 @@ from i18n import t
 from cover_service import GameCoverService
 from hotkeys import ComboListener, ComboRecorder, HotkeyManager, format_combo, load_bindings
 from overlay_server import DEFAULT_PORT as OVERLAY_DEFAULT_PORT, OverlayServer
-from triggers import MEDIA_EXTENSIONS, MEDIA_TYPES, TriggerRule, TriggerStore
+from triggers import (DURATION_PRESETS_MS, MEDIA_EXTENSIONS, MEDIA_TYPES,
+                       TriggerRule, TriggerStore)
 
 # ============================================================================
 # PALETTE — thème AAA violet sombre (Steam/Discord/Spotify inspired)
@@ -144,6 +145,7 @@ class OBSConfig:
     match_threshold: float = 0.8
     lang: str = i18n.DEFAULT_LANG
     rawg_api_key: str = ""
+    overlay_port: int = OVERLAY_DEFAULT_PORT
 
 
 ENV_KEYS = {
@@ -154,6 +156,7 @@ ENV_KEYS = {
     "match_threshold": "OBS_MATCH_THRESHOLD",
     "lang": "OBS_APP_LANG",
     "rawg_api_key": "RAWG_API_KEY",
+    "overlay_port": "OBS_OVERLAY_PORT",
 }
 
 
@@ -216,6 +219,11 @@ class EnvConfigManager:
                             cfg.lang = value
                     elif key == ENV_KEYS["rawg_api_key"]:
                         cfg.rawg_api_key = value
+                    elif key == ENV_KEYS["overlay_port"]:
+                        try:
+                            cfg.overlay_port = int(value)
+                        except ValueError:
+                            logger.warning("OBS_OVERLAY_PORT invalide dans .env.")
             except OSError:
                 logger.exception("Lecture .env échouée, valeurs par défaut utilisées.")
                 return cfg
@@ -233,6 +241,7 @@ class EnvConfigManager:
                     ENV_KEYS["match_threshold"]: str(cfg.match_threshold),
                     ENV_KEYS["lang"]: cfg.lang,
                     ENV_KEYS["rawg_api_key"]: cfg.rawg_api_key,
+                    ENV_KEYS["overlay_port"]: str(cfg.overlay_port),
                 }
                 seen = dict.fromkeys(updates, False)
                 lines: list[str] = []
@@ -1876,11 +1885,19 @@ class TriggerRow(ctk.CTkFrame):
             command=self._browse_media)
         self._drop_zone.grid(row=0, column=2, sticky="ew", padx=8, pady=14)
 
+        self._duration_menu = ctk.CTkOptionMenu(
+            card, values=[self._duration_label(d) for d in DURATION_PRESETS_MS],
+            width=110, height=38, fg_color=COL_BG, button_color=COL_ACCENT,
+            button_hover_color=COL_ACCENT_HOVER, font=font(12),
+            command=self._on_duration_changed)
+        self._duration_menu.set(self._duration_label(rule.duration_ms))
+        self._duration_menu.grid(row=0, column=3, padx=8, pady=14)
+
         self._delete_btn = ctk.CTkButton(
             card, text=t("TRIGGER_BTN_DELETE"), width=42, height=38,
             fg_color="#3A1420", hover_color=COL_RED, font=font(12),
             command=lambda: self._on_delete(self._rule))
-        self._delete_btn.grid(row=0, column=3, padx=(8, 14), pady=14)
+        self._delete_btn.grid(row=0, column=4, padx=(8, 14), pady=14)
 
         self._dnd_active = _try_enable_dnd(self._drop_zone, self._on_files_dropped)
 
@@ -1924,10 +1941,32 @@ class TriggerRow(ctk.CTkFrame):
         return t("TRIGGER_MEDIA_DROP_HINT") if getattr(self, "_dnd_active", False) \
             else t("TRIGGER_MEDIA_BROWSE_HINT")
 
+    @staticmethod
+    def _duration_label(ms: int) -> str:
+        if ms <= 0:
+            return t("TRIGGER_DURATION_HOLD")
+        if ms < 1000:
+            return t("TRIGGER_DURATION_MS", ms=ms)
+        # Retire le .0 des durées entières : "2 s" plutôt que "2.0 s".
+        seconds = ms / 1000
+        return t("TRIGGER_DURATION_S", s=int(seconds) if seconds.is_integer() else seconds)
+
     def _status_text(self) -> str:
         if not self._rule.is_complete:
             return t("TRIGGER_STATUS_INCOMPLETE")
+        if self._rule.duration_ms <= 0:
+            return t("TRIGGER_DURATION_HOLD_HINT")
         return t("TRIGGER_STATUS_READY")
+
+    def _on_duration_changed(self, _label: str) -> None:
+        chosen = self._duration_menu.get()
+        for ms in DURATION_PRESETS_MS:
+            if self._duration_label(ms) == chosen:
+                self._rule.duration_ms = ms
+                break
+        self._store.upsert(self._rule)
+        self.refresh()
+        self._on_changed()
 
     def refresh(self) -> None:
         self._hotkey_btn.configure(
@@ -2076,9 +2115,20 @@ class TriggersView(ctk.CTkFrame):
         self.render()
 
     def _server_text(self) -> str:
-        if self._overlay.is_running:
-            return t("TRIGGERS_SERVER_RUNNING", url=self._overlay.base_url())
-        return t("TRIGGERS_SERVER_STOPPED")
+        if not self._overlay.is_running:
+            return t("TRIGGERS_SERVER_STOPPED")
+        if self._overlay.using_fallback_port:
+            # Silence coupable si on ne le dit pas : les URL déjà collées dans
+            # OBS pointent vers l'ancien port et ne répondront plus.
+            return t("TRIGGERS_SERVER_FALLBACK_PORT",
+                     url=self._overlay.base_url(),
+                     wanted=self._overlay.requested_port)
+        return t("TRIGGERS_SERVER_RUNNING", url=self._overlay.base_url())
+
+    def _server_color(self) -> str:
+        if not self._overlay.is_running or self._overlay.using_fallback_port:
+            return COL_YELLOW
+        return COL_TEXT_MUTED
 
     def render(self) -> None:
         for row in self._rows:
@@ -2089,7 +2139,15 @@ class TriggersView(ctk.CTkFrame):
 
         rules = self._store.load()
         self._subtitle_lbl.configure(text=t("TRIGGERS_SUBTITLE", count=len(rules)))
-        self._server_lbl.configure(text=self._server_text())
+        self._server_lbl.configure(text=self._server_text(), text_color=self._server_color())
+
+        # Un seul bouton d'ajout visible à la fois : celui de l'état vide tant
+        # qu'aucune règle n'existe, celui de l'en-tête ensuite. Afficher les
+        # deux en même temps était redondant.
+        if rules:
+            self._add_btn.grid()
+        else:
+            self._add_btn.grid_remove()
 
         if not rules:
             self._render_empty_state()
@@ -2104,18 +2162,27 @@ class TriggersView(ctk.CTkFrame):
             self._rows.append(row)
 
     def _render_empty_state(self) -> None:
+        # `box` est centré dans une cellule qui occupe toute la largeur, et
+        # chaque enfant est packé avec fill="x" + un label ancré au centre.
+        # Sans cela l'emoji, seul enfant étroit, se calait sur la largeur du
+        # bloc le plus large au lieu du centre géométrique de la vue.
         box = ctk.CTkFrame(self.scroll, fg_color="transparent")
         box.grid(row=0, column=0, pady=60)
-        ctk.CTkLabel(box, text="⌨️", font=font(44)).pack()
+
+        icon = ctk.CTkLabel(box, text="⌨", font=font(44), text_color=COL_TEXT_MUTED,
+                             anchor="center", justify="center")
+        icon.pack(fill="x")
+
         ctk.CTkLabel(box, text=t("TRIGGERS_EMPTY_TITLE"), font=font(15, "bold"),
-                     text_color=COL_TEXT).pack(pady=(12, 4))
+                     text_color=COL_TEXT, anchor="center",
+                     justify="center").pack(fill="x", pady=(12, 4))
         ctk.CTkLabel(box, text=t("TRIGGERS_EMPTY_HINT"), font=font(11),
-                     text_color=COL_TEXT_MUTED, justify="center",
-                     wraplength=460).pack(pady=(0, 16))
+                     text_color=COL_TEXT_MUTED, justify="center", anchor="center",
+                     wraplength=460).pack(fill="x", pady=(0, 18))
         ctk.CTkButton(box, text=t("TRIGGERS_BTN_ADD"), width=220, height=42,
                        fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
                        text_color="#0F0C1B", font=font(13, "bold"),
-                       corner_radius=9, command=self._add_rule).pack()
+                       corner_radius=9, command=self._add_rule).pack(anchor="center")
 
     def _add_rule(self) -> None:
         self._store.add()          # insérée en tête de liste
@@ -2131,7 +2198,7 @@ class TriggersView(ctk.CTkFrame):
     def refresh_labels(self) -> None:
         self._title_lbl.configure(text=t("TRIGGERS_TITLE"))
         self._add_btn.configure(text=t("TRIGGERS_BTN_ADD"))
-        self._server_lbl.configure(text=self._server_text())
+        self._server_lbl.configure(text=self._server_text(), text_color=self._server_color())
         self.render()
 
 
@@ -2157,6 +2224,7 @@ class Sidebar(ctk.CTkFrame):
         self._brand_suffix_lbl.pack(side="left")
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
+        self.nav_labels: dict[str, ctk.CTkLabel] = {}
         self._nav_btn("dashboard", t("SIDEBAR_NAV_DASHBOARD"), row=1)
         # Raccourcis & Overlays s'insère ENTRE l'accueil et les paramètres.
         self._nav_btn("triggers", t("SIDEBAR_NAV_TRIGGERS"), row=2)
@@ -2187,12 +2255,37 @@ class Sidebar(ctk.CTkFrame):
 
         self._is_running = False
 
+    # Icônes de navigation, séparées du libellé traduit.
+    #
+    # Elles étaient auparavant collées dans la chaîne i18n ("⌨️  Raccourcis").
+    # Problème : les emoji n'ont pas tous la même largeur d'avance — 🏠 est
+    # un emoji pleine chasse, ⌨️ et ⚙️ sont des glyphes texte promus en emoji
+    # par un sélecteur de variante (U+FE0F) et se rendent plus étroits. Les
+    # libellés démarraient donc à des abscisses différentes. En plaçant
+    # l'icône dans sa propre colonne de largeur FIXE, le texte de tous les
+    # onglets commence exactement au même endroit.
+    NAV_ICONS = {"dashboard": "🏠", "triggers": "⌨️", "settings": "⚙️"}
+    NAV_ICON_WIDTH = 28
+
     def _nav_btn(self, key: str, text: str, row: int) -> None:
-        btn = ctk.CTkButton(self, text=text, anchor="w", height=42, corner_radius=9,
-                             fg_color="transparent", hover_color=COL_CARD, text_color=COL_TEXT,
-                             font=font(13), command=lambda: self.on_nav(key))
+        btn = ctk.CTkButton(self, text="", anchor="w", height=42, corner_radius=9,
+                             fg_color="transparent", hover_color=COL_CARD,
+                             command=lambda: self.on_nav(key))
         btn.grid(row=row, column=0, sticky="ew", padx=12, pady=3)
+
+        icon = ctk.CTkLabel(btn, text=self.NAV_ICONS.get(key, ""), font=font(14),
+                             width=self.NAV_ICON_WIDTH, anchor="center", fg_color="transparent")
+        icon.place(x=12, rely=0.5, anchor="w")
+        label = ctk.CTkLabel(btn, text=text, font=font(13), text_color=COL_TEXT,
+                              anchor="w", fg_color="transparent")
+        label.place(x=12 + self.NAV_ICON_WIDTH, rely=0.5, anchor="w")
+
+        # Les labels posés sur le bouton interceptent le clic : on le relaie.
+        for widget in (icon, label):
+            widget.bind("<Button-1>", lambda _e, k=key: self.on_nav(k))
+
         self.nav_buttons[key] = btn
+        self.nav_labels[key] = label
 
     def set_active(self, key: str) -> None:
         for k, btn in self.nav_buttons.items():
@@ -2210,9 +2303,9 @@ class Sidebar(ctk.CTkFrame):
     def refresh_labels(self) -> None:
         self._brand_icon_lbl.configure(text=t("SIDEBAR_BRAND_ICON"))
         self._brand_suffix_lbl.configure(text=t("SIDEBAR_BRAND_SUFFIX"))
-        self.nav_buttons["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
-        self.nav_buttons["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
-        self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
+        self.nav_labels["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
+        self.nav_labels["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
+        self.nav_labels["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
         self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
         self.start_btn.configure(text=t("SIDEBAR_BTN_START"))
@@ -2267,9 +2360,10 @@ class App(ctk.CTk):
         # permanence, sinon elles affichent une page d'erreur au démarrage
         # d'OBS et ne se reconnectent qu'après un rechargement manuel.
         self.trigger_store = TriggerStore(TRIGGERS_PATH)
-        self.overlay = OverlayServer(self.trigger_store.get, port=OVERLAY_DEFAULT_PORT)
+        self.overlay = OverlayServer(self.trigger_store.get, port=_saved_cfg.overlay_port)
         self.overlay.start()
-        self._combo_listener = ComboListener(on_combo=self._on_combo)
+        self._combo_listener = ComboListener(on_combo=self._on_combo,
+                                              on_release=self._on_combo_release)
         self._combo_map: dict[str, str] = {}   # combo -> rule_id
         self._rebuild_combo_map()
         self._combo_listener.start()
@@ -2342,6 +2436,15 @@ class App(ctk.CTk):
             # Cas le plus fréquent en cas de « ça ne marche pas » : la source
             # navigateur n'est pas ouverte dans OBS. On le dit explicitement.
             logger.warning(t("LOG_TRIGGER_NO_LISTENER", combo=format_combo(combo)))
+
+    def _on_combo_release(self, combo: str) -> None:
+        """Relâchement de la touche : ne concerne que les règles en mode
+        maintien (durée = 0). Les règles minutées ignorent l'événement côté
+        page, la durée configurée faisant foi."""
+        rule_id = self._combo_map.get(combo)
+        if rule_id is None:
+            return
+        self.overlay.fire(rule_id, action="hide")
 
     # -- Icône fenêtre + barre des tâches --------------------------------- #
     def _set_window_icon(self) -> None:

@@ -31,16 +31,36 @@ courte vidéo.
    (`Ctrl + Shift + A`, `F5`…). `Échap` annule.
 3. Choisir le type — Image, Vidéo ou Son — puis déposer ou parcourir le
    fichier.
-4. Copier l'URL affichée sous la ligne et la coller dans OBS :
+4. Choisir la **durée** d'affichage.
+5. Copier l'URL affichée sous la ligne et la coller dans OBS :
    **Sources → + → Navigateur → URL**.
 
 Presser la combinaison déclenche alors le média sur cette source.
 
+### Durée et mode maintien
+
+| Réglage | Comportement |
+|---|---|
+| **Maintien** | Affiché tant que la touche reste enfoncée, masqué au relâchement |
+| 150 ms → 10 s | Affiché puis masqué automatiquement après ce délai |
+
+Pour masquer une minimap, **Maintien** est le bon réglage : on appuie, on
+consulte, on relâche — aucune minuterie à calibrer, et le retour suit
+exactement le doigt.
+
+Le média est préchargé au chargement de la page : un déclenchement ne coûte
+qu'un basculement CSS, sans requête réseau ni redécodage. C'est ce qui rend
+l'affichage et le masquage immédiats, même sur des appuis rapides et répétés.
+
 > L'application ouvre pour cela un petit serveur HTTP local
-> (`http://127.0.0.1:4466` par défaut), lié à la boucle locale uniquement.
-> C'est la seule façon d'alimenter une source navigateur OBS. Si le port est
-> occupé, un port libre est choisi automatiquement — l'URL affichée dans
-> l'onglet est toujours la bonne.
+> (`http://127.0.0.1:4466` par défaut, réglable via `OBS_OVERLAY_PORT`), lié
+> à la boucle locale uniquement. C'est la seule façon d'alimenter une source
+> navigateur OBS.
+>
+> Si le port est occupé, l'application réessaie brièvement puis se replie sur
+> un port libre — et **le signale en jaune dans l'onglet**, car les URL déjà
+> collées dans OBS pointent vers l'ancien port et ne répondent plus. L'URL
+> affichée sous chaque ligne est toujours la bonne : il suffit de la recopier.
 >
 > Le glisser-déposer nécessite `tkinterdnd2` (`pip install tkinterdnd2`).
 > Sans lui, la zone reste cliquable et ouvre le sélecteur de fichier.

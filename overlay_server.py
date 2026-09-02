@@ -21,6 +21,7 @@ import logging
 import mimetypes
 import queue
 import threading
+import time
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,10 +71,20 @@ class _Broker:
             try:
                 q.put_nowait(data)
                 sent += 1
+                continue
             except queue.Full:
-                # Page bloquée ou trop lente : on saute plutôt que de bloquer
-                # le thread des hotkeys.
-                logger.debug("File SSE saturée pour %s, événement ignoré.", rule_id)
+                pass
+            # File saturée : on évince le PLUS ANCIEN pour faire place au plus
+            # récent. Jeter le nouveau serait dangereux en mode maintien —
+            # un "hide" perdu laisserait l'overlay collé à l'écran. L'état le
+            # plus récent est toujours celui qui compte.
+            try:
+                q.get_nowait()
+                q.put_nowait(data)
+                sent += 1
+                logger.debug("File SSE saturée pour %s : plus ancien événement évincé.", rule_id)
+            except (queue.Empty, queue.Full):
+                logger.debug("Impossible de publier vers %s.", rule_id)
         return sent
 
     def listener_count(self, rule_id: str) -> int:
@@ -92,49 +103,83 @@ _OVERLAY_HTML = """<!doctype html>
   /* Fond transparent : OBS compose la page par-dessus la scène. */
   html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   #stage{width:100%;height:100%;display:flex;align-items:center;justify-content:center}
-  #media{max-width:100%;max-height:100%;display:none}
-  #media.on{display:block}
+  /* visibility plutot que display:none -> l'element garde sa taille et sa
+     texture GPU, donc l'affichage est un simple changement de compositing,
+     sans relayout ni redecodage. C'est ce qui rend le masquage instantane. */
+  #img,#video{max-width:100%;max-height:100%;position:absolute;visibility:hidden}
+  .on{visibility:visible !important}
 </style>
-<div id="stage"><img id="media" alt=""></div>
-<video id="video" style="display:none;max-width:100%;max-height:100%"></video>
+<div id="stage">
+  <img id="img" alt="">
+  <video id="video" muted playsinline></video>
+</div>
 <audio id="audio"></audio>
 <script>
 const RULE = __RULE_ID__;
 const KIND = __MEDIA_TYPE__;
-const DURATION = __DURATION__;
+const DURATION = __DURATION__;   // 0 = mode maintien (masque au relachement)
 const MEDIA_URL = "/media/" + RULE;
 
-const img = document.getElementById("media");
+const img = document.getElementById("img");
 const video = document.getElementById("video");
 const audio = document.getElementById("audio");
-const stage = document.getElementById("stage");
 let hideTimer = null;
 
+// --- Prechargement -------------------------------------------------------
+// Le media est telecharge et decode UNE SEULE FOIS, au chargement de la page.
+// Auparavant chaque declenchement reassignait src avec un parametre
+// anti-cache, ce qui imposait un aller-retour HTTP + un redecodage avant le
+// moindre pixel affiche : plusieurs dizaines de millisecondes, ressenties
+// comme un temps de reaction. Desormais afficher ne coute qu'un toggle CSS.
+if (KIND === "image") {
+  img.src = MEDIA_URL;
+} else if (KIND === "video") {
+  video.src = MEDIA_URL;
+  video.preload = "auto";
+  video.load();
+} else {
+  audio.src = MEDIA_URL;
+  audio.preload = "auto";
+  audio.load();
+}
+
 function show() {
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   if (KIND === "sound") {
-    audio.src = MEDIA_URL + "?t=" + Date.now();
+    audio.currentTime = 0;
     audio.play().catch(e => console.warn("lecture audio refusee", e));
     return;
   }
   if (KIND === "video") {
-    stage.innerHTML = "";
-    stage.appendChild(video);
-    video.style.display = "block";
-    video.src = MEDIA_URL + "?t=" + Date.now();
+    video.classList.add("on");
     video.currentTime = 0;
     video.play().catch(e => console.warn("lecture video refusee", e));
-    video.onended = () => { video.style.display = "none"; };
+    if (DURATION > 0) hideTimer = setTimeout(hide, DURATION);
     return;
   }
-  img.src = MEDIA_URL + "?t=" + Date.now();
   img.classList.add("on");
-  if (hideTimer) clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => img.classList.remove("on"), DURATION);
+  if (DURATION > 0) hideTimer = setTimeout(hide, DURATION);
+}
+
+function hide() {
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  img.classList.remove("on");
+  video.classList.remove("on");
+  if (KIND === "video") { try { video.pause(); } catch (e) {} }
+  if (KIND === "sound") { try { audio.pause(); } catch (e) {} }
+}
+
+function onEvent(ev) {
+  let action = "show";
+  try { action = (JSON.parse(ev.data).action) || "show"; } catch (e) {}
+  // En mode minute, on ignore le relachement : la duree fait foi.
+  if (action === "hide") { if (DURATION === 0) hide(); return; }
+  show();
 }
 
 function connect() {
   const es = new EventSource("/events/" + RULE);
-  es.addEventListener("trigger", show);
+  es.addEventListener("trigger", onEvent);
   es.onerror = () => {
     // OBS garde la page ouverte en continu : on se reconnecte tout seul
     // plutot que de rester muet apres un redemarrage de l'application.
@@ -316,28 +361,60 @@ class OverlayServer:
     def overlay_url(self, rule_id: str) -> str:
         return f"{self.base_url()}/overlay/{rule_id}"
 
-    def start(self) -> bool:
-        """Démarre le serveur. Si le port demandé est occupé, bascule sur un
-        port libre attribué par l'OS plutôt que d'échouer."""
+    @property
+    def requested_port(self) -> int:
+        return self._requested_port
+
+    @property
+    def using_fallback_port(self) -> bool:
+        """Vrai si le port demandé était pris et qu'on écoute ailleurs.
+
+        Important à signaler : les URL déjà collées comme sources navigateur
+        dans OBS pointent vers le port demandé et ne fonctionneront plus.
+        """
+        return self.is_running and self.port != self._requested_port
+
+    def start(self, retries: int = 5, retry_delay: float = 0.3) -> bool:
+        """Démarre le serveur.
+
+        Le port demandé est réessayé quelques fois avant de basculer sur un
+        port libre : au redémarrage de l'application, l'instance précédente
+        met un court instant à relâcher la socket, et céder trop vite
+        changerait l'URL — donc casserait toutes les sources navigateur déjà
+        configurées dans OBS.
+        """
         if self._httpd is not None:
             return True
 
-        for port in (self._requested_port, 0):
+        for attempt in range(1, retries + 1):
             try:
-                httpd = _OverlayHTTPServer((HOST, port), _Handler,
-                                            self._broker, self._rule_getter)
+                self._httpd = _OverlayHTTPServer((HOST, self._requested_port), _Handler,
+                                                  self._broker, self._rule_getter)
+                break
             except OSError as exc:
-                logger.warning("Port %s indisponible (%s).", port or "auto", exc)
-                continue
-            self._httpd = httpd
-            self._thread = threading.Thread(target=httpd.serve_forever, daemon=True,
-                                             name="overlay-http")
-            self._thread.start()
-            logger.info("Serveur overlay démarré sur %s", self.base_url())
-            return True
+                if attempt == retries:
+                    logger.warning("Port %d toujours occupé après %d tentatives (%s).",
+                                    self._requested_port, retries, exc)
+                else:
+                    time.sleep(retry_delay)
 
-        logger.error("Impossible de démarrer le serveur overlay.")
-        return False
+        if self._httpd is None:
+            try:
+                self._httpd = _OverlayHTTPServer((HOST, 0), _Handler,
+                                                  self._broker, self._rule_getter)
+            except OSError:
+                logger.exception("Impossible de démarrer le serveur overlay.")
+                return False
+            logger.warning(
+                "Serveur overlay replié sur le port %d : les URL déjà "
+                "configurées dans OBS sur le port %d ne répondront plus.",
+                self.port, self._requested_port)
+
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True,
+                                         name="overlay-http")
+        self._thread.start()
+        logger.info("Serveur overlay démarré sur %s", self.base_url())
+        return True
 
     def stop(self) -> None:
         if self._httpd is None:
@@ -351,10 +428,13 @@ class OverlayServer:
         self._thread = None
         logger.info("Serveur overlay arrêté.")
 
-    def fire(self, rule_id: str) -> int:
-        """Déclenche l'affichage. Retourne le nombre de sources notifiées :
-        0 signifie que la source navigateur n'est pas ouverte dans OBS."""
-        return self._broker.publish(rule_id, {"id": rule_id})
+    def fire(self, rule_id: str, action: str = "show") -> int:
+        """Déclenche l'affichage (`show`) ou le masquage (`hide`).
+
+        Retourne le nombre de sources notifiées : 0 signifie que la source
+        navigateur n'est pas ouverte dans OBS.
+        """
+        return self._broker.publish(rule_id, {"id": rule_id, "action": action})
 
     def listener_count(self, rule_id: str) -> int:
         return self._broker.listener_count(rule_id)

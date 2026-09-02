@@ -206,10 +206,16 @@ class ComboListener:
     listener clavier par raccourci configuré.
     """
 
-    def __init__(self, on_combo: Callable[[str], None]) -> None:
+    def __init__(self, on_combo: Callable[[str], None],
+                 on_release: Optional[Callable[[str], None]] = None) -> None:
         self._on_combo = on_combo
+        self._on_release = on_release
         self._listener: Optional[object] = None
         self._pressed: set[str] = set()
+        # touche principale -> combinaison déclenchée. Ancrer sur la touche
+        # principale (et non sur la combinaison complète) permet de relâcher
+        # correctement même si l'utilisateur lâche Ctrl avant la lettre.
+        self._active: dict[str, str] = {}
         self._lock = threading.Lock()
 
     @property
@@ -225,7 +231,7 @@ class ComboListener:
             logger.warning("pynput absent — déclencheurs clavier désactivés.")
             return False
         try:
-            listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+            listener = keyboard.Listener(on_press=self._on_press, on_release=self._handle_release)
             listener.daemon = True
             listener.start()
         except Exception:
@@ -240,6 +246,7 @@ class ComboListener:
         self._listener = None
         with self._lock:
             self._pressed.clear()
+            self._active.clear()
         if listener is not None:
             try:
                 listener.stop()  # type: ignore[attr-defined]
@@ -256,17 +263,31 @@ class ComboListener:
                     self._pressed.add(canonical_modifier(name))
                 return
             with self._lock:
+                if name in self._active:
+                    # Windows répète l'événement press tant que la touche est
+                    # maintenue : sans ce garde, un maintien enverrait des
+                    # dizaines de déclenchements par seconde.
+                    return
                 mods = set(self._pressed)
-            self._on_combo(build_combo(mods, name))
+                combo = build_combo(mods, name)
+                self._active[name] = combo
+            self._on_combo(combo)
         except Exception:
             logger.debug("Erreur de traitement d'une combinaison.", exc_info=True)
 
-    def _on_release(self, key: object) -> None:
+    def _handle_release(self, key: object) -> None:
         try:
             name = HotkeyManager._key_name(key)
-            if name and is_modifier(name):
+            if not name:
+                return
+            if is_modifier(name):
                 with self._lock:
                     self._pressed.discard(canonical_modifier(name))
+                return
+            with self._lock:
+                combo = self._active.pop(name, None)
+            if combo is not None and self._on_release is not None:
+                self._on_release(combo)
         except Exception:
             logger.debug("Erreur au relâchement d'une touche.", exc_info=True)
 
