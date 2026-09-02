@@ -66,6 +66,7 @@ COVERS_DIR = DATA_DIR / "covers"
 ENV_PATH = BASE_DIR / ".env"
 GAMES_PATH = DATA_DIR / "games.json"
 HOTKEYS_PATH = DATA_DIR / "hotkeys.json"
+TRIGGERS_PATH = DATA_DIR / "triggers.json"
 ASSETS_DIR = BASE_DIR / "assets"
 ICON_PATH = ASSETS_DIR / "icon.ico"
 LOG_PATH = DATA_DIR / "obs_dynamics.log"
@@ -96,7 +97,9 @@ from i18n import t
 
 # Modules locaux (racine du projet, embarqués par build.spec).
 from cover_service import GameCoverService
-from hotkeys import HotkeyManager, load_bindings
+from hotkeys import ComboListener, ComboRecorder, HotkeyManager, format_combo, load_bindings
+from overlay_server import DEFAULT_PORT as OVERLAY_DEFAULT_PORT, OverlayServer
+from triggers import MEDIA_EXTENSIONS, MEDIA_TYPES, TriggerRule, TriggerStore
 
 # ============================================================================
 # PALETTE — thème AAA violet sombre (Steam/Discord/Spotify inspired)
@@ -1783,6 +1786,356 @@ class LanguageSegmentedControl(ctk.CTkFrame):
 
 
 # ============================================================================
+# GLISSER-DÉPOSER (optionnel)
+# ============================================================================
+def _try_enable_dnd(widget: Any, on_files: Callable[[list[str]], None]) -> bool:
+    """Active le glisser-déposer de fichiers sur un widget si `tkinterdnd2`
+    est installé. Retourne False sinon — le bouton « Parcourir » reste le
+    chemin garanti, la zone de dépôt n'est qu'un confort.
+
+    tkinterdnd2 n'est PAS une dépendance déclarée : l'installer active la
+    fonctionnalité, son absence ne casse rien.
+    """
+    try:
+        from tkinterdnd2 import DND_FILES, TkinterDnD
+    except ImportError:
+        return False
+    try:
+        # tkinterdnd2 exige que la racine Tk connaisse l'extension Tcl ;
+        # _require() l'y charge après coup, ce qui évite de remplacer la
+        # classe racine (ctk.CTk) par TkinterDnD.Tk.
+        TkinterDnD._require(widget.winfo_toplevel())
+        widget.drop_target_register(DND_FILES)
+
+        def _on_drop(event: Any) -> None:
+            raw = str(getattr(event, "data", "") or "")
+            # Tcl renvoie une liste : les chemins contenant des espaces sont
+            # entourés d'accolades, ex. "{C:/mon dossier/a.png} C:/b.png".
+            paths = re.findall(r"\{([^}]*)\}|(\S+)", raw)
+            files = [a or b for a, b in paths if (a or b)]
+            if files:
+                on_files(files)
+
+        widget.dnd_bind("<<Drop>>", _on_drop)
+        return True
+    except Exception:
+        logger.debug("Glisser-déposer indisponible sur ce widget.", exc_info=True)
+        return False
+
+
+# ============================================================================
+# VUE : RACCOURCIS & OVERLAYS
+# ============================================================================
+class TriggerRow(ctk.CTkFrame):
+    """Une règle : capture du raccourci, type de média, fichier, et juste
+    en dessous — visuellement rattachée — l'URL de la source navigateur."""
+
+    def __init__(self, master, rule: TriggerRule, store: TriggerStore,
+                 overlay_url: str, on_changed: Callable[[], None],
+                 on_delete: Callable[[TriggerRule], None],
+                 post_ui: Callable[[Callable[[], None]], None], **kwargs) -> None:
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self._rule = rule
+        self._store = store
+        self._on_changed = on_changed
+        self._on_delete = on_delete
+        self._post_ui = post_ui
+        self._recorder: Optional[ComboRecorder] = None
+        self.grid_columnconfigure(0, weight=1)
+
+        # --- Bloc principal de configuration --------------------------------
+        # corner_radius asymétrique impossible en CTk : on colle deux cartes
+        # l'une contre l'autre (pady=0) pour l'effet « rattaché ».
+        card = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12,
+                             border_width=1, border_color=COL_BORDER)
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(2, weight=1)
+
+        self._hotkey_btn = ctk.CTkButton(
+            card, text=self._hotkey_label(), width=210, height=38,
+            fg_color=COL_BG, hover_color=COL_BORDER, border_width=1,
+            border_color=COL_BORDER_ACCENT if rule.hotkey else COL_BORDER,
+            font=font(12, "bold" if rule.hotkey else "normal"),
+            command=self._start_capture)
+        self._hotkey_btn.grid(row=0, column=0, padx=(14, 8), pady=14)
+
+        self._type_var = ctk.StringVar(value=rule.media_type)
+        self._type_menu = ctk.CTkOptionMenu(
+            card, values=[t(f"TRIGGER_MEDIA_{k.upper()}") for k in MEDIA_TYPES],
+            width=120, height=38, fg_color=COL_BG, button_color=COL_ACCENT,
+            button_hover_color=COL_ACCENT_HOVER, font=font(12),
+            command=self._on_type_changed)
+        self._type_menu.set(t(f"TRIGGER_MEDIA_{rule.media_type.upper()}"))
+        self._type_menu.grid(row=0, column=1, padx=8, pady=14)
+
+        self._drop_zone = ctk.CTkButton(
+            card, text=self._media_label(), height=38, anchor="w",
+            fg_color=COL_BG, hover_color=COL_BORDER, border_width=1,
+            border_color=COL_BORDER, font=font(11),
+            text_color=COL_TEXT if rule.media_path else COL_TEXT_MUTED,
+            command=self._browse_media)
+        self._drop_zone.grid(row=0, column=2, sticky="ew", padx=8, pady=14)
+
+        self._delete_btn = ctk.CTkButton(
+            card, text=t("TRIGGER_BTN_DELETE"), width=42, height=38,
+            fg_color="#3A1420", hover_color=COL_RED, font=font(12),
+            command=lambda: self._on_delete(self._rule))
+        self._delete_btn.grid(row=0, column=3, padx=(8, 14), pady=14)
+
+        self._dnd_active = _try_enable_dnd(self._drop_zone, self._on_files_dropped)
+
+        # --- Bandeau URL, collé sous la carte -------------------------------
+        url_bar = ctk.CTkFrame(self, fg_color=COL_BG, corner_radius=10,
+                                border_width=1, border_color=COL_BORDER)
+        url_bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 0))
+        url_bar.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(url_bar, text=t("TRIGGER_URL_LABEL"), font=font(10),
+                     text_color=COL_TEXT_MUTED).grid(row=0, column=0, padx=(12, 8), pady=8)
+
+        self._url_var = ctk.StringVar(value=overlay_url)
+        url_entry = ctk.CTkEntry(url_bar, textvariable=self._url_var, height=28,
+                                  fg_color=COL_CARD, border_width=0, font=font(10))
+        url_entry.grid(row=0, column=1, sticky="ew", pady=8)
+        # Lecture seule mais sélectionnable : l'utilisateur doit pouvoir
+        # copier à la main si le presse-papiers est indisponible.
+        url_entry.configure(state="readonly")
+
+        self._copy_btn = ctk.CTkButton(
+            url_bar, text=t("TRIGGER_BTN_COPY"), width=90, height=28,
+            fg_color=COL_ACCENT_SOFT, hover_color=COL_ACCENT_HOVER,
+            font=font(11), command=self._copy_url)
+        self._copy_btn.grid(row=0, column=2, padx=(8, 12), pady=8)
+
+        self._status_lbl = ctk.CTkLabel(self, text=self._status_text(), font=font(10),
+                                         text_color=COL_TEXT_MUTED, anchor="w")
+        self._status_lbl.grid(row=2, column=0, sticky="w", padx=20, pady=(4, 0))
+
+    # -- Libellés ---------------------------------------------------------- #
+
+    def _hotkey_label(self) -> str:
+        if self._rule.hotkey:
+            return format_combo(self._rule.hotkey)
+        return t("TRIGGER_HOTKEY_PLACEHOLDER")
+
+    def _media_label(self) -> str:
+        if self._rule.media_path:
+            return Path(self._rule.media_path).name
+        return t("TRIGGER_MEDIA_DROP_HINT") if getattr(self, "_dnd_active", False) \
+            else t("TRIGGER_MEDIA_BROWSE_HINT")
+
+    def _status_text(self) -> str:
+        if not self._rule.is_complete:
+            return t("TRIGGER_STATUS_INCOMPLETE")
+        return t("TRIGGER_STATUS_READY")
+
+    def refresh(self) -> None:
+        self._hotkey_btn.configure(
+            text=self._hotkey_label(),
+            border_color=COL_BORDER_ACCENT if self._rule.hotkey else COL_BORDER,
+            font=font(12, "bold" if self._rule.hotkey else "normal"))
+        self._drop_zone.configure(
+            text=self._media_label(),
+            text_color=COL_TEXT if self._rule.media_path else COL_TEXT_MUTED)
+        self._status_lbl.configure(text=self._status_text())
+
+    # -- Capture du raccourci ---------------------------------------------- #
+
+    def _start_capture(self) -> None:
+        if self._recorder is not None:
+            return
+        self._hotkey_btn.configure(text=t("TRIGGER_HOTKEY_LISTENING"),
+                                    border_color=COL_ACCENT, font=font(12))
+        self._recorder = ComboRecorder(on_captured=self._on_combo_captured)
+        if not self._recorder.start():
+            self._recorder = None
+            self._hotkey_btn.configure(text=t("TRIGGER_HOTKEY_NO_PYNPUT"),
+                                        border_color=COL_RED)
+
+    def _on_combo_captured(self, combo: str) -> None:
+        # Appelé depuis le thread pynput : on repasse par la file UI.
+        self._post_ui(lambda: self._apply_combo(combo))
+
+    def _apply_combo(self, combo: str) -> None:
+        self._recorder = None
+        if not combo:                       # Échap : on garde l'existant
+            self.refresh()
+            return
+        conflict = self._store.conflicting(combo, exclude_id=self._rule.id)
+        if conflict is not None:
+            self._status_lbl.configure(
+                text=t("TRIGGER_ERR_HOTKEY_TAKEN", combo=format_combo(combo)),
+                text_color=COL_RED)
+            self.refresh()
+            return
+        self._rule.hotkey = combo
+        self._store.upsert(self._rule)
+        self._status_lbl.configure(text_color=COL_TEXT_MUTED)
+        self.refresh()
+        self._on_changed()
+
+    # -- Média -------------------------------------------------------------- #
+
+    def _on_type_changed(self, _label: str) -> None:
+        label_to_key = {t(f"TRIGGER_MEDIA_{k.upper()}"): k for k in MEDIA_TYPES}
+        self._rule.media_type = label_to_key.get(self._type_menu.get(), "image")
+        self._store.upsert(self._rule)
+        self.refresh()
+        self._on_changed()
+
+    def _browse_media(self) -> None:
+        exts = MEDIA_EXTENSIONS.get(self._rule.media_type, ())
+        pattern = " ".join(f"*{e}" for e in exts)
+        path = filedialog.askopenfilename(
+            title=t("TRIGGER_FILEDIALOG_TITLE"),
+            filetypes=[(t(f"TRIGGER_MEDIA_{self._rule.media_type.upper()}"), pattern),
+                       (t("TRIGGER_FILEDIALOG_ALL"), "*.*")])
+        if path:
+            self._set_media(path)
+
+    def _on_files_dropped(self, files: list[str]) -> None:
+        if files:
+            self._post_ui(lambda: self._set_media(files[0]))
+
+    def _set_media(self, path: str) -> None:
+        suffix = Path(path).suffix.lower()
+        expected = MEDIA_EXTENSIONS.get(self._rule.media_type, ())
+        if expected and suffix not in expected:
+            # On avertit sans bloquer : l'utilisateur sait parfois mieux que
+            # la table d'extensions (conteneurs exotiques, fichiers renommés).
+            self._status_lbl.configure(
+                text=t("TRIGGER_WARN_EXTENSION", ext=suffix or "?",
+                       kind=t(f"TRIGGER_MEDIA_{self._rule.media_type.upper()}")),
+                text_color=COL_YELLOW)
+        else:
+            self._status_lbl.configure(text_color=COL_TEXT_MUTED)
+        self._rule.media_path = path
+        self._store.upsert(self._rule)
+        self.refresh()
+        self._on_changed()
+
+    # -- URL ---------------------------------------------------------------- #
+
+    def _copy_url(self) -> None:
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self._url_var.get())
+            self._copy_btn.configure(text=t("TRIGGER_BTN_COPIED"))
+            self.after(1500, lambda: self._copy_btn.configure(text=t("TRIGGER_BTN_COPY")))
+        except Exception:
+            logger.debug("Copie dans le presse-papiers échouée.", exc_info=True)
+
+    def destroy(self) -> None:
+        if self._recorder is not None:
+            self._recorder.cancel()   # ne pas laisser un listener clavier orphelin
+            self._recorder = None
+        super().destroy()
+
+
+class TriggersView(ctk.CTkFrame):
+    def __init__(self, master, store: TriggerStore, overlay: OverlayServer,
+                 post_ui: Callable[[Callable[[], None]], None],
+                 on_rules_changed: Callable[[], None], **kwargs) -> None:
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self._store = store
+        self._overlay = overlay
+        self._post_ui = post_ui
+        self._on_rules_changed = on_rules_changed
+        self._rows: list[TriggerRow] = []
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(28, 8))
+        header.grid_columnconfigure(0, weight=1)
+
+        title_col = ctk.CTkFrame(header, fg_color="transparent")
+        title_col.grid(row=0, column=0, sticky="w")
+        self._title_lbl = ctk.CTkLabel(title_col, text=t("TRIGGERS_TITLE"),
+                                        font=font(22, "bold"), text_color=COL_TEXT)
+        self._title_lbl.pack(anchor="w")
+        self._subtitle_lbl = ctk.CTkLabel(title_col, text="", font=font(11),
+                                           text_color=COL_TEXT_MUTED)
+        self._subtitle_lbl.pack(anchor="w", pady=(2, 0))
+
+        self._add_btn = ctk.CTkButton(
+            header, text=t("TRIGGERS_BTN_ADD"), width=200, height=36,
+            fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER, text_color="#0F0C1B",
+            font=font(12, "bold"), corner_radius=9, command=self._add_rule)
+        self._add_btn.grid(row=0, column=1, sticky="e")
+
+        self._server_lbl = ctk.CTkLabel(self, text="", font=font(10),
+                                         text_color=COL_TEXT_MUTED, anchor="w")
+        self._server_lbl.grid(row=1, column=0, sticky="w", padx=30)
+
+        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll.grid(row=2, column=0, sticky="nsew", padx=22, pady=10)
+        self.scroll.grid_columnconfigure(0, weight=1)
+
+        self.render()
+
+    def _server_text(self) -> str:
+        if self._overlay.is_running:
+            return t("TRIGGERS_SERVER_RUNNING", url=self._overlay.base_url())
+        return t("TRIGGERS_SERVER_STOPPED")
+
+    def render(self) -> None:
+        for row in self._rows:
+            row.destroy()
+        self._rows.clear()
+        for widget in self.scroll.winfo_children():
+            widget.destroy()
+
+        rules = self._store.load()
+        self._subtitle_lbl.configure(text=t("TRIGGERS_SUBTITLE", count=len(rules)))
+        self._server_lbl.configure(text=self._server_text())
+
+        if not rules:
+            self._render_empty_state()
+            return
+
+        for i, rule in enumerate(rules):
+            row = TriggerRow(self.scroll, rule=rule, store=self._store,
+                              overlay_url=self._overlay.overlay_url(rule.id),
+                              on_changed=self._on_rules_changed,
+                              on_delete=self._delete_rule, post_ui=self._post_ui)
+            row.grid(row=i, column=0, sticky="ew", pady=(0, 18))
+            self._rows.append(row)
+
+    def _render_empty_state(self) -> None:
+        box = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        box.grid(row=0, column=0, pady=60)
+        ctk.CTkLabel(box, text="⌨️", font=font(44)).pack()
+        ctk.CTkLabel(box, text=t("TRIGGERS_EMPTY_TITLE"), font=font(15, "bold"),
+                     text_color=COL_TEXT).pack(pady=(12, 4))
+        ctk.CTkLabel(box, text=t("TRIGGERS_EMPTY_HINT"), font=font(11),
+                     text_color=COL_TEXT_MUTED, justify="center",
+                     wraplength=460).pack(pady=(0, 16))
+        ctk.CTkButton(box, text=t("TRIGGERS_BTN_ADD"), width=220, height=42,
+                       fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+                       text_color="#0F0C1B", font=font(13, "bold"),
+                       corner_radius=9, command=self._add_rule).pack()
+
+    def _add_rule(self) -> None:
+        self._store.add()          # insérée en tête de liste
+        self.render()
+        self._on_rules_changed()
+
+    def _delete_rule(self, rule: TriggerRule) -> None:
+        if messagebox.askyesno(t("CONFIRM_DIALOG_TITLE"), t("TRIGGER_CONFIRM_DELETE")):
+            self._store.delete(rule.id)
+            self.render()
+            self._on_rules_changed()
+
+    def refresh_labels(self) -> None:
+        self._title_lbl.configure(text=t("TRIGGERS_TITLE"))
+        self._add_btn.configure(text=t("TRIGGERS_BTN_ADD"))
+        self._server_lbl.configure(text=self._server_text())
+        self.render()
+
+
+# ============================================================================
 # SIDEBAR
 # ============================================================================
 class Sidebar(ctk.CTkFrame):
@@ -1805,12 +2158,14 @@ class Sidebar(ctk.CTkFrame):
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
         self._nav_btn("dashboard", t("SIDEBAR_NAV_DASHBOARD"), row=1)
-        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=2)
+        # Raccourcis & Overlays s'insère ENTRE l'accueil et les paramètres.
+        self._nav_btn("triggers", t("SIDEBAR_NAV_TRIGGERS"), row=2)
+        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=3)
 
         self._folder_btn = ctk.CTkButton(self, text=t("SIDEBAR_BTN_OPEN_FOLDER"), anchor="w", height=36,
                                           corner_radius=8, fg_color="transparent", hover_color=COL_CARD,
                                           text_color=COL_TEXT_MUTED, font=font(12), command=on_open_folder)
-        self._folder_btn.grid(row=3, column=0, sticky="ew", padx=12, pady=(10, 3))
+        self._folder_btn.grid(row=4, column=0, sticky="ew", padx=12, pady=(10, 3))
 
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
         ctrl.grid(row=6, column=0, sticky="sew", padx=16, pady=20)
@@ -1856,6 +2211,7 @@ class Sidebar(ctk.CTkFrame):
         self._brand_icon_lbl.configure(text=t("SIDEBAR_BRAND_ICON"))
         self._brand_suffix_lbl.configure(text=t("SIDEBAR_BRAND_SUFFIX"))
         self.nav_buttons["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
+        self.nav_buttons["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
         self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
         self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
@@ -1904,6 +2260,20 @@ class App(ctk.CTk):
         self._reconnect_stop = threading.Event()
         self._reconnect_thread: Optional[threading.Thread] = None
 
+        # --- Déclencheurs média (onglet Raccourcis & Overlays) -------------
+        # Le serveur et l'écoute clavier tournent tant que l'application est
+        # ouverte, indépendamment du Démarrer/Arrêter de la surveillance :
+        # les sources navigateur d'OBS doivent rester joignables en
+        # permanence, sinon elles affichent une page d'erreur au démarrage
+        # d'OBS et ne se reconnectent qu'après un rechargement manuel.
+        self.trigger_store = TriggerStore(TRIGGERS_PATH)
+        self.overlay = OverlayServer(self.trigger_store.get, port=OVERLAY_DEFAULT_PORT)
+        self.overlay.start()
+        self._combo_listener = ComboListener(on_combo=self._on_combo)
+        self._combo_map: dict[str, str] = {}   # combo -> rule_id
+        self._rebuild_combo_map()
+        self._combo_listener.start()
+
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -1920,8 +2290,15 @@ class App(ctk.CTk):
                                         obs_client_getter=lambda: self._obs_client,
                                         steam_scanner=self.steam_scanner, post_ui=self.post_ui,
                                         cover_service=self.cover_service)
+        self.triggers = TriggersView(self.content, store=self.trigger_store,
+                                      overlay=self.overlay, post_ui=self.post_ui,
+                                      on_rules_changed=self._rebuild_combo_map)
         self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
-        self.views: dict[str, ctk.CTkFrame] = {"dashboard": self.dashboard, "settings": self.settings}
+        self.views: dict[str, ctk.CTkFrame] = {
+            "dashboard": self.dashboard,
+            "triggers": self.triggers,
+            "settings": self.settings,
+        }
         self._navigate("dashboard")
 
         # --- Rechargement à chaud : toute vue exposant refresh_labels() est
@@ -1935,7 +2312,36 @@ class App(ctk.CTk):
         self.title(t("APP_TITLE_WINDOW"))
         self.sidebar.refresh_labels()
         self.dashboard.refresh_labels()
+        self.triggers.refresh_labels()
         self.settings.refresh_labels()
+
+    # -- Déclencheurs média ------------------------------------------------ #
+
+    def _rebuild_combo_map(self) -> None:
+        """Recalcule la table combinaison -> règle après toute édition.
+
+        Une seule écoute clavier globale sert toutes les règles ; c'est cette
+        table qui fait la résolution, plutôt qu'un listener par raccourci.
+        """
+        mapping: dict[str, str] = {}
+        for rule in self.trigger_store.load():
+            if rule.enabled and rule.is_complete:
+                mapping[rule.hotkey] = rule.id
+        self._combo_map = mapping
+        logger.debug("Table des déclencheurs : %d combinaison(s) active(s).", len(mapping))
+
+    def _on_combo(self, combo: str) -> None:
+        """Appelé depuis le thread pynput — aucune opération Tk ici."""
+        rule_id = self._combo_map.get(combo)
+        if rule_id is None:
+            return
+        listeners = self.overlay.fire(rule_id)
+        if listeners:
+            logger.info(t("LOG_TRIGGER_FIRED", combo=format_combo(combo), count=listeners))
+        else:
+            # Cas le plus fréquent en cas de « ça ne marche pas » : la source
+            # navigateur n'est pas ouverte dans OBS. On le dit explicitement.
+            logger.warning(t("LOG_TRIGGER_NO_LISTENER", combo=format_combo(combo)))
 
     # -- Icône fenêtre + barre des tâches --------------------------------- #
     def _set_window_icon(self) -> None:
@@ -2131,6 +2537,8 @@ class App(ctk.CTk):
     def _on_close(self) -> None:
         self.scan_worker.stop()
         self.hotkey_manager.stop()
+        self._combo_listener.stop()
+        self.overlay.stop()
         self._stop_reconnect_supervisor()
         self.cover_service.stop()
         if self._obs_client is not None:

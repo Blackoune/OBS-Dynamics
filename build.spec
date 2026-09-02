@@ -30,6 +30,8 @@ a = Analysis(
         "i18n",
         "cover_service",   # jaquettes (requests + PIL)
         "hotkeys",         # hotkeys globales (pynput, optionnel au runtime)
+        "triggers",        # règles raccourci -> média
+        "overlay_server",  # serveur HTTP local des sources navigateur OBS
         "requests",
         "pynput",
     ],

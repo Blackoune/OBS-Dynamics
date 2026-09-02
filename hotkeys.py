@@ -151,3 +151,200 @@ class HotkeyManager:
                 self._on_hotkey(state)
         except Exception:
             logger.debug("Erreur de traitement d'une touche.", exc_info=True)
+
+
+# ============================================================================
+# COMBINAISONS (Ctrl+Shift+A) — pour les déclencheurs de médias
+# ============================================================================
+
+# Familles de modificateurs : pynput distingue gauche et droite (ctrl_l /
+# ctrl_r), sans intérêt pour un raccourci utilisateur. On normalise.
+_MODIFIER_ALIASES: dict[str, str] = {
+    "ctrl": "ctrl", "ctrl_l": "ctrl", "ctrl_r": "ctrl",
+    "shift": "shift", "shift_l": "shift", "shift_r": "shift",
+    "alt": "alt", "alt_l": "alt", "alt_r": "alt", "alt_gr": "alt",
+    "cmd": "cmd", "cmd_l": "cmd", "cmd_r": "cmd",
+}
+
+# Ordre canonique : "ctrl+shift+a" et "shift+ctrl+a" doivent produire la même
+# chaîne, sinon deux règles identiques ne se reconnaîtraient pas entre elles.
+_MODIFIER_ORDER = ("ctrl", "alt", "shift", "cmd")
+
+
+def is_modifier(key_name: str) -> bool:
+    return key_name in _MODIFIER_ALIASES
+
+
+def canonical_modifier(key_name: str) -> str:
+    return _MODIFIER_ALIASES.get(key_name, key_name)
+
+
+def build_combo(modifiers: set[str], key_name: str) -> str:
+    """Assemble un identifiant de combinaison stable et ordonné."""
+    ordered = [m for m in _MODIFIER_ORDER if m in modifiers]
+    return "+".join(ordered + [key_name])
+
+
+def format_combo(combo: str) -> str:
+    """Rendu lisible pour l'interface : "ctrl+shift+a" -> "Ctrl + Shift + A"."""
+    if not combo:
+        return ""
+    pretty = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "cmd": "Cmd"}
+    parts = [pretty.get(p, p.upper() if len(p) == 1 else p.capitalize())
+             for p in combo.split("+")]
+    return " + ".join(parts)
+
+
+class ComboListener:
+    """Écoute globale de combinaisons de touches.
+
+    Suit l'état des modificateurs enfoncés et, à chaque touche non-modificateur,
+    calcule la combinaison courante puis appelle `on_combo(combo)`.
+
+    Une seule instance suffit pour toutes les règles : la résolution
+    combinaison -> règle se fait côté appelant, ce qui évite d'ouvrir un
+    listener clavier par raccourci configuré.
+    """
+
+    def __init__(self, on_combo: Callable[[str], None]) -> None:
+        self._on_combo = on_combo
+        self._listener: Optional[object] = None
+        self._pressed: set[str] = set()
+        self._lock = threading.Lock()
+
+    @property
+    def is_running(self) -> bool:
+        return self._listener is not None
+
+    def start(self) -> bool:
+        if self._listener is not None:
+            return True
+        try:
+            from pynput import keyboard
+        except ImportError:
+            logger.warning("pynput absent — déclencheurs clavier désactivés.")
+            return False
+        try:
+            listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+            listener.daemon = True
+            listener.start()
+        except Exception:
+            logger.exception("Écoute des combinaisons impossible.")
+            return False
+        self._listener = listener
+        logger.info("Écoute des combinaisons de touches active.")
+        return True
+
+    def stop(self) -> None:
+        listener = self._listener
+        self._listener = None
+        with self._lock:
+            self._pressed.clear()
+        if listener is not None:
+            try:
+                listener.stop()  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Arrêt de l'écoute des combinaisons échoué.", exc_info=True)
+
+    def _on_press(self, key: object) -> None:
+        try:
+            name = HotkeyManager._key_name(key)
+            if not name:
+                return
+            if is_modifier(name):
+                with self._lock:
+                    self._pressed.add(canonical_modifier(name))
+                return
+            with self._lock:
+                mods = set(self._pressed)
+            self._on_combo(build_combo(mods, name))
+        except Exception:
+            logger.debug("Erreur de traitement d'une combinaison.", exc_info=True)
+
+    def _on_release(self, key: object) -> None:
+        try:
+            name = HotkeyManager._key_name(key)
+            if name and is_modifier(name):
+                with self._lock:
+                    self._pressed.discard(canonical_modifier(name))
+        except Exception:
+            logger.debug("Erreur au relâchement d'une touche.", exc_info=True)
+
+
+class ComboRecorder:
+    """Capture UNE combinaison puis s'arrête — alimente le bouton
+    « Cliquer pour enregistrer la combinaison » de l'interface.
+
+    `on_captured(combo)` est appelé depuis le thread pynput : l'appelant doit
+    repasser sur le thread UI (post_ui) avant de toucher un widget.
+    """
+
+    def __init__(self, on_captured: Callable[[str], None]) -> None:
+        self._on_captured = on_captured
+        self._listener: Optional[object] = None
+        self._pressed: set[str] = set()
+        self._done = threading.Event()
+        self._lock = threading.Lock()
+
+    def start(self) -> bool:
+        try:
+            from pynput import keyboard
+        except ImportError:
+            logger.warning("pynput absent — capture de raccourci impossible.")
+            return False
+        try:
+            listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+            listener.daemon = True
+            listener.start()
+        except Exception:
+            logger.exception("Capture de raccourci impossible.")
+            return False
+        self._listener = listener
+        return True
+
+    def cancel(self) -> None:
+        self._done.set()
+        self._stop_listener()
+
+    def _stop_listener(self) -> None:
+        listener = self._listener
+        self._listener = None
+        if listener is not None:
+            try:
+                listener.stop()  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Arrêt du recorder échoué.", exc_info=True)
+
+    def _on_press(self, key: object) -> None:
+        if self._done.is_set():
+            return
+        try:
+            name = HotkeyManager._key_name(key)
+            if not name:
+                return
+            if name == "esc":                      # annulation explicite
+                self._done.set()
+                self._stop_listener()
+                self._on_captured("")
+                return
+            if is_modifier(name):
+                with self._lock:
+                    self._pressed.add(canonical_modifier(name))
+                return
+            with self._lock:
+                mods = set(self._pressed)
+            combo = build_combo(mods, name)
+            self._done.set()
+            self._stop_listener()
+            self._on_captured(combo)
+        except Exception:
+            logger.debug("Erreur pendant la capture.", exc_info=True)
+
+    def _on_release(self, key: object) -> None:
+        try:
+            name = HotkeyManager._key_name(key)
+            if name and is_modifier(name):
+                with self._lock:
+                    self._pressed.discard(canonical_modifier(name))
+        except Exception:
+            pass
