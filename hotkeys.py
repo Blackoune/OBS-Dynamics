@@ -4,10 +4,11 @@ hotkeys.py — Hotkeys globales (pynput) pour forcer manuellement un état de je
 Permet de basculer une scène OBS au clavier même quand la détection visuelle
 se trompe ou qu'aucune image de référence n'est configurée.
 
-La table touche -> état est persistée dans data/hotkeys.json et modifiable
-sans toucher au code :
+La table raccourci -> état est persistée dans data/hotkeys.json et modifiable
+sans toucher au code. Une touche seule comme une combinaison sont acceptées ;
+l'ordre des modificateurs n'a pas d'importance, il est normalisé à la lecture :
 
-    {"f1": "in_game", "f2": "menu", "f3": "inactive"}
+    {"f1": "in_game", "ctrl+f2": "menu", "ctrl+shift+f3": "inactive"}
 
 NOTE pynput : `Key.f1.name` vaut "f1" en MINUSCULE. L'ancienne implémentation
 (_backup) indexait sur "F1" en majuscule, donc aucune touche ne déclenchait
@@ -32,6 +33,24 @@ DEFAULT_BINDINGS: dict[str, str] = {
 VALID_STATES = {"inactive", "active", "menu", "in_game"}
 
 
+def normalize_combo(combo: str) -> str:
+    """Met un raccourci écrit à la main sous forme canonique.
+
+    "Ctrl+Shift+F1", "shift+ctrl+f1" et "CTRL + SHIFT + F1" doivent tous
+    désigner le même raccourci, sinon deux règles identiques ne se
+    reconnaîtraient pas et la table de correspondance raterait la touche.
+    Retourne "" si le raccourci n'a pas exactement une touche principale.
+    """
+    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
+    if not parts:
+        return ""
+    mods = {canonical_modifier(p) for p in parts if is_modifier(p)}
+    main = [p for p in parts if not is_modifier(p)]
+    if len(main) != 1:
+        return ""          # "ctrl+alt" seul, ou "a+b" : pas un raccourci valide
+    return build_combo(mods, main[0])
+
+
 def load_bindings(path: Path) -> dict[str, str]:
     """Lit data/hotkeys.json. Tolère l'ancien format (liste vide) et tout
     fichier corrompu en retombant sur les valeurs par défaut."""
@@ -49,10 +68,11 @@ def load_bindings(path: Path) -> dict[str, str]:
 
     bindings: dict[str, str] = {}
     for key, state in raw.items():
-        if isinstance(key, str) and state in VALID_STATES:
-            bindings[key.strip().lower()] = state
+        combo = normalize_combo(key) if isinstance(key, str) else ""
+        if combo and state in VALID_STATES:
+            bindings[combo] = state
         else:
-            logger.warning("Binding ignoré (touche ou état invalide) : %r -> %r", key, state)
+            logger.warning("Binding ignoré (raccourci ou état invalide) : %r -> %r", key, state)
     return bindings or dict(DEFAULT_BINDINGS)
 
 
@@ -80,6 +100,7 @@ class HotkeyManager:
         self._on_hotkey = on_hotkey
         self._bindings = dict(bindings) if bindings else dict(DEFAULT_BINDINGS)
         self._listener: Optional[object] = None
+        self._pressed: set[str] = set()
         self._lock = threading.Lock()
 
     @property
@@ -106,7 +127,8 @@ class HotkeyManager:
                            "(pip install pynput pour les activer).")
             return False
         try:
-            listener = keyboard.Listener(on_press=self._on_press)
+            listener = keyboard.Listener(on_press=self._on_press,
+                                         on_release=self._on_release)
             listener.daemon = True
             listener.start()
         except Exception:
@@ -120,6 +142,9 @@ class HotkeyManager:
     def stop(self) -> None:
         listener = self._listener
         self._listener = None
+        with self._lock:
+            self._pressed.clear()   # sinon un modificateur resté "enfoncé" au
+                                    # redémarrage fausserait toutes les combinaisons
         if listener is not None:
             try:
                 listener.stop()  # type: ignore[attr-defined]
@@ -145,12 +170,27 @@ class HotkeyManager:
             name = self._key_name(key)
             if not name:
                 return
+            if is_modifier(name):
+                with self._lock:
+                    self._pressed.add(canonical_modifier(name))
+                return
             with self._lock:
-                state = self._bindings.get(name)
+                # Sans modificateur enfoncé, build_combo() renvoie la touche
+                # nue : un hotkeys.json historique {"f1": ...} marche tel quel.
+                state = self._bindings.get(build_combo(set(self._pressed), name))
             if state is not None:
                 self._on_hotkey(state)
         except Exception:
             logger.debug("Erreur de traitement d'une touche.", exc_info=True)
+
+    def _on_release(self, key: object) -> None:
+        try:
+            name = self._key_name(key)
+            if name and is_modifier(name):
+                with self._lock:
+                    self._pressed.discard(canonical_modifier(name))
+        except Exception:
+            logger.debug("Erreur au relâchement d'une touche.", exc_info=True)
 
 
 # ============================================================================

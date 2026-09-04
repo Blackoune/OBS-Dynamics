@@ -32,6 +32,10 @@ dist_release/
 
 # Sauvegardes locales de .env produites par les scripts de maintenance.
 .env.backup
+# Ancien .env laisse en place apres migration vers %APPDATA%.
+.env.old
 
 # Cache pytest.
 .pytest_cache/
+
+graphify-out/

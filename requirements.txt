@@ -13,3 +13,4 @@ psutil               # détection des processus de jeu
 simpleobsws          # client OBS WebSocket v5
 requests             # téléchargement des jaquettes (cover_service)
 pynput               # hotkeys globales (dégradation propre si absent)
+tkinterdnd2          # glisser-déposer de médias sur la zone de dépôt

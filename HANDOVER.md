@@ -46,26 +46,38 @@ dans l'historique git si besoin d'archéologie.
 | Composant | Statut | Détail |
 |---|:---:|---|
 | Détection processus (`psutil`) | ✅ | Steam par dossier d'install, manuel par nom d'exe |
-| Détection visuelle OpenCV | ✅ | 1 capture/cycle, templates cachés, downscale ×2 |
+| Détection visuelle OpenCV | ✅ | `screen_match.py` : fragments ciblés, robuste 720p→4K |
+| Stabilité de l'état détecté | ✅ | 2 lectures concordantes avant bascule, anti-oscillation |
+| Contrôle du cadrage (aperçu numéroté) | ✅ | cadres épousant la forme de l'élément, refus par numéro |
+| Décision pilotée par l'écran | ✅ | marge de 0,15 exigée : une quasi-égalité ne bascule rien |
+| Recadrage manuel aux curseurs | ✅ | zones indépendantes, créées à un emplacement libre, compte stable |
+| Validation mémorisée par image | ✅ | empreinte date+taille : redemandée seulement si l'image change |
 | Client OBS WebSocket v5 | ✅ | `simpleobsws`, boucle asyncio dédiée |
 | Scan bibliothèques Steam (registre + VDF/ACF) | ✅ | 8 tests sur le parsing |
 | GUI (dashboard, paramètres, modals) | ✅ | grille responsive 2–8 colonnes |
+| Pastille d'état des cartes | ✅ | Actif / Inactif seulement, #D93025 / #508267, sans coins |
 | i18n fr/en/es | ✅ | 127 clés, changement de langue à chaud |
 | Rotation des logs | ✅ | 2 Mo × 3 fichiers |
-| Tests (87) + CI GitHub Actions | ✅ | `python -m pytest tests/ -q` |
+| Tests (269) + CI GitHub Actions | ✅ | `python -m pytest tests/ -q` |
 | Packaging PyInstaller | ✅ | `python build.py`, icône incluse |
-| Reconnexion OBS automatique | 🟡 | backoff 2s → 60s — jamais vu se déclencher en réel |
-| Jaquettes de jeux | 🟡 | code en place — voir §3 |
-| Hotkeys globales | 🟡 | code en place — voir §3 |
-| Création auto scènes/sources OBS | 🟡 | code en place — voir §3 |
+| Reconnexion OBS automatique | ✅ | validé en usage réel le 2026-09-03 |
+| Jaquettes de jeux | ✅ | jaquette verticale officielle Steam, 6 jeux réels vérifiés |
+| Hotkeys globales | ✅ | combinaisons acceptées (`ctrl+shift+f1`), 17 tests |
+| Création auto scènes/sources OBS | ✅ | les scènes des menus déroulants priment sur les créées |
+| Bascule automatique de scène | ✅ | corrigée le 2026-09-03, 13 tests dont 5 bout en bout |
+| Édition d'un jeu sans doublon | ✅ | l'identité d'un jeu Steam n'est plus réécrite |
 | Déclencheurs — modèle + persistance | ✅ | `triggers.py`, 8 tests |
 | Déclencheurs — combinaisons clavier | ✅ | `ctrl+shift+a` normalisé, 7 tests |
 | Déclencheurs — serveur overlay HTTP/SSE | ✅ | `overlay_server.py`, 8 tests bout en bout |
 | Déclencheurs — onglet et interface | ✅ | validé en usage réel par l'utilisateur |
-| Déclencheurs — durée + mode maintien | 🟡 | ajouté après retour utilisateur, à revalider |
-| Déclencheurs — latence (préchargement) | 🟡 | média préchargé, bascule CSS — à ressentir en jeu |
-| Déclencheurs — glisser-déposer | 🟡 | nécessite `tkinterdnd2`, non installé ici |
+| Déclencheurs — durée + mode maintien | ✅ | validé en usage réel le 2026-09-03 |
+| Déclencheurs — latence (préchargement) | ✅ | validé en usage réel le 2026-09-03 |
+| Déclencheurs — glisser-déposer | ✅ | `tkinterdnd2` en dépendance, sous-arbre enregistré |
 | Rotation du mot de passe OBS | ✅ | fait par l'utilisateur le 2026-09-02 |
+| Identifiants hors du dépôt | ✅ | `.env` déplacé dans `%APPDATA%`, migration auto — voir §4 |
+| Défilement de la grille | ✅ | scrollregion réparée, 60 px/cran, 11 fenêtres Tk/carte |
+| Netteté des jaquettes | ✅ | pré-réduites en LANCZOS : +24 % de détail |
+| Réactivité de la grille | ✅ | ajout d'un jeu : 2932 ms → 155 ms |
 | Purge de l'historique git | ⚠️ | voir §4 — décision du propriétaire du dépôt |
 
 ---
@@ -78,34 +90,54 @@ réseau, clavier). Elles restent marquées 🟡 tant que la case n'est pas coch�
 
 **Cocher la case et passer la ligne du §2 en ✅ une fois le test concluant.**
 
-- [ ] 🟡 **Jaquettes** — lancer avec des jeux Steam en bibliothèque. Attendu :
-      `data/covers/` se remplit, les cartes affichent les images à la place de
-      l'emoji 🎮. Sans `RAWG_API_KEY`, seuls les chemins Steam (appid +
-      recherche Store) sont actifs, ce qui couvre la majorité des cas.
-- [ ] 🟡 **Hotkeys** — F1/F2/F3 doivent forcer l'état des jeux actifs. Attendu :
-      la pastille de la carte change au cycle suivant. Si `pynput` est absent,
-      l'app démarre sans hotkeys et le journalise (pas de crash).
-- [ ] 🟡 **Création de scènes** — cocher la case dans le modal d'ajout avec OBS
-      connecté. Attendu : `<jeu> - Menu` et `<jeu> - En jeu` apparaissent dans
-      OBS avec une source `game_capture`, et sont présélectionnées dans le
-      formulaire.
-- [ ] 🟡 **Reconnexion OBS** — démarrer la surveillance, fermer OBS, le rouvrir.
-      Attendu : le bandeau latéral repasse en « reconnecté » sans Stop/Start
-      manuel, et les logs montrent les tentatives avec backoff croissant.
-- [x] ✅ **Onglet Raccourcis & Overlays** — validé en usage réel (2026-09-02).
-- [ ] 🟡 **Mode maintien** — régler une règle sur « Maintien », presser et
-      garder la touche. Attendu : le média reste affiché tant que la touche
-      est enfoncée et disparaît instantanément au relâchement.
-- [ ] 🟡 **Réactivité** — enchaîner des appuis brefs et répétés (cas minimap).
-      Attendu : aucun délai perceptible ni à l'affichage ni au masquage. Le
-      média est préchargé, un déclenchement ne fait plus qu'un toggle CSS.
-- [ ] 🟡 **Glisser-déposer de média** — `pip install tkinterdnd2`, puis
-      déposer un fichier sur la zone. Sans ce paquet, la zone ouvre le
-      sélecteur de fichier (chemin garanti, celui-là fonctionne).
+- [x] ✅ **Jaquettes** — validé le 2026-09-03 contre le vrai CDN Steam.
+      Les 6 jeux testés (Portal 2, Hades, Elden Ring, Terraria, Hollow Knight,
+      Factorio) récupèrent la jaquette verticale officielle `library_600x900_2x`
+      en 600x900, donc redimensionnée sans aucun rognage. Hollow Knight et
+      Factorio n'avaient pas d'appid : il est résolu par correspondance de nom
+      exacte sur le Steam Store. Sans `RAWG_API_KEY`, les chemins Steam
+      couvrent la majorité des cas.
+      Deux défauts corrigés au passage :
+      le `corner_radius=12` du label de jaquette faisait poser à CTkLabel un
+      `padx` de 12 px — d'où deux bandes mortes sur les côtés et une image
+      amputée d'autant ; et le service ne tournait qu'avec un seul thread de
+      téléchargement, ce qui remplissait la grille jaquette par jaquette après
+      un scan Steam (20 jaquettes : 0,84 s → 0,21 s avec 6 workers).
+- [x] ✅ **Hotkeys** — validé le 2026-09-03. F1/F2/F3 forcent l'état des jeux
+      actifs, et les **combinaisons** sont désormais acceptées
+      (`{"ctrl+shift+f1": "in_game"}` dans `data/hotkeys.json`). L'ordre des
+      modificateurs est normalisé à la lecture, une touche seule continue de
+      marcher, et Ctrl+F1 ne déclenche plus l'action liée à F1 seul. Si
+      `pynput` est absent, l'app démarre sans hotkeys et le journalise.
+- [x] ✅ **Création de scènes** — validée par l'utilisateur le 2026-09-03.
+      Les scènes sélectionnées dans les menus déroulants **priment** désormais
+      sur celles créées automatiquement : la création ne remplit qu'un champ
+      resté vide, elle n'écrase plus un choix explicite. Le libellé affiché
+      quand OBS n'est pas joignable n'est plus enregistré comme nom de scène.
 
 ---
 
 ## 4. Sécurité
+
+### Où vivent les identifiants (depuis le 2026-09-03)
+
+`.env` **n'est plus dans le dossier du projet**. Il vit dans le profil de
+l'utilisateur :
+
+    %APPDATA%\OBS Dynamics\.env        (Windows)
+    ~/.config/OBS Dynamics/.env         (Linux/macOS)
+
+Motif : le mot de passe OBS WebSocket, la clé RAWG et tout identifiant de
+compte ajouté plus tard disparaissaient à chaque purge d'historique, `git
+clean` ou réinstallation, et il fallait tout resaisir. À cet emplacement ils
+survivent à n'importe quelle manipulation du dépôt et ne peuvent
+structurellement plus être committés.
+
+La migration est automatique au démarrage : un `.env` trouvé à la racine du
+dépôt est copié vers le nouvel emplacement puis renommé `.env.old` (rien n'est
+supprimé). Toute clé de compte ajoutée à l'avenir (Twitch, etc.) doit passer
+par `EnvConfigManager`, donc par ce fichier.
+
 
 > ✅ **Rotation effectuée le 2026-09-02.** Le mot de passe ci-dessous a été
 > remplacé ; l'alerte est conservée pour mémoire.

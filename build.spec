@@ -10,6 +10,15 @@ ROOT = Path(SPECPATH)
 # existent déjà à la racine du projet ; sinon PyInstaller les recrée au
 # premier lancement via get_base_path()/DATA_DIR.mkdir(exist_ok=True).
 datas = []
+
+# tkinterdnd2 embarque une extension Tcl (dossier tkdnd/) chargée à l'exécution :
+# sans ses binaires, l'exe se lance mais le glisser-déposer est muet.
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    datas += collect_data_files("tkinterdnd2")
+except Exception:
+    pass
+
 if (ROOT / "assets").exists():
     datas.append((str(ROOT / "assets"), "assets"))
 if (ROOT / "i18n.json").exists():
@@ -31,9 +40,11 @@ a = Analysis(
         "cover_service",   # jaquettes (requests + PIL)
         "hotkeys",         # hotkeys globales (pynput, optionnel au runtime)
         "triggers",        # règles raccourci -> média
+        "screen_match",    # agent de comparaison écran/référence
         "overlay_server",  # serveur HTTP local des sources navigateur OBS
         "requests",
         "pynput",
+        "tkinterdnd2",     # glisser-déposer (extension Tcl tkdnd)
     ],
     hookspath=[],
     hooksconfig={},
