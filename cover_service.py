@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import requests
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 logger = logging.getLogger("obs_dynamics.cover")
 
@@ -33,15 +33,30 @@ COVER_HEIGHT = 450
 # 60 entrées ≈ 24 Mo, suffisant pour une bibliothèque courante sans fuite.
 MEM_CACHE_MAX = 60
 
+# Incrémenté quand la façon de fabriquer la jaquette change : les fichiers de
+# l'ancienne version restent sur disque mais ne sont plus relus, donc pas de
+# vieux recadrage centré qui survivrait à la mise à jour.
+CACHE_VERSION = 2
+
 _HTTP_TIMEOUT = 8
+
+# Téléchargements réseau : purement I/O-bound, donc les threads se recouvrent
+# bien. Avec un seul worker, scanner une bibliothèque de 40 jeux faisait
+# apparaître les jaquettes une par une pendant une quinzaine de secondes.
+# 6 est un compromis : assez pour que la grille se remplisse d'un bloc, pas
+# assez pour que le CDN Steam nous limite.
+WORKER_THREADS = 6
 
 
 class GameCoverService:
     """Sources d'images, dans l'ordre de préférence :
-    1. Cache mémoire (LRU borné) puis cache disque (data/covers/{game_id}.jpg)
-    2. CDN Steam direct (si appid connu)
-    3. API RAWG (si RAWG_API_KEY renseignée)
-    4. Recherche Steam Store (fallback sans clé API)
+    1. Cache mémoire (LRU borné) puis cache disque (data/covers/{id}.vN.jpg)
+    2. Jaquette verticale officielle Steam (appid connu, ou résolu par nom via
+       la recherche du Steam Store)
+    3. API RAWG (si RAWG_API_KEY renseignée) — screenshots, moins fidèles
+    4. Header / capsule Steam, en dernier recours (format paysage)
+    5. API appdetails, pour les jeux récents dont les images vivent derrière un
+       hachage imprévisible et dont aucun chemin historique ne répond
     """
 
     def __init__(self, cache_dir: Path, rawg_api_key: str = "",
@@ -60,8 +75,13 @@ class GameCoverService:
         self._pending_ids: set[str] = set()
         self._stop = threading.Event()
 
-        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True, name="cover-downloader")
-        self._worker_thread.start()
+        self._workers = [
+            threading.Thread(target=self._worker_loop, daemon=True,
+                             name=f"cover-downloader-{i}")
+            for i in range(WORKER_THREADS)
+        ]
+        for worker in self._workers:
+            worker.start()
 
     # -- API publique ------------------------------------------------------ #
 
@@ -70,9 +90,12 @@ class GameCoverService:
             self.rawg_api_key = api_key.strip()
 
     def stop(self) -> None:
-        """Arrête proprement le worker (appelé à la fermeture de l'app)."""
+        """Arrête proprement les workers (appelé à la fermeture de l'app)."""
         self._stop.set()
-        self._queue.put((None, lambda _img: None, False))  # sentinelle de réveil
+        # Une sentinelle PAR worker : chacune n'en réveille qu'un seul, et un
+        # worker resté bloqué sur queue.get() empêcherait l'arrêt propre.
+        for _ in self._workers:
+            self._queue.put((None, lambda _img: None, False))
 
     def request_cover(self, game: Any, callback: Callable[[Optional[Image.Image]], None],
                       force: bool = False) -> None:
@@ -120,8 +143,11 @@ class GameCoverService:
             while len(self._mem_cache) > MEM_CACHE_MAX:
                 self._mem_cache.popitem(last=False)  # évince le plus ancien
 
+    def _cache_path(self, game_id: str) -> Path:
+        return self.cache_dir / f"{game_id}.v{CACHE_VERSION}.jpg"
+
     def _load_from_disk(self, game_id: str) -> Optional[Image.Image]:
-        file_path = self.cache_dir / f"{game_id}.jpg"
+        file_path = self._cache_path(game_id)
         if not file_path.exists():
             return None
         try:
@@ -178,8 +204,26 @@ class GameCoverService:
             if on_disk is not None:
                 return on_disk
 
-        file_path = self.cache_dir / f"{game_id}.jpg"
-        for url in self._find_image_urls(session, game_name, appid):
+        if not appid and game_name:
+            appid = self._steam_appid_for_name(session, game_name)
+
+        file_path = self._cache_path(game_id)
+        img = self._download_first(session, self._find_image_urls(session, game_name, appid),
+                                   file_path)
+        if img is not None:
+            return img
+        if appid:
+            # Aucun chemin devinable n'a répondu : c'est le cas des jeux
+            # récents, dont les images vivent derrière un hachage. On demande
+            # alors à Steam les URL réelles.
+            img = self._download_first(session, self._appdetails_urls(session, appid),
+                                       file_path)
+        return img
+
+    def _download_first(self, session: requests.Session, urls: list[str],
+                        file_path: Path) -> Optional[Image.Image]:
+        """Première URL de la liste qui donne une image exploitable."""
+        for url in urls:
             try:
                 resp = session.get(url, timeout=_HTTP_TIMEOUT)
                 if resp.status_code != 200 or not resp.content:
@@ -196,21 +240,97 @@ class GameCoverService:
                 continue
         return None
 
-    def _find_image_urls(self, session: requests.Session, name: str, appid: str) -> list[str]:
-        urls: list[str] = []
+    @staticmethod
+    def _steam_portrait_urls(appid: str) -> list[str]:
+        """Jaquette VERTICALE officielle du store (celle affichée dans la
+        bibliothèque Steam). C'est la seule qui soit déjà au ratio 2:3 et
+        cadrée par l'éditeur — tout le reste (header, capsule, screenshot
+        RAWG) est du paysage qu'on ne peut que dégrader."""
+        return [
+            f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/library_600x900_2x.jpg",
+            f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/library_600x900.jpg",
+            f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900_2x.jpg",
+            f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900.jpg",
+        ]
 
-        # 1. CDN Steam direct si l'appid est connu (chemin le plus fiable).
-        if appid:
-            urls.extend([
-                f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/library_600x900_2x.jpg",
-                f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg",
-                f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_616x353.jpg",
-            ])
+    @staticmethod
+    def _steam_landscape_urls(appid: str) -> list[str]:
+        return [
+            f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_616x353.jpg",
+            f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg",
+        ]
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return "".join(ch for ch in text.lower() if ch.isalnum())
+
+    def _steam_appid_for_name(self, session: requests.Session, name: str) -> str:
+        """Résout un appid Steam depuis un nom de jeu. On privilégie une
+        correspondance de nom exacte plutôt que le premier résultat : sans ça
+        « Portal » ramenait le premier DLC/bundle listé par la recherche."""
+        try:
+            url = ("https://store.steampowered.com/api/storesearch/"
+                   f"?term={urllib.parse.quote(name)}&l=english&cc=US")
+            resp = session.get(url, timeout=_HTTP_TIMEOUT)
+            if resp.status_code != 200:
+                return ""
+            items = resp.json().get("items", [])
+        except Exception:
+            logger.debug("Recherche Steam Store échouée pour '%s'", name, exc_info=True)
+            return ""
+        wanted = self._norm(name)
+        for item in items:
+            if self._norm(str(item.get("name", ""))) == wanted:
+                return str(item.get("id", ""))
+        return str(items[0].get("id", "")) if items else ""
+
+    def _appdetails_urls(self, session: requests.Session, appid: str) -> list[str]:
+        """URL d'images telles que Steam les publie pour cet appid.
+
+        Depuis 2025, les jeux récents ne servent PLUS leurs images sur le
+        chemin historique `/steam/apps/<appid>/header.jpg` : chaque fichier vit
+        derrière un hachage de contenu imprévisible,
+        `/steam/apps/<appid>/<hash>/header.jpg?t=<horodatage>`. Aucune URL ne
+        peut donc être devinée — il faut les demander.
+
+        Vérifié sur MECCHA CHAMELEON (4704690) et Mouse X (4255580) : tous les
+        chemins historiques renvoient 404, et ces URL-ci répondent 200.
+
+        L'API est fortement limitée en débit : cet appel n'a lieu QUE si tous
+        les chemins devinables ont échoué, donc pour une poignée de jeux
+        récents, jamais pour une bibliothèque entière.
+        """
+        try:
+            resp = session.get(
+                f"https://store.steampowered.com/api/appdetails?appids={appid}",
+                timeout=_HTTP_TIMEOUT)
+            if resp.status_code != 200:
+                return []
+            payload = resp.json().get(str(appid)) or {}
+            if not payload.get("success"):
+                return []
+            data = payload.get("data") or {}
+        except Exception:
+            logger.debug("appdetails indisponible pour %s", appid, exc_info=True)
+            return []
+
+        # Steam n'expose ici que du paysage : pas de library_600x900. Ces jeux
+        # passeront donc par le fond flouté de _process_image, ce qui reste
+        # infiniment préférable au carré vide.
+        return [str(data[key]) for key in ("header_image", "capsule_image")
+                if data.get(key)]
+
+    def _find_image_urls(self, session: requests.Session, name: str, appid: str) -> list[str]:
+        if not appid and name:
+            appid = self._steam_appid_for_name(session, name)
+
+        # Ordre = du plus fidèle au jeu (jaquette officielle verticale) au
+        # moins fidèle (screenshot générique), jamais l'inverse.
+        urls: list[str] = self._steam_portrait_urls(appid) if appid else []
 
         with self._lock:
             api_key = self.rawg_api_key
 
-        # 2. RAWG si une clé est configurée (couvre les jeux hors Steam).
         if api_key and name:
             try:
                 url = (f"https://api.rawg.io/api/games?key={api_key}"
@@ -220,52 +340,45 @@ class GameCoverService:
                     results = resp.json().get("results", [])
                     if results:
                         top = results[0]
-                        if top.get("background_image"):
-                            urls.insert(0, top["background_image"])
-                        if top.get("background_image_additional"):
-                            urls.append(top["background_image_additional"])
+                        for key in ("background_image", "background_image_additional"):
+                            if top.get(key):
+                                urls.append(top[key])
             except Exception:
                 logger.debug("Requête RAWG échouée pour '%s'", name, exc_info=True)
 
-        # 3. Recherche Steam Store, sans clé, pour les jeux manuels.
-        if name and not appid:
-            try:
-                url = ("https://store.steampowered.com/api/storesearch/"
-                       f"?term={urllib.parse.quote(name)}&l=english&cc=US")
-                resp = session.get(url, timeout=_HTTP_TIMEOUT)
-                if resp.status_code == 200:
-                    items = resp.json().get("items", [])
-                    if items:
-                        found_id = str(items[0].get("id", ""))
-                        if found_id:
-                            urls.extend([
-                                f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{found_id}/library_600x900_2x.jpg",
-                                f"https://cdn.cloudflare.steamstatic.com/steam/apps/{found_id}/header.jpg",
-                            ])
-            except Exception:
-                logger.debug("Recherche Steam Store échouée pour '%s'", name, exc_info=True)
-
+        if appid:
+            urls.extend(self._steam_landscape_urls(appid))
         return urls
 
     def _process_image(self, raw_bytes: bytes) -> Optional[Image.Image]:
-        """Recadre au centre puis redimensionne au format 2:3 (300x450)."""
+        """Met l'image au format 2:3 (300x450) SANS rien couper du visuel.
+
+        L'ancienne version rognait au centre : sur un header 460x215 ça ne
+        gardait qu'une bande verticale au milieu, d'où des vignettes hors
+        cadre. Ici une source déjà verticale est simplement redimensionnée,
+        et une source paysage est posée en entier sur un fond flouté tiré
+        d'elle-même.
+        """
         try:
             with Image.open(io.BytesIO(raw_bytes)) as original:
                 img = original.convert("RGB")
                 target_w, target_h = COVER_WIDTH, COVER_HEIGHT
-                orig_w, orig_h = img.size
                 target_ratio = target_w / target_h
 
-                if orig_w / orig_h > target_ratio:
-                    crop_w = int(orig_h * target_ratio)          # trop large -> rogne les côtés
-                    offset_x = (orig_w - crop_w) // 2
-                    img = img.crop((offset_x, 0, offset_x + crop_w, orig_h))
-                else:
-                    crop_h = int(orig_w / target_ratio)          # trop haut -> rogne haut/bas
-                    offset_y = (orig_h - crop_h) // 2
-                    img = img.crop((0, offset_y, orig_w, offset_y + crop_h))
+                if abs(img.width / img.height - target_ratio) < 0.02:
+                    return img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-                return img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                background = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                background = background.filter(ImageFilter.GaussianBlur(20))
+                background = ImageEnhance.Brightness(background).enhance(0.5)
+
+                scale = min(target_w / img.width, target_h / img.height)
+                fit = img.resize((max(1, round(img.width * scale)),
+                                  max(1, round(img.height * scale))),
+                                 Image.Resampling.LANCZOS)
+                background.paste(fit, ((target_w - fit.width) // 2,
+                                       (target_h - fit.height) // 2))
+                return background
         except Exception:
             logger.exception("Traitement de l'image échoué.")
             return None

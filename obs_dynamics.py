@@ -17,11 +17,12 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 # --- DPI awareness Windows : DOIT être fait AVANT d'importer customtkinter,
 # sinon CTk calcule ses tailles de widgets sur un facteur d'échelle incorrect
@@ -63,7 +64,51 @@ BASE_DIR = get_base_path()
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 COVERS_DIR = DATA_DIR / "covers"
-ENV_PATH = BASE_DIR / ".env"
+
+
+def get_user_config_dir() -> Path:
+    """Dossier de configuration propre à l'utilisateur, HORS du dépôt.
+
+    Le mot de passe OBS WebSocket, la clé RAWG et tout identifiant de compte
+    ajouté plus tard n'ont rien à faire dans le dossier du projet : une purge
+    de l'historique, un `git clean` ou une réinstallation les emportait, et il
+    fallait tout resaisir. Ici ils survivent à n'importe quelle manipulation
+    du dépôt et ne peuvent structurellement pas être committés.
+    """
+    if sys.platform == "win32":
+        root = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
+    else:  # Linux/macOS : convention XDG, utile pour les tests hors Windows
+        root = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+    path = Path(root) / "OBS Dynamics"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+USER_CONFIG_DIR = get_user_config_dir()
+ENV_PATH = USER_CONFIG_DIR / ".env"
+
+
+def migrate_legacy_env(legacy: Path, target: Path) -> bool:
+    """Reprend un ancien `.env` resté à la racine du dépôt.
+
+    Copie puis renomme l'ancien en `.env.old` : l'utilisateur garde ses
+    réglages sans rien resaisir, et il n'existe plus qu'UNE source de vérité
+    (éditer l'ancien fichier n'aurait plus aucun effet, ce qui serait pire
+    qu'un fichier renommé et visible).
+    """
+    if target.exists() or not legacy.exists():
+        return False
+    try:
+        target.write_bytes(legacy.read_bytes())
+        # with_suffix() est piégeux sur un fichier commençant par un point :
+        # Path(".env").with_suffix(".old") donne ".env.old" mais
+        # with_suffix(".env.old") donnait ".env.env.old". On compose le nom.
+        legacy.replace(legacy.with_name(legacy.name + ".old"))
+    except OSError:
+        logger.exception("Migration de %s vers %s impossible.", legacy, target)
+        return False
+    logger.info("Identifiants déplacés vers %s (l'ancien .env est devenu .env.old).", target)
+    return True
 GAMES_PATH = DATA_DIR / "games.json"
 HOTKEYS_PATH = DATA_DIR / "hotkeys.json"
 TRIGGERS_PATH = DATA_DIR / "triggers.json"
@@ -90,6 +135,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("obs_dynamics")
 
+# Reprise d'une installation antérieure où .env vivait dans le dépôt.
+migrate_legacy_env(BASE_DIR / ".env", ENV_PATH)
+
 # --- i18n : import + init AVANT toute construction de widget CTk ---
 import i18n
 i18n.init(path=I18N_PATH)
@@ -97,6 +145,7 @@ from i18n import t
 
 # Modules locaux (racine du projet, embarqués par build.spec).
 from cover_service import GameCoverService
+import screen_match
 from hotkeys import ComboListener, ComboRecorder, HotkeyManager, format_combo, load_bindings
 from overlay_server import DEFAULT_PORT as OVERLAY_DEFAULT_PORT, OverlayServer
 from triggers import (DURATION_PRESETS_MS, MEDIA_EXTENSIONS, MEDIA_TYPES,
@@ -120,8 +169,12 @@ COL_TEXT_MUTED = "#9B93B5"
 COL_GREEN = "#22C55E"
 COL_YELLOW = "#F1C40F"
 COL_RED = "#EF4444"
-COL_BADGE_BG_INACTIVE = "#3A1420"
-COL_BADGE_BG_ACTIVE = "#123A22"
+# Pastille d'état des cartes de jeu : deux couleurs pleines, texte et contour
+# en blanc. Fond plein (et non teinte sombre + texte coloré) pour que la
+# pastille reste lisible par-dessus n'importe quelle jaquette.
+COL_BADGE_BG_INACTIVE = "#D93025"
+COL_BADGE_BG_ACTIVE = "#508267"
+COL_BADGE_FG = "#FFFFFF"
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -362,6 +415,13 @@ class Game:
     ingame_images: list[str] = field(default_factory=list)
     obs_scene_menu: str = ""
     obs_scene_ingame: str = ""
+    # Validation du cadrage automatique, par image de référence :
+    #   {chemin: {"stamp": "<mtime>:<taille>", "excluded": [[fx, fy], ...]}}
+    # `stamp` sert à redemander une validation UNIQUEMENT quand le fichier
+    # change sur le disque ; sans lui la fenêtre de contrôle se rouvrirait à
+    # chaque lancement. Les positions exclues sont relatives, donc stables même
+    # si la sélection est recalculée.
+    patch_reviews: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -369,6 +429,7 @@ class Game:
             "active_match": self.active_match, "appid": self.appid,
             "menu_images": self.menu_images, "ingame_images": self.ingame_images,
             "obs_scene_menu": self.obs_scene_menu, "obs_scene_ingame": self.obs_scene_ingame,
+            "patch_reviews": self.patch_reviews,
         }
 
     @staticmethod
@@ -383,6 +444,9 @@ class Game:
             ingame_images=[str(p) for p in data.get("ingame_images", [])],
             obs_scene_menu=str(data.get("obs_scene_menu", "")),
             obs_scene_ingame=str(data.get("obs_scene_ingame", "")),
+            # Absent des games.json antérieurs : un dict vide signifie « jamais
+            # validé », ce qui déclenchera simplement une première validation.
+            patch_reviews=dict(data.get("patch_reviews") or {}),
         )
 
 
@@ -519,6 +583,12 @@ def _capture_screen_bgr() -> Optional[np.ndarray]:
 # la détection de HUD/menu, qui ne joue pas sur le détail fin.
 DETECT_SCALE = 0.5
 
+# Écart minimal entre le score « menu » et le score « en jeu » pour trancher.
+# Les séparations réelles mesurées sont de 0,75 à 1,00 : 0,15 ne bloque que les
+# quasi-égalités, c'est-à-dire les cas où l'écran ne ressemble franchement ni à
+# l'un ni à l'autre. Dans ce cas aucune scène n'est imposée.
+DECISION_MARGIN = 0.15
+
 
 def _downscale(img: np.ndarray, scale: float = DETECT_SCALE) -> np.ndarray:
     if scale >= 1.0:
@@ -560,34 +630,289 @@ class _TemplateCache:
         tpl = _downscale(raw) if raw is not None else None
         with self._lock:
             self._entries[path] = (stamp, tpl)
+        # L'image a changé sur le disque : ses fragments et son échelle
+        # calibrée ne valent plus rien, et les garder ferait échouer la
+        # détection en silence.
+        _SCALES.forget(path)
+        _PATCHES.forget(path)
         return tpl
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+        _SCALES.clear()
+        _PATCHES.clear()
+
+
+_TEMPLATES = _TemplateCache()
+
+
+# Échelles essayées lors de la calibration. Une image de référence capturée en
+# 1920x1080 puis rejouée en 1440p ou en 720p ne correspond plus du tout à
+# l'échelle 1 : score mesuré entre 0,28 et 0,60, très en dessous du seuil de
+# 0,8, donc détection qui ne se déclenche jamais. Ces facteurs couvrent les
+# rapports courants entre résolutions, du 720p au 4K.
+_MATCH_SCALES = (0.5, 0.6, 0.67, 0.75, 0.83, 1.0, 1.15, 1.33, 1.5, 1.75, 2.0)
+
+
+def _rescale_template(template: np.ndarray, factor: float) -> Optional[np.ndarray]:
+    if factor == 1.0:
+        return template
+    th, tw = template.shape[:2]
+    nh, nw = int(th * factor), int(tw * factor)
+    if nh < 8 or nw < 8:
+        return None
+    interp = cv2.INTER_AREA if factor < 1.0 else cv2.INTER_LINEAR
+    return cv2.resize(template, (nw, nh), interpolation=interp)
+
+
+def _match_one(screen_small: np.ndarray, template: Optional[np.ndarray]) -> float:
+    if template is None:
+        return 0.0
+    sh, sw = screen_small.shape[:2]
+    th, tw = template.shape[:2]
+    if th > sh or tw > sw:
+        return 0.0
+    try:
+        result = cv2.matchTemplate(screen_small, template, cv2.TM_CCOEFF_NORMED)
+        return float(cv2.minMaxLoc(result)[1])
+    except cv2.error:
+        logger.debug("matchTemplate échoué.", exc_info=True)
+        return 0.0
+
+
+class _ScaleCalibration:
+    """Retient à quelle échelle chaque image de référence correspond.
+
+    Balayer les 11 échelles coûte quelques centaines de ms par image : le
+    refaire à chaque cycle mangerait tout l'intervalle de scan. Or la
+    résolution de jeu ne change pas en cours de partie — l'échelle est donc
+    cherchée une fois puis réutilisée.
+
+    PIÈGE ÉVITÉ : une calibration n'est retenue que si elle a effectivement
+    trouvé la référence à l'écran. Sinon, la toute première calibration se
+    faisait contre n'importe quel écran affiché à ce moment-là — typiquement
+    le menu quand on calibre la référence « en jeu » — et verrouillait une
+    échelle absurde. La référence marquait alors 0,09 même face à une copie
+    conforme d'elle-même, définitivement.
+
+    Une calibration non concluante est réessayée, mais seulement tous les
+    RETRY_EVERY cycles : entre-temps l'échelle 1 est utilisée, ce qui ne coûte
+    qu'un matchTemplate. Tout est remis à zéro si la taille de l'écran change
+    (résolution, passage en fenêtré) ou si le fichier de référence est modifié.
+    """
+
+    CONFIRM_SCORE = 0.5     # en dessous, la calibration ne prouve rien
+    RETRY_EVERY = 10        # cycles avant de retenter une calibration douteuse
+
+    def __init__(self) -> None:
+        # path -> (échelle, calibration concluante, cycles avant nouvel essai)
+        self._scales: dict[str, tuple[float, bool, int]] = {}
+        self._screen_shape: Optional[tuple[int, int]] = None
+        self._lock = threading.Lock()
+
+    def scale_to_use(self, path: str, screen_shape: tuple[int, int]
+                     ) -> Optional[tuple[float, bool]]:
+        """(échelle, provisoire) à appliquer, ou None s'il faut recalibrer.
+
+        « provisoire » signale une échelle de repli non validée : si elle donne
+        finalement un bon score, l'appelant doit la confirmer via remember(),
+        ce qui évite un balayage complet inutile quelques cycles plus tard.
+        """
+        with self._lock:
+            if screen_shape != self._screen_shape:
+                self._screen_shape = screen_shape
+                self._scales.clear()
+            entry = self._scales.get(path)
+            if entry is None:
+                return None
+            scale, confirmed, retry_in = entry
+            if confirmed:
+                return (scale, False)
+            if retry_in <= 0:
+                return None
+            self._scales[path] = (scale, False, retry_in - 1)
+            return (1.0, True)
+
+    def remember(self, path: str, scale: float, score: float) -> None:
+        confirmed = score >= self.CONFIRM_SCORE
+        with self._lock:
+            self._scales[path] = (scale, confirmed, 0 if confirmed else self.RETRY_EVERY)
+
+    def is_confirmed(self, path: str) -> bool:
+        with self._lock:
+            entry = self._scales.get(path)
+            return bool(entry and entry[1])
+
+    def forget(self, path: str) -> None:
+        with self._lock:
+            self._scales.pop(path, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._scales.clear()
+            self._screen_shape = None
+
+
+_SCALES = _ScaleCalibration()
+
+
+def image_stamp(path: str) -> str:
+    """Empreinte d'un fichier de référence : date de modification + taille.
+
+    Sert à savoir si l'image a changé dans le dossier depuis la dernière
+    validation de l'utilisateur. Même critère que _TemplateCache, donc les deux
+    s'invalident ensemble.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return f"{st.st_mtime}:{st.st_size}"
+
+
+class _PatchReviews:
+    """Fragments écartés par l'utilisateur, par image de référence.
+
+    Le cache de fragments est global (une même image peut servir à deux jeux),
+    donc les exclusions le sont aussi : elles portent sur l'IMAGE, pas sur le
+    jeu qui l'utilise. Le registre est rechargé depuis games.json au démarrage
+    et à chaque enregistrement.
+    """
+
+    def __init__(self) -> None:
+        self._excluded: dict[str, list[tuple[float, ...]]] = {}
+        self._manual: dict[str, list[tuple[float, ...]]] = {}
+        self._counts: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def excluded_for(self, path: str) -> list[tuple[float, ...]]:
+        with self._lock:
+            return list(self._excluded.get(path, ()))
+
+    def manual_for(self, path: str) -> list[tuple[float, ...]]:
+        with self._lock:
+            return list(self._manual.get(path, ()))
+
+    def count_for(self, path: str) -> Optional[int]:
+        with self._lock:
+            return self._counts.get(path)
+
+    def set(self, path: str, excluded: list[tuple[float, ...]],
+            manual: Optional[list[tuple[float, ...]]] = None,
+            count: Optional[int] = None) -> None:
+        changed = False
+        with self._lock:
+            if count is not None and self._counts.get(path) != count:
+                self._counts[path] = count
+                changed = True
+            if list(self._excluded.get(path, [])) != list(excluded):
+                self._excluded[path] = list(excluded)
+                changed = True
+            if manual is not None and list(self._manual.get(path, [])) != list(manual):
+                self._manual[path] = list(manual)
+                changed = True
+        if changed:
+            # Les fragments retenus dépendent de ces réglages : les recalculer,
+            # et repartir de zéro sur l'échelle qui en découlait.
+            _PATCHES.forget(path)
+            _SCALES.forget(path)
+
+    def load_from_games(self, games: list[Game]) -> None:
+        for game in games:
+            for path, review in (game.patch_reviews or {}).items():
+                boxes = lambda key: [tuple(float(v) for v in box)
+                                     for box in review.get(key, []) or []]
+                stored = review.get("count")
+                self.set(str(path), boxes("excluded"), boxes("manual"),
+                         int(stored) if stored else None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._excluded.clear()
+            self._manual.clear()
+            self._counts.clear()
+
+
+class _PatchCache:
+    """Fragments distinctifs extraits de chaque image de référence.
+
+    L'extraction parcourt toute l'image (variance du laplacien sur une grille)
+    et ne se justifie pas à chaque cycle de scan : le résultat ne dépend que du
+    fichier, invalidé par _TemplateCache quand il change sur le disque.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, list[screen_match.Patch]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, path: str, template: np.ndarray) -> list[screen_match.Patch]:
+        with self._lock:
+            hit = self._entries.get(path)
+        if hit is not None:
+            return hit
+        manual = _REVIEWS.manual_for(path)
+        count = _REVIEWS.count_for(path)
+        patches = screen_match.build_patches(
+            template, count=max(count, len(manual)) if count else screen_match.PATCH_COUNT,
+            exclude=_REVIEWS.excluded_for(path), manual=manual)
+        with self._lock:
+            self._entries[path] = patches
+        logger.debug("%d fragments extraits de %s.", len(patches), path)
+        return patches
+
+    def forget(self, path: str) -> None:
+        with self._lock:
+            self._entries.pop(path, None)
 
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
 
 
-_TEMPLATES = _TemplateCache()
+_PATCHES = _PatchCache()
+_REVIEWS = _PatchReviews()
 
 
 def _best_match_score(screen_small: np.ndarray, template_paths: list[str]) -> float:
-    """`screen_small` doit DÉJÀ être réduit par _downscale — les templates le
-    sont aussi via le cache, sinon les échelles ne correspondraient pas."""
+    """Score de correspondance entre l'écran et un jeu d'images de référence.
+
+    Chaque référence est réduite à ses fragments les plus distinctifs (HUD,
+    texte, icônes) et c'est sur EUX que porte la comparaison. Comparer la
+    capture entière échouait en jeu : la référence est majoritairement du
+    décor, le décor bouge, et le score oscillait autour du seuil — d'où des
+    bascules de scène incessantes.
+
+    `screen_small` doit DÉJÀ être réduit par _downscale ; les références le
+    sont aussi via le cache, sinon les échelles ne correspondraient pas.
+
+    Le score renvoyé est toujours le VRAI meilleur score : aucun court-circuit
+    au franchissement du seuil, car detect_game_state compare ensuite le score
+    « menu » au score « en jeu » et un score tronqué fausserait l'arbitrage.
+    """
     best = 0.0
-    sh, sw = screen_small.shape[:2]
+    shape = (screen_small.shape[0], screen_small.shape[1])
     for path in template_paths:
         template = _TEMPLATES.get(path)
         if template is None:
             continue
-        th, tw = template.shape[:2]
-        if th > sh or tw > sw:
+        patches = _PATCHES.get(path, template)
+        if not patches:
             continue
-        try:
-            result = cv2.matchTemplate(screen_small, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(result)
-            best = max(best, float(max_val))
-        except cv2.error:
-            logger.debug("matchTemplate échoué pour %s.", path, exc_info=True)
+
+        known = _SCALES.scale_to_use(path, shape)
+        if known is not None:
+            scale, provisional = known
+            score = screen_match.score_patches(screen_small, patches, scale)
+            if provisional and score >= _ScaleCalibration.CONFIRM_SCORE:
+                _SCALES.remember(path, scale, score)   # l'échelle de repli suffit
+            best = max(best, score)
+            continue
+
+        # Calibration : cherchée une fois, conservée seulement si concluante.
+        scale, score = screen_match.calibrate(screen_small, patches)
+        _SCALES.remember(path, scale, score)
+        best = max(best, score)
     return best
 
 
@@ -613,9 +938,18 @@ def detect_game_state(game: Game, threshold: float,
         screen_small = _downscale(raw)
     menu_score = _best_match_score(screen_small, game.menu_images) if game.menu_images else 0.0
     ingame_score = _best_match_score(screen_small, game.ingame_images) if game.ingame_images else 0.0
-    if max(menu_score, ingame_score) < threshold:
+
+    # L'état sort UNIQUEMENT de ce qui est à l'écran : le meilleur score doit
+    # franchir le seuil, ET devancer l'autre d'une marge nette. Sans cette
+    # marge, menu=0,82 contre jeu=0,83 suffisait à basculer — une décision
+    # prise sur du bruit, qui donnait l'impression d'un va-et-vient régulier
+    # entre les deux scènes. En cas d'égalité, on renvoie "active" : aucune
+    # scène n'y est associée, donc OBS n'est pas touché et l'affichage reste
+    # sur ce qu'il montrait.
+    best, other = max(menu_score, ingame_score), min(menu_score, ingame_score)
+    if best < threshold or best - other < DECISION_MARGIN:
         return "active"
-    return "in_game" if ingame_score >= menu_score else "menu"
+    return "in_game" if ingame_score > menu_score else "menu"
 
 
 def state_label(state: str) -> str:
@@ -631,7 +965,20 @@ def state_label(state: str) -> str:
     return t(mapping.get(state, "GAME_STATE_INACTIVE"))
 
 
-STATE_COLORS = {"inactive": COL_RED, "active": COL_YELLOW, "menu": COL_YELLOW, "in_game": COL_GREEN}
+# Le texte de la pastille dit déjà l'état précis (Menu, En jeu, Actif) : la
+# couleur ne distingue donc plus que « le jeu tourne » de « il ne tourne pas ».
+# STATE_COLORS n'existe plus : texte et contour sont blancs quel que soit l'état.
+def badge_text(state: str) -> str:
+    """Libellé de la pastille : uniquement « Actif » ou « Inactif ».
+
+    Les états fins (Menu, En jeu) restent calculés — c'est eux qui pilotent la
+    bascule de scène OBS — mais ils n'apportent rien sur la carte : ce qu'on
+    veut y lire d'un coup d'œil, c'est si le jeu tourne ou non.
+    """
+    label = state_label("inactive" if state == "inactive" else "active")
+    return f"\u25cf {label}"
+
+
 STATE_BADGE_BG = {
     "inactive": COL_BADGE_BG_INACTIVE, "active": COL_BADGE_BG_ACTIVE,
     "menu": COL_BADGE_BG_ACTIVE, "in_game": COL_BADGE_BG_ACTIVE,
@@ -815,6 +1162,13 @@ class ScanWorker:
         self._thread: Optional[threading.Thread] = None
         self._last_states: dict[str, str] = {}
         self._forced_states: dict[str, str] = {}  # rempli par les hotkeys
+        # Dernière bascule en échec, pour ne pas répéter le même avertissement
+        # à chaque cycle (0,5-2 s) tant que la cause n'a pas changé.
+        self._last_switch_error: Optional[tuple[str, str, str]] = None
+        # Deux lectures concordantes avant de confirmer un changement d'état :
+        # une image ambiguë (transition, cinématique, chargement) ne doit pas
+        # faire basculer OBS d'une scène à l'autre à chaque cycle.
+        self._stabilizer = screen_match.Stabilizer(confirmations=2)
 
     @property
     def is_running(self) -> bool:
@@ -855,7 +1209,8 @@ class ScanWorker:
 
                 results: list[dict[str, Any]] = []
                 for game in games:
-                    state = detect_game_state(game, cfg.match_threshold, screen_small)
+                    state = self._stabilizer.update(
+                        game.id, detect_game_state(game, cfg.match_threshold, screen_small))
                     forced = self._forced_states.get(game.id)
                     if forced is not None and state != "inactive":
                         # Une hotkey a forcé un état : il prime tant que le
@@ -881,6 +1236,7 @@ class ScanWorker:
             del self._last_states[stale]
         for stale in [gid for gid in self._forced_states if gid not in live_ids]:
             del self._forced_states[stale]
+            self._stabilizer.forget(stale)
 
     def force_state(self, state: str) -> None:
         """Force l'état de tous les jeux actuellement actifs (hotkeys)."""
@@ -896,24 +1252,67 @@ class ScanWorker:
         self._forced_states.clear()
 
     def _maybe_switch_scene(self, game: Game, state: str) -> None:
+        """Bascule la scène OBS quand l'état d'un jeu change.
+
+        RÈGLE : `_last_states` ne doit être mis à jour QUE si la transition a
+        réellement été traitée. L'ancienne version l'écrivait avant même de
+        vérifier qu'OBS était joignable, ce qui consommait la transition dans
+        le vide : au cycle suivant l'état n'avait plus « changé », donc la
+        bascule ne se déclenchait jamais. C'était le cas nominal — le jeu
+        tourne déjà, ou OBS finit de se connecter, quand la surveillance
+        démarre — et c'est pourquoi le changement automatique ne marchait pas.
+        """
         if state == self._last_states.get(game.id):
             return
-        self._last_states[game.id] = state
+
+        target_scene = self._scene_for_state(game, state)
+        if not target_scene:
+            # Aucune scène configurée pour cet état : il n'y a rien à rejouer
+            # plus tard, la transition peut être mémorisée.
+            self._last_states[game.id] = state
+            return
+
         client = self._get_obs_client()
         if client is None or not client.is_connected:
-            return
-        target_scene = (
-            game.obs_scene_ingame if state == "in_game"
-            else game.obs_scene_menu if state == "menu"
-            else ""
-        )
-        if not target_scene:
-            return
+            return  # non mémorisé : la bascule sera rejouée dès la connexion
+
         try:
-            self._obs_loop.run_coro(client.set_current_scene(target_scene))
-            logger.info(t("LOG_SCENE_SWITCH_OK", scene=target_scene, game=game.name, state=state))
-        except Exception:
-            logger.exception("Échec bascule de scène OBS.")
+            # .result() OBLIGATOIRE : run_coro() ne fait que planifier la
+            # coroutine sur la boucle asyncio. Sans attendre le Future, une
+            # erreur OBS (scène renommée, supprimée, collection changée)
+            # restait totalement invisible — le try/except ne voyait rien.
+            self._obs_loop.run_coro(client.set_current_scene(target_scene)).result(timeout=3)
+        except Exception as exc:
+            signature = (game.id, state, target_scene)
+            if self._last_switch_error != signature:
+                self._last_switch_error = signature
+                logger.warning("Bascule vers la scène « %s » impossible pour %s : %s",
+                               target_scene, game.name, exc)
+            return  # non mémorisé : nouvelle tentative au cycle suivant
+
+        self._last_switch_error = None
+        self._last_states[game.id] = state
+        logger.info(t("LOG_SCENE_SWITCH_OK", scene=target_scene, game=game.name, state=state))
+
+    @staticmethod
+    def _scene_for_state(game: Game, state: str) -> str:
+        """Scène OBS à afficher pour un état, "" s'il ne faut rien changer."""
+        if state == "in_game":
+            return game.obs_scene_ingame
+        if state == "menu":
+            return game.obs_scene_menu
+        if state == "active" and not game.menu_images and not game.ingame_images:
+            # Jeu lancé, mais AUCUNE image de référence : la détection visuelle
+            # ne pourra jamais distinguer le menu du jeu, l'état restera
+            # "active" pour toujours. Basculer sur la scène de menu au
+            # lancement vaut mieux que ne rien envoyer du tout.
+            #
+            # La condition est volontairement stricte : si des images existent,
+            # "active" veut dire « écran non reconnu » (cinématique, écran de
+            # chargement) et basculer ferait clignoter la scène en pleine
+            # partie. Dans ce cas on ne touche à rien.
+            return game.obs_scene_menu
+        return ""
 
 
 # ============================================================================
@@ -929,7 +1328,8 @@ class GameCard(ctk.CTkFrame):
 
     def __init__(self, master, game: Game, state: str,
                  on_edit: Callable[[Game], None], on_delete: Callable[[Game], None],
-                 cover_service: Optional[GameCoverService] = None, **kwargs) -> None:
+                 cover_service: Optional[GameCoverService] = None,
+                 bind_wheel: Optional[Callable[[Any], None]] = None, **kwargs) -> None:
         super().__init__(master, fg_color=COL_CARD, corner_radius=12,
                           border_width=1, border_color=COL_BORDER,
                           width=self.CARD_WIDTH, height=self.CARD_HEIGHT, **kwargs)
@@ -939,24 +1339,35 @@ class GameCard(ctk.CTkFrame):
         self.grid_rowconfigure(0, weight=1)
 
         self.game_id = game.id
+        self.game = game          # comparé par valeur pour décider d'un rebuild
         self._game = game
         self._current_state = state
         self._on_edit = on_edit
         self._on_delete = on_delete
         self._cover_service = cover_service
+        self._bind_wheel = bind_wheel
         self._ctk_image: Optional[ctk.CTkImage] = None
+        self._overlay: Optional[ctk.CTkFrame] = None
+        self._overlay_visible = False
 
         # --- Zone "jaquette" : image si disponible, sinon icône + titre ---
-        self._poster = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=12)
-        self._poster.grid(row=0, column=0, sticky="nsew")
-        self._poster.grid_columnconfigure(0, weight=1)
-        self._poster.grid_rowconfigure(0, weight=1)
+        # Les enfants sont posés directement sur la carte : le cadre
+        # intermédiaire d'autrefois n'apportait rien visuellement et ajoutait
+        # deux fenêtres Tk par carte, toutes déplacées à chaque cran de
+        # défilement. Moins de fenêtres = moins de repeints partiels visibles.
+        self._poster = self
 
         # Le label de jaquette occupe toute la carte et sert aussi de
         # placeholder (emoji) tant que l'image n'est pas arrivée.
+        # corner_radius=0 IMPÉRATIF : CTkLabel pose un
+        # `padx=min(corner_radius, hauteur/2)` autour de son contenu. Avec 12,
+        # la jaquette était encadrée de deux bandes mortes de 12 px à gauche
+        # et à droite ET amputée d'autant — c'est ce qui donnait cette
+        # impression de cadrage raté. Les coins arrondis viennent de la carte
+        # parente, ce label n'a pas à les redessiner.
         self._cover_lbl = ctk.CTkLabel(self._poster, text="🎮", font=font(46),
                                         text_color=COL_TEXT_MUTED, fg_color=COL_CARD,
-                                        corner_radius=12)
+                                        corner_radius=0)
         self._cover_lbl.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         icon_lbl = self._cover_lbl  # conservé pour les bindings de survol
@@ -968,47 +1379,29 @@ class GameCard(ctk.CTkFrame):
         title_static = self._title_static
 
         # --- Badge unique de statut (top-right) — jamais plus d'un par carte ---
-        self._badge = ctk.CTkFrame(self._poster, fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE),
-                                    corner_radius=10, border_width=1,
-                                    border_color=STATE_COLORS.get(state, COL_RED))
+        # corner_radius=0 IMPÉRATIF. CTk dessine un coin arrondi sur un canvas
+        # dont le reste prend la couleur du PARENT, pas celle de la jaquette
+        # posée dessous : quatre encoches sombres apparaissaient donc aux
+        # angles, par-dessus l'artwork. Aucun moyen de rendre ces angles
+        # transparents en CustomTkinter — on prend donc un rectangle net.
+        self._badge = ctk.CTkFrame(self._poster,
+                                    fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE),
+                                    corner_radius=0, border_width=1,
+                                    border_color=COL_BADGE_FG)
         self._badge.place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
-        self._badge_dot = ctk.CTkLabel(self._badge, text="●", font=font(9),
-                                        text_color=STATE_COLORS.get(state, COL_RED))
-        self._badge_dot.pack(side="left", padx=(8, 2), pady=3)
-        self._badge_lbl = ctk.CTkLabel(self._badge, text=state_label(state), font=font(10, "bold"),
-                                        text_color=STATE_COLORS.get(state, COL_RED))
-        self._badge_lbl.pack(side="left", padx=(0, 8), pady=3)
+        # Point et texte dans UN seul label : deux labels côte à côte, c'était
+        # trois fenêtres Tk de plus par carte pour un rendu identique.
+        self._badge_lbl = ctk.CTkLabel(self._badge, text=badge_text(state),
+                                        font=font(10, "bold"),
+                                        fg_color="transparent", corner_radius=0,
+                                        text_color=COL_BADGE_FG)
+        self._badge_lbl.pack(padx=8, pady=3)
 
-        # --- Overlay hover : masqué par défaut, révélé au survol ---
-        self._overlay = ctk.CTkFrame(self, fg_color="#08060F", corner_radius=12)
-        self._overlay_visible = False
-
-        source_txt = t("GAME_SOURCE_STEAM") if game.source == "steam" else t("GAME_SOURCE_MANUAL")
-        self._overlay_title = ctk.CTkLabel(self._overlay, text=game.name, font=font(13, "bold"),
-                                            text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24, justify="center")
-        self._overlay_title.place(relx=0.5, rely=0.30, anchor="center")
-        self._overlay_source = ctk.CTkLabel(self._overlay, text=source_txt, font=font(10),
-                                             text_color=COL_TEXT_MUTED)
-        self._overlay_source.place(relx=0.5, rely=0.42, anchor="center")
-
-        btn_row = ctk.CTkFrame(self._overlay, fg_color="transparent")
-        btn_row.place(relx=0.5, rely=0.68, anchor="center")
-        self._edit_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_EDIT"), width=76, height=28,
-                                        fg_color=COL_ACCENT_SOFT, hover_color=COL_ACCENT_HOVER,
-                                        font=font(11), corner_radius=8,
-                                        command=lambda: self._on_edit(self._game))
-        self._edit_btn.pack(side="left", padx=3)
-        self._delete_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_DELETE"), width=90, height=28,
-                                          fg_color="#3A1420", hover_color=COL_RED,
-                                          font=font(11), corner_radius=8,
-                                          command=lambda: self._on_delete(self._game))
-        self._delete_btn.pack(side="left", padx=3)
-
-        # Overlay opacity simulé via couleur sombre unie (CTk ne supporte pas
-        # l'alpha réel) : contraste net et lisible sans dépendance externe.
-        for widget in (self, self._poster, icon_lbl, title_static):
+        # L'overlay de survol n'est PAS construit ici : voir _build_overlay().
+        # dict.fromkeys : _poster vaut self depuis la suppression du cadre
+        # intermédiaire, inutile de lier deux fois le même widget.
+        for widget in dict.fromkeys((self, self._poster, icon_lbl, title_static)):
             widget.bind("<Enter>", self._show_overlay)
-        self._overlay.bind("<Leave>", self._hide_overlay)
         self._poster.bind("<Leave>", self._on_poster_leave)
 
         # Demandé en dernier : la carte est entièrement construite, donc le
@@ -1035,22 +1428,103 @@ class GameCard(ctk.CTkFrame):
         if pil_image is None:
             return  # on garde le placeholder emoji + titre
         try:
-            self._ctk_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image,
+            # CTkImage redimensionne en interne avec le rééchantillonnage par
+            # défaut de Pillow (bicubique), qui adoucit nettement en réduction :
+            # mesuré à 25 % de netteté perdue sur une jaquette 300x450 ramenée
+            # à la taille de la carte. On la réduit donc nous-mêmes en LANCZOS,
+            # à la taille exacte que CTkImage demandera — son propre resize
+            # devient alors sans effet.
+            scaling = ctk.ScalingTracker.get_widget_scaling(self)
+            target = (max(1, round(self.CARD_WIDTH * scaling)),
+                      max(1, round(self.CARD_HEIGHT * scaling)))
+            sharp = pil_image.resize(target, Image.Resampling.LANCZOS)
+            self._ctk_image = ctk.CTkImage(light_image=sharp, dark_image=sharp,
                                            size=(self.CARD_WIDTH, self.CARD_HEIGHT))
             self._cover_lbl.configure(image=self._ctk_image, text="")
             # La jaquette porte déjà le titre du jeu : afficher le nôtre
             # par-dessus ferait doublon illisible.
             self._title_static.place_forget()
+            # Poser la jaquette repasse le label AU-DESSUS de l'overlay et
+            # peut avaler le <Leave> : sans ça, « Modifier / Supprimer »
+            # restait affiché après l'actualisation, et il fallait repasser la
+            # souris sur la carte pour s'en débarrasser.
+            self._settle_overlay()
         except Exception:
             logger.debug("Application de la jaquette échouée pour %s.", self._game.name,
                          exc_info=True)
 
+    def _build_overlay(self) -> None:
+        """Construit l'overlay de survol à la PREMIÈRE entrée souris.
+
+        Le bâtir d'avance sur chaque carte coûtait la moitié du temps de
+        render_games() — 2 boutons + 2 labels + 2 frames par carte, que CTk
+        redessine coin arrondi par coin arrondi — pour des widgets qui ne sont
+        visibles qu'au survol d'UNE carte à la fois.
+
+        Opacité simulée par une couleur sombre unie : CTk ne gère pas l'alpha
+        réel, et le contraste reste net sans dépendance supplémentaire.
+        """
+        game = self._game
+        source_txt = t("GAME_SOURCE_STEAM") if game.source == "steam" else t("GAME_SOURCE_MANUAL")
+
+        self._overlay = ctk.CTkFrame(self, fg_color="#08060F", corner_radius=12)
+        self._overlay_title = ctk.CTkLabel(self._overlay, text=game.name, font=font(13, "bold"),
+                                            text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24,
+                                            justify="center")
+        self._overlay_title.place(relx=0.5, rely=0.30, anchor="center")
+        self._overlay_source = ctk.CTkLabel(self._overlay, text=source_txt, font=font(10),
+                                             text_color=COL_TEXT_MUTED)
+        self._overlay_source.place(relx=0.5, rely=0.42, anchor="center")
+
+        btn_row = ctk.CTkFrame(self._overlay, fg_color="transparent")
+        btn_row.place(relx=0.5, rely=0.68, anchor="center")
+        self._edit_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_EDIT"), width=76, height=28,
+                                        fg_color=COL_ACCENT_SOFT, hover_color=COL_ACCENT_HOVER,
+                                        font=font(11), corner_radius=8,
+                                        command=lambda: self._on_edit(self._game))
+        self._edit_btn.pack(side="left", padx=3)
+        self._delete_btn = ctk.CTkButton(btn_row, text=t("GAME_CARD_BTN_DELETE"), width=90, height=28,
+                                          fg_color="#3A1420", hover_color=COL_RED,
+                                          font=font(11), corner_radius=8,
+                                          command=lambda: self._on_delete(self._game))
+        self._delete_btn.pack(side="left", padx=3)
+
+        self._overlay.bind("<Leave>", self._hide_overlay)
+        # Créés après le binding récursif de la grille : sans ça l'overlay
+        # avalerait la molette et bloquerait le défilement sous le curseur.
+        if self._bind_wheel is not None:
+            self._bind_wheel(self._overlay)
+
+    _hover_blocked_until = 0.0
+
+    @classmethod
+    def suppress_hover(cls, seconds: float) -> None:
+        """Neutralise l'overlay de survol pendant un défilement : les cartes
+        glissent sous un curseur immobile, ce qui déclenche une rafale de
+        <Enter>/<Leave> et fait clignoter les overlays au milieu du scroll."""
+        cls._hover_blocked_until = time.monotonic() + seconds
+
     def _show_overlay(self, _event: Any = None) -> None:
-        if self._overlay_visible:
+        if self._overlay_visible or time.monotonic() < GameCard._hover_blocked_until:
             return
+        if self._overlay is None:
+            self._build_overlay()
         self._overlay_visible = True
         self._overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._overlay.lift()
+
+    def _settle_overlay(self) -> None:
+        """Remet l'overlay dans l'état que dicte la position réelle du curseur."""
+        if not self._overlay_visible:
+            return
+        try:
+            pointer = self.winfo_pointerxy()
+        except Exception:
+            self._hide_overlay()
+            return
+        self._maybe_hide(pointer)
+        if self._overlay_visible and self._overlay is not None:
+            self._overlay.lift()   # la jaquette vient de passer devant
 
     def _on_poster_leave(self, event: Any) -> None:
         # Tolère les micro-déplacements entre poster et overlay (évite un
@@ -1084,11 +1558,13 @@ class GameCard(ctk.CTkFrame):
     def refresh_labels(self) -> None:
         """Recharge les libellés dynamiques (source, boutons, badge) après un
         changement de langue à chaud — sans recréer les widgets."""
+        self._badge_lbl.configure(text=badge_text(self._current_state))
+        if self._overlay is None:
+            return  # jamais survolée : il sera bâti avec les bons libellés
         source_txt = t("GAME_SOURCE_STEAM") if self._game.source == "steam" else t("GAME_SOURCE_MANUAL")
         self._overlay_source.configure(text=source_txt)
         self._edit_btn.configure(text=t("GAME_CARD_BTN_EDIT"))
         self._delete_btn.configure(text=t("GAME_CARD_BTN_DELETE"))
-        self._badge_lbl.configure(text=state_label(self._current_state))
 
     def set_state(self, state: str) -> None:
         """Met à jour uniquement le badge d'état, sans recréer le widget
@@ -1096,10 +1572,417 @@ class GameCard(ctk.CTkFrame):
         if state == self._current_state:
             return
         self._current_state = state
-        color = STATE_COLORS.get(state, COL_RED)
-        self._badge.configure(fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE), border_color=color)
-        self._badge_dot.configure(text_color=color)
-        self._badge_lbl.configure(text=state_label(state), text_color=color)
+        # Seul le FOND change d'un état à l'autre : texte et contour restent
+        # blancs, donc lisibles sur les deux couleurs.
+        self._badge.configure(fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE))
+        self._badge_lbl.configure(text=badge_text(state))
+
+
+# ============================================================================
+# FENÊTRE : CONTRÔLE DU CADRAGE AUTOMATIQUE
+# ============================================================================
+PREVIEW_MAX_WIDTH = 760
+
+
+class PatchReviewDialog(ctk.CTkToplevel):
+    """Montre CE QUE l'agent regarde dans une capture de référence.
+
+    L'agent choisit ses fragments tout seul, mais rien ne permettait de
+    vérifier son choix : si un fragment tombait sur le décor plutôt que sur le
+    HUD, la détection se dégradait sans que personne puisse le voir.
+
+    Chaque fragment est encadré et NUMÉROTÉ, et ce numéro sert à le refuser.
+    C'est indispensable : la sélection est déterministe, donc relancer le même
+    calcul sur la même image redonnerait exactement les mêmes cadres. Sans
+    exclusion, un bouton « ce n'est pas bon » tournerait en rond indéfiniment.
+    """
+
+    def __init__(self, master, image_path: str, kind: str,
+                 menu_images: list[str], ingame_images: list[str],
+                 excluded: list[tuple[float, ...]],
+                 manual: list[tuple[float, ...]],
+                 count: Optional[int],
+                 on_validated: Callable[[list[tuple[float, ...]],
+                                         list[tuple[float, ...]],
+                                         Optional[int]], None]) -> None:
+        super().__init__(master)
+        self.title(t("PATCH_REVIEW_TITLE"))
+        self.configure(fg_color=COL_BG)
+        self.transient(master)
+        self.grab_set()
+
+        self._path = image_path
+        self._kind = kind
+        self._menu_images = menu_images
+        self._ingame_images = ingame_images
+        self._excluded = list(excluded)
+        self._manual = [tuple(float(v) for v in box) for box in manual]
+        self._on_validated = on_validated
+        self._initial_count = count
+        self._patches: list[screen_match.Patch] = []
+        self._checks: list[ctk.BooleanVar] = []
+        self._preview_img: Optional[ctk.CTkImage] = None
+        self._selected: Optional[int] = None     # index dans _patches, pas dans _manual
+        # Nombre de zones affichées. Figé à l'ouverture puis ajusté uniquement
+        # par « + » et « Supprimer » : sans lui, transformer une zone
+        # automatique en zone manuelle libérait un créneau que la recherche
+        # automatique remplissait aussitôt — une zone surgissait alors que
+        # l'utilisateur venait simplement d'en déplacer une.
+        self._budget: Optional[int] = count
+        self._base: Optional[np.ndarray] = None  # image déjà réduite à l'aperçu
+
+        self.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self, text=t("PATCH_REVIEW_INTRO"), font=font(12),
+                     text_color=COL_TEXT_MUTED, wraplength=PREVIEW_MAX_WIDTH,
+                     justify="left").grid(row=0, column=0, sticky="w", padx=18, pady=(16, 6))
+
+        self._preview_lbl = ctk.CTkLabel(self, text="")
+        self._preview_lbl.grid(row=1, column=0, padx=18)
+
+        self._verdict_lbl = ctk.CTkLabel(self, text="", font=font(12, "bold"),
+                                          wraplength=PREVIEW_MAX_WIDTH, justify="left")
+        self._verdict_lbl.grid(row=2, column=0, sticky="w", padx=18, pady=(10, 2))
+
+        self._status_lbl = ctk.CTkLabel(self, text="", font=font(11),
+                                         text_color=COL_TEXT_MUTED, anchor="w")
+        self._status_lbl.grid(row=3, column=0, sticky="w", padx=18)
+
+        ctk.CTkLabel(self, text=t("PATCH_REVIEW_EXCLUDE_HINT"), font=font(11),
+                     text_color=COL_TEXT_MUTED, anchor="w").grid(
+            row=4, column=0, sticky="w", padx=18, pady=(8, 2))
+
+        self._checks_row = ctk.CTkFrame(self, fg_color="transparent")
+        self._checks_row.grid(row=5, column=0, sticky="w", padx=14)
+
+        # --- Recadrage manuel ------------------------------------------------
+        ctk.CTkLabel(self, text=t("PATCH_REVIEW_MANUAL_HINT"), font=font(11),
+                     text_color=COL_TEXT_MUTED, anchor="w",
+                     wraplength=PREVIEW_MAX_WIDTH, justify="left").grid(
+            row=6, column=0, sticky="w", padx=18, pady=(12, 2))
+
+        manual_box = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=10,
+                                   border_width=1, border_color=COL_BORDER)
+        manual_box.grid(row=7, column=0, sticky="ew", padx=18)
+        manual_box.grid_columnconfigure(1, weight=1)
+
+        zone_row = ctk.CTkFrame(manual_box, fg_color="transparent")
+        zone_row.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 6))
+        self._zone_var = ctk.StringVar()
+        self._zone_menu = ctk.CTkOptionMenu(
+            zone_row, values=[""], variable=self._zone_var,
+            width=240, fg_color=COL_BG, button_color=COL_ACCENT,
+            button_hover_color=COL_ACCENT_HOVER, font=font(11),
+            command=self._on_zone_selected)
+        self._zone_menu.pack(side="left")
+        ctk.CTkButton(zone_row, text="+", width=38, height=28, font=font(16, "bold"),
+                      fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+                      text_color="#0F0C1B", command=self._add_zone).pack(side="left", padx=(8, 0))
+
+        self._sliders: dict[str, ctk.CTkSlider] = {}
+        self._slider_lbls: dict[str, ctk.CTkLabel] = {}
+        defaults = {"x": 0.5, "y": 0.5, "w": 0.25, "h": 0.15}
+        for row, (key, label_key) in enumerate(
+                (("x", "PATCH_REVIEW_SLIDER_X"), ("y", "PATCH_REVIEW_SLIDER_Y"),
+                 ("w", "PATCH_REVIEW_SLIDER_W"), ("h", "PATCH_REVIEW_SLIDER_H")), start=1):
+            ctk.CTkLabel(manual_box, text=t(label_key), font=font(11), width=90,
+                         anchor="w").grid(row=row, column=0, sticky="w", padx=(12, 6), pady=2)
+            slider = ctk.CTkSlider(manual_box, from_=0.03 if key in ("w", "h") else 0.0,
+                                    to=1.0, number_of_steps=97 if key in ("w", "h") else 100,
+                                    button_color=COL_ACCENT, progress_color=COL_ACCENT_SOFT,
+                                    command=lambda _v, k=key: self._on_slider(k))
+            slider.set(defaults[key])
+            slider.grid(row=row, column=1, sticky="ew", padx=(0, 8), pady=2)
+            self._sliders[key] = slider
+            lbl = ctk.CTkLabel(manual_box, text="", font=font(11), width=52,
+                               text_color=COL_TEXT_MUTED)
+            lbl.grid(row=row, column=2, padx=(0, 12))
+            self._slider_lbls[key] = lbl
+
+        zone_btns = ctk.CTkFrame(manual_box, fg_color="transparent")
+        zone_btns.grid(row=5, column=0, columnspan=3, sticky="w", padx=12, pady=(6, 12))
+        ctk.CTkButton(zone_btns, text=t("PATCH_REVIEW_BTN_APPLY_ZONE"), width=170, height=30,
+                      fg_color=COL_ACCENT_SOFT, hover_color=COL_ACCENT_HOVER, font=font(11),
+                      command=self._apply_zone).pack(side="left")
+        ctk.CTkButton(zone_btns, text=t("PATCH_REVIEW_BTN_DELETE_ZONE"), width=150, height=30,
+                      fg_color="#3A1420", hover_color=COL_RED, font=font(11),
+                      command=self._delete_zone).pack(side="left", padx=8)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=8, column=0, sticky="ew", padx=18, pady=16)
+        self._recompute_btn = ctk.CTkButton(
+            buttons, text=t("PATCH_REVIEW_BTN_RECOMPUTE"), width=180, height=34,
+            fg_color=COL_CARD, hover_color=COL_CARD_HOVER, border_width=1,
+            border_color=COL_BORDER, font=font(12), command=self._recompute)
+        self._recompute_btn.pack(side="left")
+        ctk.CTkButton(buttons, text=t("PATCH_REVIEW_BTN_TEST"), width=180, height=34,
+                      fg_color=COL_CARD, hover_color=COL_CARD_HOVER, border_width=1,
+                      border_color=COL_BORDER, font=font(12),
+                      command=self._test_live).pack(side="left", padx=8)
+        ctk.CTkButton(buttons, text=t("PATCH_REVIEW_BTN_VALIDATE"), width=160, height=34,
+                      fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+                      text_color="#0F0C1B", font=font(12, "bold"),
+                      command=self._validate).pack(side="right")
+
+        self._refresh()
+
+    # -- Calcul et rendu ---------------------------------------------------- #
+
+    def _reference(self) -> Optional[np.ndarray]:
+        return _imread_unicode(self._path, cv2.IMREAD_COLOR)
+
+    def _refresh(self, highlight: Optional[int] = None) -> None:
+        original = self._reference()
+        if original is None:
+            self._verdict_lbl.configure(text=t("PATCH_REVIEW_UNREADABLE"), text_color=COL_RED)
+            return
+
+        if self._base is None:
+            # Réduit UNE fois : les curseurs redessinent à chaque cran, et
+            # retailler l'image d'origine à chaque fois saccaderait le réglage.
+            h, w = original.shape[:2]
+            ratio = min(1.0, PREVIEW_MAX_WIDTH / w)
+            self._base = cv2.resize(original, (int(w * ratio), int(h * ratio)),
+                                     interpolation=cv2.INTER_AREA)
+
+        small = _downscale(original)
+        if self._budget is None:
+            self._budget = len(screen_match.build_patches(small)) or 1
+        self._patches = screen_match.build_patches(
+            small, count=max(self._budget, len(self._manual)),
+            exclude=self._excluded, manual=self._manual)
+        if not self._patches:
+            self._verdict_lbl.configure(text=t("PATCH_REVIEW_NO_PATCHES"), text_color=COL_RED)
+            return
+
+        self._show(screen_match.draw_preview(self._base, self._patches,
+                                              manual_count=len(self._manual),
+                                              highlight=highlight))
+        self._build_checks()
+        self._refresh_zone_menu()
+        self._update_verdict(small)
+
+    def _show(self, bgr: np.ndarray) -> None:
+        h, w = bgr.shape[:2]
+        pil = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        self._preview_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(w, h))
+        self._preview_lbl.configure(image=self._preview_img, text="")
+
+    # -- Recadrage manuel aux curseurs -------------------------------------- #
+
+    def _zone_labels(self) -> list[str]:
+        """Une entrée par zone AFFICHÉE, numérotée comme sur l'aperçu.
+
+        Les zones automatiques y figurent aussi : les sélectionner permet de
+        les repositionner directement, sans avoir à les écarter puis à en
+        retracer une par-dessus.
+        """
+        labels = []
+        for index in range(1, len(self._patches) + 1):
+            key = ("PATCH_REVIEW_ZONE_MANUAL" if index <= len(self._manual)
+                   else "PATCH_REVIEW_ZONE_AUTO")
+            labels.append(t(key, n=index))
+        return labels or [t("PATCH_REVIEW_ZONE_NONE")]
+
+    def _refresh_zone_menu(self) -> None:
+        labels = self._zone_labels()
+        self._zone_menu.configure(values=labels)
+        if self._selected is not None and self._selected < len(labels):
+            self._zone_var.set(labels[self._selected])
+        else:
+            self._selected = None
+            self._zone_var.set(labels[0])
+        for key, slider in self._sliders.items():
+            self._slider_lbls[key].configure(text=f"{slider.get():.2f}")
+
+    def _current_box(self) -> tuple[float, float, float, float]:
+        return tuple(self._sliders[k].get() for k in ("x", "y", "w", "h"))
+
+    def _load_sliders(self, box: Sequence[float]) -> None:
+        for key, value in zip(("x", "y", "w", "h"), box):
+            self._sliders[key].set(float(value))
+
+    def _on_zone_selected(self, label: str) -> None:
+        labels = self._zone_labels()
+        self._selected = labels.index(label) if label in labels else None
+        if self._selected is not None and self._selected < len(self._patches):
+            self._load_sliders(screen_match.patch_box(self._patches[self._selected]))
+        self._refresh(highlight=None if self._selected is None else self._selected + 1)
+
+    # Emplacements proposés à une nouvelle zone, dans l'ordre d'essai.
+    _NEW_ZONE_SPOTS = tuple((cx, cy) for cy in (0.25, 0.5, 0.75)
+                            for cx in (0.25, 0.5, 0.75))
+    _NEW_ZONE_SIZE = (0.25, 0.20)
+
+    @staticmethod
+    def _overlaps(a: Sequence[float], b: Sequence[float]) -> bool:
+        return (abs(a[0] - b[0]) < (a[2] + b[2]) / 2
+                and abs(a[1] - b[1]) < (a[3] + b[3]) / 2)
+
+    def _free_spot(self) -> tuple[float, float, float, float]:
+        """Emplacement libre pour une nouvelle zone.
+
+        Les créer toutes au centre les empilait au pixel près : on n'en voyait
+        qu'une seule, et déplacer les curseurs donnait l'impression que les
+        zones étaient liées entre elles. On cherche donc une place qui ne
+        recouvre aucune zone manuelle existante.
+        """
+        bw, bh = self._NEW_ZONE_SIZE
+        for cx, cy in self._NEW_ZONE_SPOTS:
+            box = (cx, cy, bw, bh)
+            if not any(self._overlaps(box, other) for other in self._manual):
+                return box
+        # Toutes les places prises : on décale en cascade plutôt que d'empiler.
+        offset = 0.03 * (len(self._manual) % 8)
+        return (0.25 + offset, 0.25 + offset, bw, bh)
+
+    def _add_zone(self) -> None:
+        """Le « + » : nouvelle zone à un endroit libre, prête à être réglée."""
+        self._manual.append(self._free_spot())
+        self._budget = (self._budget or 0) + 1
+        self._selected = len(self._manual) - 1
+        self._load_sliders(self._manual[self._selected])
+        self._refresh(highlight=self._selected + 1)
+
+    def _on_slider(self, _key: str) -> None:
+        """Aperçu en direct : la zone en cours de réglage est redessinée."""
+        for key, slider in self._sliders.items():
+            self._slider_lbls[key].configure(text=f"{slider.get():.2f}")
+        if self._selected is None:
+            return          # rien de sélectionné : les curseurs ne visent rien
+        box = self._current_box()
+        preview_boxes = list(self._manual)
+        if self._selected < len(preview_boxes):
+            preview_boxes[self._selected] = box
+            highlight = self._selected + 1
+        else:
+            # Zone automatique en cours de repositionnement : on la montre
+            # comme si elle était déjà manuelle, ce qu'Appliquer confirmera.
+            preview_boxes.append(box)
+            highlight = len(preview_boxes)
+        self._draw_with(preview_boxes, highlight)
+
+    def _draw_with(self, manual_boxes: list[tuple[float, ...]], highlight: int) -> None:
+        original = self._reference()
+        if original is None or self._base is None:
+            return
+        patches = screen_match.build_patches(_downscale(original), exclude=self._excluded,
+                                             manual=manual_boxes)
+        if patches:
+            self._show(screen_match.draw_preview(self._base, patches,
+                                                  manual_count=len(manual_boxes),
+                                                  highlight=highlight))
+
+    def _apply_zone(self) -> None:
+        if self._selected is None or self._selected >= len(self._patches):
+            self._status_lbl.configure(text=t("PATCH_REVIEW_NO_ZONE_SELECTED"),
+                                        text_color=COL_YELLOW)
+            return
+        box = self._current_box()
+        if self._selected < len(self._manual):
+            self._manual[self._selected] = box
+        else:
+            # Repositionner une zone automatique la fige : on écarte l'endroit
+            # d'origine, sinon la recherche automatique la remettrait au même
+            # endroit au prochain calcul et le déplacement serait annulé.
+            self._excluded.append(screen_match.patch_box(self._patches[self._selected]))
+            self._manual.append(box)
+            self._selected = len(self._manual) - 1
+        self._status_lbl.configure(text="", text_color=COL_TEXT_MUTED)
+        self._refresh(highlight=self._selected + 1)
+
+    def _delete_zone(self) -> None:
+        if self._selected is None or self._selected >= len(self._patches):
+            self._status_lbl.configure(text=t("PATCH_REVIEW_NO_ZONE_SELECTED"),
+                                        text_color=COL_YELLOW)
+            return
+        if self._selected < len(self._manual):
+            self._manual.pop(self._selected)
+        else:
+            self._excluded.append(screen_match.patch_box(self._patches[self._selected]))
+        self._budget = max(0, (self._budget or 1) - 1)
+        self._selected = None
+        self._refresh()
+
+    def _build_checks(self) -> None:
+        for widget in self._checks_row.winfo_children():
+            widget.destroy()
+        self._checks = []
+        for index in range(1, len(self._patches) + 1):
+            var = ctk.BooleanVar(value=False)
+            self._checks.append(var)
+            ctk.CTkCheckBox(self._checks_row, text=str(index), variable=var, width=52,
+                            font=font(12), fg_color=COL_ACCENT,
+                            hover_color=COL_ACCENT_HOVER).pack(side="left", padx=4, pady=4)
+
+    def _update_verdict(self, small_reference: np.ndarray) -> None:
+        """Verdict croisé : les deux captures savent-elles se distinguer ?"""
+        menu_path = self._menu_images[0] if self._menu_images else ""
+        game_path = self._ingame_images[0] if self._ingame_images else ""
+        if not menu_path or not game_path:
+            self._verdict_lbl.configure(text=t("PATCH_REVIEW_NEED_BOTH"),
+                                         text_color=COL_TEXT_MUTED)
+            return
+
+        menu_raw, game_raw = _imread_unicode(menu_path, cv2.IMREAD_COLOR), \
+                             _imread_unicode(game_path, cv2.IMREAD_COLOR)
+        if menu_raw is None or game_raw is None:
+            self._verdict_lbl.configure(text=t("PATCH_REVIEW_UNREADABLE"), text_color=COL_RED)
+            return
+
+        menu_small, game_small = _downscale(menu_raw), _downscale(game_raw)
+        sep = screen_match.cross_check(
+            menu_small, self._patches_for(menu_path, menu_small),
+            game_small, self._patches_for(game_path, game_small))
+
+        key = "PATCH_REVIEW_SEPARATION_OK" if sep.ok else "PATCH_REVIEW_SEPARATION_BAD"
+        self._verdict_lbl.configure(
+            text=t(key, margin=f"{sep.margin:.2f}"),
+            text_color=COL_GREEN if sep.ok else COL_RED)
+        self._status_lbl.configure(text=t(
+            "PATCH_REVIEW_SEPARATION_DETAIL",
+            mm=f"{sep.menu_on_menu:.2f}", gg=f"{sep.game_on_game:.2f}",
+            mg=f"{sep.menu_on_game:.2f}", gm=f"{sep.game_on_menu:.2f}"))
+
+    def _patches_for(self, path: str, small: np.ndarray) -> list[screen_match.Patch]:
+        """Fragments d'une référence : les réglages en cours pour l'image
+        affichée, ceux déjà enregistrés pour l'autre."""
+        if path == self._path:
+            return screen_match.build_patches(small, exclude=self._excluded,
+                                              manual=self._manual)
+        return screen_match.build_patches(small, exclude=_REVIEWS.excluded_for(path),
+                                          manual=_REVIEWS.manual_for(path))
+
+    # -- Actions ------------------------------------------------------------ #
+
+    def _recompute(self) -> None:
+        """Écarte les fragments cochés et en choisit d'autres à leur place."""
+        # On mémorise la BOÎTE du fragment, pas son centre : un fragment
+        # fusionné couvre parfois une barre entière, et le refuser doit
+        # écarter toute la zone, pas seulement la case du milieu.
+        newly = [screen_match.patch_box(self._patches[i])
+                 for i, var in enumerate(self._checks) if var.get()]
+        if not newly:
+            self._status_lbl.configure(text=t("PATCH_REVIEW_NOTHING_TICKED"),
+                                        text_color=COL_YELLOW)
+            return
+        self._excluded.extend(newly)
+        self._refresh()
+
+    def _test_live(self) -> None:
+        """Compare les fragments à l'écran RÉEL, jeu lancé."""
+        raw = _capture_screen_bgr()
+        if raw is None:
+            self._status_lbl.configure(text=t("PATCH_REVIEW_TEST_NO_SCREEN"), text_color=COL_RED)
+            return
+        score = screen_match.score_patches(_downscale(raw), self._patches)
+        self._status_lbl.configure(
+            text=t("PATCH_REVIEW_TEST_RESULT", score=f"{score:.2f}"),
+            text_color=COL_GREEN if score >= 0.8 else COL_YELLOW)
+
+    def _validate(self) -> None:
+        self._on_validated(list(self._excluded), list(self._manual), self._budget)
+        self.destroy()
 
 
 # ============================================================================
@@ -1125,6 +2008,7 @@ class GameModal(ctk.CTkToplevel):
         self._steam_candidates = steam_candidates
         self._menu_images: list[str] = list(game.menu_images) if game else []
         self._ingame_images: list[str] = list(game.ingame_images) if game else []
+        self._patch_reviews: dict[str, dict[str, Any]] = dict(game.patch_reviews) if game else {}
 
         scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=16, pady=16)
@@ -1167,20 +2051,38 @@ class GameModal(ctk.CTkToplevel):
         self.menu_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._menu_images),
                                            text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
         self.menu_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
-        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_MENU_IMAGES"), height=30, fg_color=COL_CARD,
-                       hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("menu")).grid(
-            row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
+        menu_btns = ctk.CTkFrame(scroll, fg_color="transparent")
+        menu_btns.grid(row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
+        menu_btns.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(menu_btns, text=t("GAME_MODAL_BTN_PICK_MENU_IMAGES"), height=30,
+                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
+                       command=lambda: self._pick_images("menu")).grid(row=0, column=0, sticky="ew")
+        self._review_btns: dict[str, ctk.CTkButton] = {}
+        self._review_btns["menu"] = ctk.CTkButton(
+            menu_btns, text=t("GAME_MODAL_BTN_REVIEW"), height=30, width=150,
+            fg_color=COL_BG, hover_color=COL_CARD_HOVER, border_width=1,
+            border_color=COL_BORDER, font=font(11),
+            command=lambda: self.open_patch_review("menu"))
+        self._review_btns["menu"].grid(row=0, column=1, padx=(8, 0))
 
         ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_INGAME"), font=font(12, "bold"),
                      anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(4, 2))
         self.ingame_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._ingame_images),
                                              text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
         self.ingame_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
-        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_PICK_INGAME_IMAGES"), height=30, fg_color=COL_CARD,
-                       hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("ingame")).grid(
-            row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
+        game_btns = ctk.CTkFrame(scroll, fg_color="transparent")
+        game_btns.grid(row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
+        game_btns.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(game_btns, text=t("GAME_MODAL_BTN_PICK_INGAME_IMAGES"), height=30,
+                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
+                       command=lambda: self._pick_images("ingame")).grid(row=0, column=0, sticky="ew")
+        self._review_btns["ingame"] = ctk.CTkButton(
+            game_btns, text=t("GAME_MODAL_BTN_REVIEW"), height=30, width=150,
+            fg_color=COL_BG, hover_color=COL_CARD_HOVER, border_width=1,
+            border_color=COL_BORDER, font=font(11),
+            command=lambda: self.open_patch_review("ingame"))
+        self._review_btns["ingame"].grid(row=0, column=1, padx=(8, 0))
+        self._refresh_review_buttons()
 
         # --- Scènes OBS ---
         scene_names = self._fetch_scene_names()
@@ -1283,6 +2185,71 @@ class GameModal(ctk.CTkToplevel):
         else:
             self._ingame_images = list(paths)
             self.ingame_list_lbl.configure(text=self._images_summary(self._ingame_images))
+        self._refresh_review_buttons()
+        # Contrôle du cadrage sur la capture principale, juste après le choix :
+        # c'est le seul moment où l'utilisateur peut corriger sans être
+        # interrompu en pleine partie.
+        self.open_patch_review(kind)
+
+    # -- Contrôle du cadrage automatique ------------------------------------ #
+
+    def _primary_image(self, kind: str) -> str:
+        images = self._menu_images if kind == "menu" else self._ingame_images
+        return images[0] if images else ""
+
+    def _review_is_stale(self, kind: str) -> bool:
+        """L'image a-t-elle changé depuis la dernière validation ?
+
+        C'est exactement le déclencheur demandé : on ne redemande rien tant que
+        le fichier ne bouge pas dans le dossier, et on redemande dès qu'il bouge.
+        """
+        path = self._primary_image(kind)
+        if not path:
+            return False
+        review = self._patch_reviews.get(path)
+        return not review or review.get("stamp") != image_stamp(path)
+
+    def _refresh_review_buttons(self) -> None:
+        for kind, button in getattr(self, "_review_btns", {}).items():
+            has_image = bool(self._primary_image(kind))
+            stale = self._review_is_stale(kind)
+            button.configure(
+                state="normal" if has_image else "disabled",
+                text=t("GAME_MODAL_BTN_REVIEW_STALE") if (has_image and stale)
+                else t("GAME_MODAL_BTN_REVIEW"),
+                border_color=COL_YELLOW if (has_image and stale) else COL_BORDER)
+
+    def open_patch_review(self, kind: str) -> None:
+        path = self._primary_image(kind)
+        if not path:
+            return
+        # Les enregistrements antérieurs ne stockaient qu'un centre (2 valeurs) ;
+        # extract_patches accepte les deux formats.
+        review = self._patch_reviews.get(path, {})
+        def boxes(key: str) -> list[tuple[float, ...]]:
+            return [tuple(float(v) for v in box) for box in (review.get(key) or [])]
+
+        stored = review.get("count")
+        PatchReviewDialog(
+            self, image_path=path, kind=kind,
+            menu_images=self._menu_images, ingame_images=self._ingame_images,
+            excluded=boxes("excluded"), manual=boxes("manual"),
+            count=int(stored) if stored else None,
+            on_validated=lambda ex, man, n, p=path: self._on_review_validated(p, ex, man, n))
+
+    def _on_review_validated(self, path: str, excluded: list[tuple[float, ...]],
+                             manual: list[tuple[float, ...]],
+                             count: Optional[int]) -> None:
+        self._patch_reviews[path] = {
+            "stamp": image_stamp(path),
+            "excluded": [list(box) for box in excluded],
+            "manual": [list(box) for box in manual],
+            # Le nombre de zones validé est enregistré pour que le scan utilise
+            # EXACTEMENT ce qui a été montré dans l'aperçu.
+            "count": count,
+        }
+        _REVIEWS.set(path, excluded, manual, count)
+        self._refresh_review_buttons()
 
     def _create_obs_scenes(self, name: str, active_match: str) -> Optional[tuple[str, str]]:
         """Crée les scènes du jeu dans OBS. Retourne (menu, en_jeu) ou None si
@@ -1302,15 +2269,39 @@ class GameModal(ctk.CTkToplevel):
                                    text_color=COL_RED)
             return None
 
+    def _selected_scene(self, var: ctk.StringVar) -> str:
+        """Scène retenue dans un menu déroulant, "" si aucune.
+
+        Quand OBS n'est pas joignable, le menu ne contient qu'un libellé
+        d'information : CTkOptionMenu le pousse dans la variable, et il finissait
+        enregistré comme s'il s'agissait d'un vrai nom de scène.
+        """
+        value = var.get().strip()
+        placeholders = {t("GAME_MODAL_SCENE_NOT_CONNECTED"), t("GAME_MODAL_STEAM_NONE_DETECTED")}
+        return "" if value in placeholders else value
+
     def _save(self) -> None:
+        editing = self._game is not None
         if self.source_var.get() == "steam":
             selection = self.steam_var.get()
             match = next((g for g in self._steam_candidates
                           if f"{g['name']} (appid {g['appid']})" == selection), None)
-            if match is None:
+            if match is not None:
+                name, source, active_match, appid = (match["name"], "steam",
+                                                     match["install_dir"], match["appid"])
+            elif editing:
+                # Le menu Steam ne liste que les jeux DÉTECTÉS et pas encore
+                # ajoutés : celui qu'on est en train d'éditer n'y figure donc
+                # jamais. L'ancien code prenait alors le premier candidat de la
+                # liste — l'identité du jeu (nom, appid, dossier) était
+                # remplacée par celle d'un AUTRE jeu, et le scan Steam suivant
+                # recréait l'original en doublon. Une édition ne change pas
+                # l'identité : on la conserve telle quelle.
+                name, source = self._game.name, self._game.source
+                active_match, appid = self._game.active_match, self._game.appid
+            else:
                 self.msg_lbl.configure(text=t("GAME_MODAL_ERR_INVALID_STEAM_SELECTION"), text_color=COL_RED)
                 return
-            name, source, active_match, appid = match["name"], "steam", match["install_dir"], match["appid"]
         else:
             name = self.name_var.get().strip()
             exe = self.exe_var.get().strip()
@@ -1319,14 +2310,18 @@ class GameModal(ctk.CTkToplevel):
                 return
             source, active_match, appid = "manual", exe, ""
 
-        scene_menu = self.scene_menu_var.get()
-        scene_ingame = self.scene_ingame_var.get()
+        scene_menu = self._selected_scene(self.scene_menu_var)
+        scene_ingame = self._selected_scene(self.scene_ingame_var)
 
         if self.create_scenes_var.get():
             created = self._create_obs_scenes(name, active_match)
             if created is None:
                 return  # message d'erreur déjà affiché
-            scene_menu, scene_ingame = created
+            # Le choix des menus déroulants PRIME. Créer les scènes ne doit pas
+            # réécrire une sélection explicite : les noms fraîchement créés ne
+            # servent qu'à remplir un champ resté vide.
+            scene_menu = scene_menu or created[0]
+            scene_ingame = scene_ingame or created[1]
             self.scene_menu_var.set(scene_menu)
             self.scene_ingame_var.set(scene_ingame)
 
@@ -1335,6 +2330,10 @@ class GameModal(ctk.CTkToplevel):
             name=name, source=source, active_match=active_match, appid=appid,
             menu_images=self._menu_images, ingame_images=self._ingame_images,
             obs_scene_menu=scene_menu, obs_scene_ingame=scene_ingame,
+            # On ne garde que les validations des images encore référencées,
+            # sinon games.json accumulerait indéfiniment des chemins morts.
+            patch_reviews={path: review for path, review in self._patch_reviews.items()
+                           if path in self._menu_images or path in self._ingame_images},
         )
         if self._store.upsert(game):
             self._on_saved()
@@ -1368,6 +2367,7 @@ class DashboardView(ctk.CTkFrame):
         self._steam_candidates: list[dict[str, str]] = []
         self._cards: dict[str, GameCard] = {}
         self._rendered_ids: tuple[str, ...] = ()
+        self._empty_lbl: Optional[ctk.CTkLabel] = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -1406,7 +2406,12 @@ class DashboardView(ctk.CTkFrame):
         for c in range(self.MAX_COLUMNS):
             self.scroll.grid_columnconfigure(c, weight=1)
         self._enable_smooth_scroll(self.scroll)
-        self.scroll.bind("<Configure>", self._on_scroll_resize)
+        # add="+" IMPÉRATIF : CTkScrollableFrame installe son propre
+        # <Configure> sur ce frame pour recalculer la scrollregion du canvas.
+        # Un bind() nu l'écrasait, la scrollregion restait figée sur la grille
+        # vide — d'où un ascenseur géant, immobile, et un défilement qui
+        # s'arrêtait avant la fin des cartes.
+        self.scroll.bind("<Configure>", self._on_scroll_resize, add="+")
 
         self.render_games()
 
@@ -1432,29 +2437,86 @@ class DashboardView(ctk.CTkFrame):
         if columns == self._columns:
             return
         self._columns = columns
-        self.render_games()
+        self._layout_cards()
+
+    def _layout_cards(self) -> None:
+        """Repositionne les cartes DÉJÀ construites dans la grille.
+
+        Changer de nombre de colonnes ne justifie pas de les détruire pour les
+        recréer : mesuré à ~80 ms par carte (CTk redessine chaque coin arrondi
+        en glyphes sur un canvas, ~1100 fenêtres Tk pour 40 jeux), soit plus de
+        3 s de gel complet de l'UI à chaque palier de redimensionnement — c'est
+        ça qui hachait le défilement, pas le scroll lui-même (0,01 ms/cran).
+        Un simple re-grid() déplace les mêmes widgets, sans rien reconstruire.
+        """
+        cols = max(1, self._columns)
+        for i, game_id in enumerate(self._rendered_ids):
+            card = self._cards.get(game_id)
+            if card is not None:
+                card.grid(row=i // cols, column=i % cols, sticky="n", padx=10, pady=10)
+
+    WHEEL_PIXELS_PER_NOTCH = 60
 
     def _enable_smooth_scroll(self, scrollable: ctk.CTkScrollableFrame) -> None:
-        """Remplace le binding molette par défaut de CTkScrollableFrame (pas
-        grossier, un seul 'saut' par cran) par un défilement à granularité
-        fine sur le canvas interne, pour un rendu fluide haute fréquence
-        plutôt qu'un défilement par paliers saccadés."""
+        """Molette : UN SEUL déplacement du canvas par cran.
+
+        L'ancienne version bouclait sur `yview_scroll(±1, "units")` : avec
+        yscrollincrement=1 (ce que CTk configure sous Windows) ça faisait
+        3 pixels par cran — d'où l'impression de ne pas avancer — répartis en
+        3 repaints successifs des cartes, ce qui les déchirait visuellement.
+        Un seul déplacement par événement = un seul repaint, net."""
         self._wheel_handler: Optional[Callable[[Any], str]] = None
         canvas = getattr(scrollable, "_parent_canvas", None)
         if canvas is None:
             return  # version de customtkinter sans canvas exposé — no-op sûr
 
+        canvas.configure(yscrollincrement=1)  # unité = 1 pixel, quelle que soit la plateforme
+
         def _on_wheel(event: Any) -> str:
-            steps = max(1, abs(int(event.delta / 40)))
-            direction = -1 if event.delta > 0 else 1
-            for _ in range(steps):
-                canvas.yview_scroll(direction, "units")
+            if canvas.yview() == (0.0, 1.0):
+                return "break"  # rien à faire défiler
+            notches = event.delta / 120 or (1 if event.delta > 0 else -1)
+            GameCard.suppress_hover(0.25)
+            canvas.yview_scroll(-round(notches * self.WHEEL_PIXELS_PER_NOTCH), "units")
             return "break"
 
         self._wheel_handler = _on_wheel
         canvas.bind("<MouseWheel>", _on_wheel)
         for child in scrollable.winfo_children():
             child.bind("<MouseWheel>", _on_wheel)
+        self._throttle_scrollbar(scrollable, canvas)
+
+    def _throttle_scrollbar(self, scrollable: ctk.CTkScrollableFrame, canvas: Any) -> None:
+        """Limite la barre de défilement à un déplacement par image.
+
+        Faire glisser le curseur de la barre envoie une commande à CHAQUE
+        pixel de souris : des dizaines de repositionnements par seconde, donc
+        autant de repeints complets de la grille, et des cartes qui se
+        déchirent pendant le glissement. On mémorise la dernière position
+        demandée et on ne l'applique qu'une fois par trame (~60 Hz) : le
+        déplacement reste fidèle au geste, mais la grille n'est redessinée
+        qu'une fois au lieu de trente.
+        """
+        scrollbar = getattr(scrollable, "_scrollbar", None)
+        if scrollbar is None:
+            return  # version de customtkinter sans barre exposée — no-op sûr
+
+        pending: dict[str, Any] = {"args": None, "job": None}
+
+        def _flush() -> None:
+            pending["job"] = None
+            args = pending.pop("args", None)
+            pending["args"] = None
+            if args:
+                GameCard.suppress_hover(0.25)
+                canvas.yview(*args)
+
+        def _on_drag(*args: Any) -> None:
+            pending["args"] = args
+            if pending["job"] is None:
+                pending["job"] = self.after(16, _flush)
+
+        scrollbar.configure(command=_on_drag)
 
     def _bind_wheel_recursive(self, widget: Any) -> None:
         """Applique le handler molette à une carte ET à toute sa descendance.
@@ -1477,6 +2539,7 @@ class DashboardView(ctk.CTkFrame):
         for widget in self.scroll.winfo_children():
             widget.destroy()
         self._cards.clear()
+        self._empty_lbl = None
 
     def refresh_labels(self) -> None:
         """Rechargement à chaud de tous les libellés statiques après un
@@ -1495,26 +2558,49 @@ class DashboardView(ctk.CTkFrame):
         self._subtitle_lbl.configure(text=t("DASHBOARD_SUBTITLE", count=count))
 
     def render_games(self) -> None:
-        """Reconstruction complète de la grille — appelée uniquement quand la
-        LISTE des jeux change réellement (ajout/suppression/réordonnancement),
-        jamais à chaque cycle de scan. Voir apply_scan_results()."""
-        self._clear()
+        """Met la grille en accord avec le store, en RÉUTILISANT les cartes.
+
+        Construire une carte coûte ~55 ms (CTk dessine chaque coin arrondi
+        glyphe par glyphe sur un canvas dédié) : tout raser pour tout refaire
+        gelait l'UI plus de 2 s à chaque ajout ou suppression d'un seul jeu.
+        On ne recrée donc que ce qui a réellement changé — un jeu absent de la
+        grille, ou dont les données ont été modifiées (le dataclass Game
+        compare par valeur). Les cartes intactes gardent aussi leur jaquette
+        déjà téléchargée, donc plus de clignotement au retour du modal.
+        """
         games = self._store.load()
         self._rendered_ids = tuple(g.id for g in games)
         self._update_subtitle()
-        if not games:
-            ctk.CTkLabel(self.scroll, text=t("DASHBOARD_EMPTY_STATE"),
-                         text_color=COL_TEXT_MUTED, font=font(12)).grid(row=0, column=0, padx=10, pady=30)
-            return
-        cols = max(1, self._columns)
-        for i, game in enumerate(games):
-            state = self._latest_states.get(game.id, "inactive")
-            card = GameCard(self.scroll, game=game, state=state,
+
+        wanted = {g.id for g in games}
+        for game_id in [gid for gid in self._cards if gid not in wanted]:
+            self._cards.pop(game_id).destroy()
+
+        for game in games:
+            existing = self._cards.get(game.id)
+            if existing is not None:
+                if existing.game == game:
+                    continue          # inchangé : on garde la carte et sa jaquette
+                existing.destroy()    # édité : les libellés et la jaquette sont périmés
+            card = GameCard(self.scroll, game=game,
+                             state=self._latest_states.get(game.id, "inactive"),
                              on_edit=self._open_edit_modal, on_delete=self._delete_game,
-                             cover_service=self._cover_service)
-            card.grid(row=i // cols, column=i % cols, sticky="n", padx=10, pady=10)
+                             cover_service=self._cover_service,
+                             bind_wheel=self._bind_wheel_recursive)
             self._cards[game.id] = card
             self._bind_wheel_recursive(card)
+
+        self._show_empty_state(not games)
+        self._layout_cards()
+
+    def _show_empty_state(self, visible: bool) -> None:
+        if visible and self._empty_lbl is None:
+            self._empty_lbl = ctk.CTkLabel(self.scroll, text=t("DASHBOARD_EMPTY_STATE"),
+                                            text_color=COL_TEXT_MUTED, font=font(12))
+            self._empty_lbl.grid(row=0, column=0, padx=10, pady=30)
+        elif not visible and self._empty_lbl is not None:
+            self._empty_lbl.destroy()
+            self._empty_lbl = None
 
     def apply_scan_results(self, results: list[dict[str, Any]]) -> None:
         """Appelé depuis ScanWorker (via la file UI thread-safe) à chaque cycle
@@ -1715,7 +2801,12 @@ class SettingsView(ctk.CTkFrame):
             self.msg_lbl.configure(text=t("SETTINGS_ERR_INVALID_VALUE", error=exc), text_color=COL_RED)
             return
 
-        cfg = OBSConfig(
+        # replace() sur la config chargee, et non OBSConfig(...) : cet ecran
+        # n'edite que 5 champs alors que save() reecrit les 8 cles. Repartir
+        # d'une instance neuve remettait RAWG_API_KEY et OBS_OVERLAY_PORT a
+        # leur valeur par defaut a chaque enregistrement.
+        cfg = replace(
+            self.config_mgr.load(),
             host=self.host_var.get().strip() or "localhost",
             port=port, password=self.pwd_var.get(),
             scan_interval_seconds=interval, match_threshold=threshold,
@@ -1797,39 +2888,66 @@ class LanguageSegmentedControl(ctk.CTkFrame):
 # ============================================================================
 # GLISSER-DÉPOSER (optionnel)
 # ============================================================================
-def _try_enable_dnd(widget: Any, on_files: Callable[[list[str]], None]) -> bool:
-    """Active le glisser-déposer de fichiers sur un widget si `tkinterdnd2`
-    est installé. Retourne False sinon — le bouton « Parcourir » reste le
-    chemin garanti, la zone de dépôt n'est qu'un confort.
+def parse_dropped_files(raw: str) -> list[str]:
+    """Découpe la liste de chemins livrée par tkdnd.
 
-    tkinterdnd2 n'est PAS une dépendance déclarée : l'installer active la
-    fonctionnalité, son absence ne casse rien.
+    Tcl renvoie une liste : les chemins contenant un espace sont entourés
+    d'accolades, ex. "{C:/mon dossier/a.png} C:/b.png".
+    """
+    paths = re.findall(r"\{([^}]*)\}|(\S+)", str(raw or ""))
+    return [a or b for a, b in paths if (a or b)]
+
+
+def _try_enable_dnd(widget: Any, on_files: Callable[[list[str]], None]) -> bool:
+    """Active le glisser-déposer de fichiers sur un widget ET sa descendance.
+
+    Deux pièges, tous deux vécus :
+
+    1. `tkinterdnd2` doit être installé — sinon la zone ne fait rien d'autre
+       qu'ouvrir le sélecteur de fichier. Il est désormais dans
+       requirements.txt, mais son absence reste non fatale.
+    2. Les cibles de dépôt de tkdnd sont enregistrées PAR FENÊTRE et ne
+       remontent PAS au parent. Un CTkButton est en réalité un cadre qui
+       contient un canvas et un label : n'enregistrer que le cadre laissait le
+       curseur survoler un enfant non enregistré, et Windows refusait le
+       dépôt — la zone semblait morte. On enregistre donc tout le sous-arbre.
     """
     try:
         from tkinterdnd2 import DND_FILES, TkinterDnD
     except ImportError:
+        logger.info("tkinterdnd2 absent — glisser-déposer désactivé, "
+                    "le bouton Parcourir reste disponible.")
         return False
+
+    def _on_drop(event: Any) -> None:
+        files = parse_dropped_files(getattr(event, "data", ""))
+        if files:
+            on_files(files)
+
     try:
         # tkinterdnd2 exige que la racine Tk connaisse l'extension Tcl ;
         # _require() l'y charge après coup, ce qui évite de remplacer la
         # classe racine (ctk.CTk) par TkinterDnD.Tk.
         TkinterDnD._require(widget.winfo_toplevel())
-        widget.drop_target_register(DND_FILES)
-
-        def _on_drop(event: Any) -> None:
-            raw = str(getattr(event, "data", "") or "")
-            # Tcl renvoie une liste : les chemins contenant des espaces sont
-            # entourés d'accolades, ex. "{C:/mon dossier/a.png} C:/b.png".
-            paths = re.findall(r"\{([^}]*)\}|(\S+)", raw)
-            files = [a or b for a, b in paths if (a or b)]
-            if files:
-                on_files(files)
-
-        widget.dnd_bind("<<Drop>>", _on_drop)
-        return True
     except Exception:
-        logger.debug("Glisser-déposer indisponible sur ce widget.", exc_info=True)
+        logger.debug("Chargement de l'extension tkdnd impossible.", exc_info=True)
         return False
+
+    registered = 0
+
+    def _register(target: Any) -> None:
+        nonlocal registered
+        try:
+            target.drop_target_register(DND_FILES)
+            target.dnd_bind("<<Drop>>", _on_drop)
+            registered += 1
+        except Exception:
+            logger.debug("Cible de dépôt refusée sur %r.", target, exc_info=True)
+        for child in target.winfo_children():
+            _register(child)
+
+    _register(widget)
+    return registered > 0
 
 
 # ============================================================================
@@ -2346,6 +3464,10 @@ class App(ctk.CTk):
 
         # Hotkeys globales : forcent un état de jeu quand la détection
         # visuelle se trompe. Démarrées avec la surveillance, pas avant.
+        # Exclusions de fragments validées par l'utilisateur : elles portent sur
+        # les IMAGES, donc elles doivent être en place avant le premier scan.
+        _REVIEWS.load_from_games(self.store.load())
+
         self.hotkey_manager = HotkeyManager(on_hotkey=self._on_hotkey,
                                             bindings=load_bindings(HOTKEYS_PATH))
 
