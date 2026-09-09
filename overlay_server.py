@@ -61,6 +61,24 @@ HOST = "127.0.0.1"
 # quand 4466 est occupé, et le rebinding se joue sur le nom, pas sur le port.
 _LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 
+# Politique de sécurité du contenu des pages servies (overlay et chat).
+#
+# Ces pages n'ont besoin de RIEN d'extérieur : tout le CSS et tout le JS sont
+# écrits en ligne dans le gabarit, et les seuls médias viennent de nos propres
+# routes. L'écrire noir sur blanc coupe d'avance ce qu'une injection future
+# chercherait à faire : charger un script distant, ou renvoyer le contenu du
+# chat vers un tiers. `'unsafe-inline'` est ici obligatoire — les scripts sont
+# justement en ligne — donc la protection porte sur l'origine des ressources,
+# pas sur l'exécution.
+_CSP = ("default-src 'none'; "
+        "script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; "
+        "img-src 'self'; "
+        "media-src 'self'; "
+        "connect-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'none'")
+
 
 def _bare_hostname(authority: str) -> str:
     """Nom d'hôte nu d'une autorité `hôte[:port]` : sans port ni crochets.
@@ -464,6 +482,10 @@ class _Handler(BaseHTTPRequestHandler):
         # être interprété comme du HTML par Chromium — donc exécuté dans
         # l'origine de l'overlay, aux côtés du chat et des déclencheurs.
         self.send_header("X-Content-Type-Options", "nosniff")
+        # Uniquement sur les pages : un CSP sur /media n'aurait aucun sens, le
+        # fichier n'est pas un document et ne charge rien.
+        if content_type.startswith("text/html"):
+            self.send_header("Content-Security-Policy", _CSP)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()

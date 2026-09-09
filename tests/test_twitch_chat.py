@@ -14,6 +14,7 @@ import pytest
 from twitch_chat import (PLATFORMS, BaseConnector, ChatHub, ChatMessage,
                          TwitchChatStore, PlatformConfig, Status, TwitchConnector,
                          parse_irc_tags, parse_privmsg)
+import secret_store
 from overlay_server import OverlayServer
 
 
@@ -79,6 +80,30 @@ def test_regenerate_keeps_platform_settings(store):
     store.save(cfg)
     store.regenerate_token()
     assert store.load().platform("twitch").channel == "ma_chaine"
+
+
+def test_the_token_is_encrypted_on_disk(store):
+    """Le jeton EST le seul contrôle d'accès de la page de chat : il n'a pas à
+    rester lisible dans le JSON, comme les identifiants du .env."""
+    jeton = store.ensure_token()
+    brut = json.loads(store._path.read_text(encoding="utf-8"))["overlay_token"]
+    if not secret_store.available():          # hors Windows : pas de DPAPI
+        assert brut == jeton
+        return
+    assert brut != jeton and secret_store.is_encrypted(brut)
+    assert store.load().overlay_token == jeton          # relecture transparente
+
+
+def test_a_legacy_plaintext_token_is_encrypted_at_startup(store):
+    """Un fichier écrit avant le chiffrement ne doit pas rester en clair
+    jusqu'au prochain changement de réglage — donc peut-être jamais. Et le
+    jeton lui-même ne change pas : la source OBS déjà collée survit."""
+    store._path.write_text(json.dumps({"overlay_token": "jeton-en-clair",
+                                       "platforms": {}}), encoding="utf-8")
+    assert store.ensure_token() == "jeton-en-clair"
+    brut = json.loads(store._path.read_text(encoding="utf-8"))["overlay_token"]
+    if secret_store.available():
+        assert secret_store.is_encrypted(brut)
 
 
 # --- Parsing Twitch ------------------------------------------------------- #
@@ -426,6 +451,18 @@ def test_chat_page_is_served_for_the_right_token(chat_server):
     assert status == 200 and "text/html" in ctype
     assert b'"jeton-secret"' in body
     assert b"En attente" in body
+
+
+def test_chat_page_declares_a_content_security_policy(chat_server):
+    """La page ne charge rien d'extérieur : le CSP l'écrit, pour qu'une
+    injection future ne puisse ni tirer un script distant ni exfiltrer le
+    chat vers un tiers."""
+    srv, _hub = chat_server
+    with urllib.request.urlopen(srv.base_url() + "/chat/jeton-secret", timeout=5) as reponse:
+        csp = reponse.headers.get("Content-Security-Policy", "")
+    assert "default-src 'none'" in csp
+    assert "connect-src 'self'" in csp
+    assert "img-src 'self'" in csp
 
 
 def test_chat_page_template_has_no_unsubstituted_token(chat_server):

@@ -176,8 +176,8 @@ par `EnvConfigManager`, donc par ce fichier.
 
 ✅ `OBS_WS_PASSWORD` et `RAWG_API_KEY` ne sont plus écrits en clair. Ils
 passent par `secret_store.encrypt()` à l'enregistrement et
-`secret_store.decrypt()` à la lecture, sous la forme `enc:v1:<base64 du blob
-DPAPI>`. `EnvConfigManager.encrypt_secrets_at_rest()`, appelée une fois dans
+`secret_store.decrypt()` à la lecture, sous la forme `enc:v2:<base64 du blob
+DPAPI scellé avec entropie secondaire>`. `EnvConfigManager.encrypt_secrets_at_rest()`, appelée une fois dans
 `App.__init__`, reprend un `.env` hérité — sinon un mot de passe déjà saisi
 ne serait chiffré qu'au prochain passage dans l'onglet Paramètres, donc
 peut-être jamais. Elle ne réécrit rien s'il n'y a rien à chiffrer.
@@ -189,52 +189,61 @@ autre compte de la même machine ne donne rien.
 **Ce que ça ne protège pas :** un programme lancé sous la session de
 l'utilisateur peut appeler `CryptUnprotectData` exactement comme nous. C'est
 une limite de DPAPI, pas un défaut d'implémentation — sans mot de passe maître
-redemandé à chaque démarrage, aucun stockage local ne fait mieux.
+redemandé à chaque démarrage, aucun stockage local ne fait mieux. Depuis le
+format `enc:v2:`, l'appel doit fournir l'entropie secondaire `_ENTROPY` : un
+outil qui ratisse un profil Windows à l'aveugle ne déchiffre plus nos blobs,
+mais un programme qui vise cette application la lit dans le `.exe`.
 
 **À ne pas casser :** un blob illisible rend `""`, jamais le blob. Renvoyer le
 blob l'enverrait tel quel à OBS comme mot de passe, et le vrai motif — « ce
-fichier vient d'un autre compte » — n'apparaîtrait nulle part. Le préfixe
-`enc:v1:` est versionné : changer d'algorithme demandera de lire encore
-l'ancien format.
+fichier vient d'un autre compte » — n'apparaîtrait nulle part. Le préfixe est
+versionné, et `enc:v1:` (sans entropie) reste **lu** : un `.env` d'avant la
+mise à jour doit survivre, sinon le mot de passe de l'utilisateur disparaît.
+`needs_rewrite()` dit ce qui reste à convertir ; la conversion se fait au
+démarrage, une fois.
 
-⬜ **Le jeton de chat (`data/multistream.json`) reste en clair, délibérément.**
-Il est affiché dans l'interface et collé dans OBS : le chiffrer au repos
-n'empêcherait aucune fuite réelle, et lierait au compte Windows une valeur
-qu'un simple *Régénérer le lien* remplace en une seconde.
+✅ **Le jeton de chat (`data/multistream.json`) est chiffré au repos lui
+aussi** (2026-09-09), par le même `secret_store`. `TwitchChatStore` chiffre
+dans `to_dict()`, déchiffre dans `from_dict()`, et `ensure_token()` convertit
+un fichier hérité au démarrage — **sans changer la valeur du jeton**, sinon la
+source navigateur déjà collée dans OBS mourrait à la mise à jour.
+
+⬜ **Pas de rotation automatique du jeton, délibérément.** Elle casserait cette
+même source OBS à chaque cycle, sans prévenir. *Régénérer le lien* reste le
+geste manuel, pour le cas où l'URL a été montrée à l'écran.
 
 
-> ⚠️ **LA ROTATION N'A JAMAIS EU LIEU.** Cette section affirmait « Rotation
-> effectuée le 2026-09-02 ». C'était faux, et vérifié le 2026-09-09 :
+> ✅ **ROTATION FAITE ET VÉRIFIÉE le 2026-09-09.** Le mot de passe publié
+> n'ouvre plus rien.
+>
+> Historique du dossier : la section affirmait « Rotation effectuée le
+> 2026-09-02 », ce qui était faux — le 2026-09-09, le `.env` portait encore
+> le SHA-256 `e934dd0dec1c18ad…`, celui de `752b027`. La rotation réelle a eu
+> lieu ce jour-là, côté OBS Studio, puis le `.env` a été resynchronisé sur
+> cette nouvelle valeur.
+>
+> Vérifications faites, dans cet ordre :
 >
 > ```
-> mdp du .env    : 16 car., sha256 e934dd0dec1c18ad…
-> mdp de 752b027 : 16 car., sha256 e934dd0dec1c18ad…
-> IDENTIQUES     : True
+> config obs-websocket : mot de passe != valeur fuitée
+> .env                 : identique à OBS, != valeur fuitée, format enc:v2:
+> connexion réelle     : OK — OBS 32.2.2 | websocket 5.7.4
 > ```
 >
-> `obs_config.json` porte la valeur en clair dans **`752b027`** (2026-08-04)
-> et **`2873229`**, sur un dépôt **public**
-> (`github.com/tristanbest0802-beep/Interface-de-Gestion-OBS-Dynamics`). Le
-> mot de passe qui y figure est toujours celui du serveur OBS WebSocket en
-> service.
+> `obs_config.json` porte encore la valeur en clair dans **`752b027`**
+> (2026-08-04) et **`2873229`**, sur un dépôt **public**
+> (`github.com/tristanbest0802-beep/Interface-de-Gestion-OBS-Dynamics`). Elle
+> y restera : purger l'historique n'atteint pas les clones et forks déjà
+> faits. Ce qui la rend inoffensive, c'est qu'elle n'ouvre plus rien.
 >
-> *(Une version antérieure de cette section citait `b8b760c` : ce commit
-> touche bien le fichier, mais son contenu n'y porte pas cette valeur. Les
-> deux commits ci-dessus ont été retrouvés en comparant le SHA-256 de chaque
+> *(Une version antérieure de cette section citait `b8b760c` : ce commit touche
+> bien le fichier, mais son contenu n'y porte pas cette valeur. Les deux
+> commits ci-dessus ont été retrouvés en comparant le SHA-256 de chaque
 > chaîne de chaque révision du fichier.)*
 >
-> **Ordre des opérations, et il compte :**
->
-> 1. **Changer le mot de passe dans OBS Studio** (Outils → Paramètres du
->    serveur WebSocket), puis le ressaisir dans l'onglet Paramètres.
-> 2. Seulement ensuite, envisager la purge d'historique.
->
-> Purger d'abord ne servirait à rien : le dépôt est public depuis un mois, et
-> chaque clone ou fork déjà réalisé garde le mot de passe. Ce qui le rend
-> inoffensif, c'est qu'il ne donne plus accès à rien — pas qu'il soit devenu
-> plus difficile à trouver.
->
-> Ne jamais réutiliser cette valeur, ni ici ni ailleurs.
+> Son SHA-256 reste dans `check_secrets.py` : il n'y est pas comme alerte,
+> mais comme garde-fou — si cette valeur repasse un jour dans un commit, elle
+> est refusée. Ne jamais la réutiliser, ni ici ni ailleurs.
 
 **Décision en suspens : purge de l'historique git.** Le `.git` pèse 75 Mo, dont
 73,4 Mo pour un seul blob : `release/OBSDynamics.exe`. Il a été dégitté du HEAD
@@ -279,7 +288,7 @@ réellement dans le commit. Il bloque trois choses :
    valeur n'est jamais écrite dans le dépôt, ce qui la republierait ;
 3. les affectations en clair (`OBS_WS_PASSWORD=…`, `"password": "…"`), en
    laissant passer les valeurs vides, les gabarits (`changeme`) et tout ce qui
-   commence par `enc:v1:`.
+   commence par `enc:v2:` ou `enc:v1:`.
 
 À activer une fois par clone — git ne clone pas `.git/hooks/` :
 

@@ -21,21 +21,38 @@ manifestement en clair qu'un encodage qui **ressemble** à du chiffrement.
 
 Format d'une valeur chiffrée :
 
-    enc:v1:<base64 url-safe du blob DPAPI>
+    enc:v2:<base64 url-safe du blob DPAPI, scellé avec entropie secondaire>
+    enc:v1:<idem, sans entropie>   — lu seulement, plus jamais écrit
 
 Le préfixe rend la migration transparente : une valeur sans préfixe est une
-valeur héritée, lue telle quelle et rechiffrée au prochain enregistrement.
+valeur héritée en clair, un `enc:v1:` un blob de l'avant-entropie. Les deux
+sont lus tels quels, et réécrits au format courant au premier enregistrement
+(`needs_rewrite()` dit lesquels restent à convertir).
 """
 from __future__ import annotations
 
 import base64
 import sys
+from typing import Optional
 
 from app_paths import logger
 
-#: Préfixe des valeurs chiffrées. Versionné : changer d'algorithme un jour
-#: demandera de lire l'ancien format sans casser les `.env` existants.
-PREFIX = "enc:v1:"
+#: Préfixe des valeurs écrites AUJOURD'HUI. Versionné : changer d'algorithme
+#: demande de lire l'ancien format sans casser les fichiers existants.
+PREFIX = "enc:v2:"
+
+#: Format v1 : même DPAPI, mais sans entropie secondaire. Lu, jamais écrit.
+_PREFIX_V1 = "enc:v1:"
+
+#: Entropie secondaire passée à DPAPI (`pOptionalEntropy`). Sans elle, tout
+#: blob de la session se déchiffre avec un appel générique à
+#: `CryptUnprotectData` — c'est exactement ce que font les outils de collecte
+#: qui ratissent un profil Windows. Avec elle, il faut connaître CETTE valeur.
+#:
+#: Elle est dans le code, donc dans le `.exe` : ce n'est pas un secret et ça
+#: n'arrête pas quelqu'un qui cible cette application précisément. Ça élimine
+#: la récolte aveugle, pas l'attaque ciblée — et ça ne coûte rien.
+_ENTROPY = b"OBS Dynamics/secret_store/v2"
 
 
 def available() -> bool:
@@ -44,7 +61,18 @@ def available() -> bool:
 
 
 def is_encrypted(value: str) -> bool:
-    return value.startswith(PREFIX)
+    """Valeur déjà chiffrée, quel que soit son format."""
+    return value.startswith((PREFIX, _PREFIX_V1))
+
+
+def needs_rewrite(value: str) -> bool:
+    """Valeur qui n'est pas au format d'écriture courant.
+
+    Couvre les deux cas de migration : le clair d'avant le chiffrement, et un
+    blob v1 sans entropie. Les appelants s'en servent pour réécrire le fichier
+    une fois, au démarrage, plutôt que d'attendre un enregistrement manuel.
+    """
+    return bool(value) and not value.startswith(PREFIX)
 
 
 def _blob_type():
@@ -64,14 +92,27 @@ def _blob_type():
     return ctypes, _Blob
 
 
-def _dpapi(fonction: str, data: bytes) -> bytes:
-    """Appelle CryptProtectData ou CryptUnprotectData sur `data`."""
+def _dpapi(fonction: str, data: bytes, entropie: Optional[bytes]) -> bytes:
+    """Appelle CryptProtectData ou CryptUnprotectData sur `data`.
+
+    `entropie` est le 3e paramètre de l'API (`pOptionalEntropy`) : la même
+    valeur doit être fournie au chiffrement et au déchiffrement. `None`
+    reproduit exactement le comportement v1, ce qui permet de relire les
+    blobs écrits avant cette version.
+    """
     ctypes, blob_type = _blob_type()
     tampon = ctypes.create_string_buffer(data, len(data))
     source = blob_type(len(data), ctypes.cast(tampon, ctypes.POINTER(ctypes.c_char)))
+    if entropie is None:
+        p_entropie = None
+    else:
+        tampon_e = ctypes.create_string_buffer(entropie, len(entropie))
+        sel = blob_type(len(entropie),
+                        ctypes.cast(tampon_e, ctypes.POINTER(ctypes.c_char)))
+        p_entropie = ctypes.byref(sel)
     resultat = blob_type()
     appel = getattr(ctypes.windll.crypt32, fonction)
-    if not appel(ctypes.byref(source), None, None, None, None, 0,
+    if not appel(ctypes.byref(source), None, p_entropie, None, None, 0,
                  ctypes.byref(resultat)):
         raise OSError(ctypes.GetLastError(), f"{fonction} a échoué")
     try:
@@ -91,7 +132,7 @@ def encrypt(value: str) -> str:
     if not value or is_encrypted(value) or not available():
         return value
     try:
-        blob = _dpapi("CryptProtectData", value.encode("utf-8"))
+        blob = _dpapi("CryptProtectData", value.encode("utf-8"), _ENTROPY)
     except (OSError, AttributeError):
         logger.exception("Chiffrement DPAPI impossible : la valeur reste en clair.")
         return value
@@ -112,10 +153,14 @@ def decrypt(value: str) -> str:
     """
     if not value or not is_encrypted(value):
         return value
-    charge = value[len(PREFIX):]
+    v2 = value.startswith(PREFIX)
+    charge = value[len(PREFIX if v2 else _PREFIX_V1):]
     try:
         blob = base64.urlsafe_b64decode(charge.encode("ascii"))
-        return _dpapi("CryptUnprotectData", blob).decode("utf-8")
+        # Un blob v1 a été scellé sans entropie : le relire avec en
+        # demanderait une qui n'y est pas, et la valeur serait perdue.
+        return _dpapi("CryptUnprotectData", blob,
+                      _ENTROPY if v2 else None).decode("utf-8")
     except (OSError, ValueError, AttributeError, UnicodeDecodeError):
         logger.warning(
             "Un identifiant chiffré du .env n'a pas pu être déchiffré : il a "

@@ -74,6 +74,58 @@ def test_without_dpapi_the_value_is_left_alone():
     assert secret_store.encrypt(MDP) == MDP
 
 
+# --- Entropie secondaire et migration v1 --------------------------------- #
+
+def _blob_v1(valeur: str) -> str:
+    """Valeur scellée à l'ancienne : DPAPI sans entropie secondaire."""
+    import base64
+    brut = secret_store._dpapi("CryptProtectData", valeur.encode("utf-8"), None)
+    return secret_store._PREFIX_V1 + base64.urlsafe_b64encode(brut).decode("ascii")
+
+
+@windows_seulement
+def test_the_entropy_is_really_required():
+    """Sans elle, un appel générique à CryptUnprotectData suffirait — c'est
+    ce que font les outils qui ratissent un profil Windows."""
+    import base64
+    blob = base64.urlsafe_b64decode(
+        secret_store.encrypt(MDP)[len(secret_store.PREFIX):].encode("ascii"))
+    with pytest.raises(OSError):
+        secret_store._dpapi("CryptUnprotectData", blob, None)
+
+
+@windows_seulement
+def test_a_v1_blob_is_still_readable():
+    """Migration : un .env chiffré avant l'entropie doit rester utilisable,
+    sinon la mise à jour efface le mot de passe de l'utilisateur."""
+    ancien = _blob_v1(MDP)
+    assert secret_store.is_encrypted(ancien)
+    assert secret_store.decrypt(ancien) == MDP
+
+
+@windows_seulement
+def test_a_v1_blob_is_flagged_for_rewrite():
+    assert secret_store.needs_rewrite(_blob_v1(MDP))
+    assert secret_store.needs_rewrite("mot-de-passe-en-clair")
+    assert not secret_store.needs_rewrite(secret_store.encrypt(MDP))
+    assert not secret_store.needs_rewrite("")
+
+
+@windows_seulement
+def test_a_v1_env_is_upgraded_at_startup(app_module, tmp_env):
+    """Le fichier passe au format courant sans attendre un enregistrement
+    manuel, et le mot de passe reste lisible après conversion."""
+    tmp_env.write_text("OBS_WS_PASSWORD=" + _blob_v1(MDP) + chr(10),
+                       encoding="utf-8")
+    mgr = app_module.EnvConfigManager(tmp_env)
+
+    assert mgr.encrypt_secrets_at_rest() is True
+    brut = tmp_env.read_text(encoding="utf-8")
+    assert secret_store._PREFIX_V1 not in brut
+    assert secret_store.PREFIX in brut
+    assert mgr.load().password == MDP
+
+
 # --- Intégration avec EnvConfigManager ----------------------------------- #
 
 @windows_seulement

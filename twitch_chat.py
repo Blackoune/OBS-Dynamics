@@ -43,6 +43,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+import secret_store
+
 logger = logging.getLogger("obs_dynamics.twitch_chat")
 
 # Ordre d'affichage des cartes dans l'onglet. C'est aussi l'ordre canonique
@@ -138,8 +140,11 @@ class TwitchChatConfig:
         return self.platforms.setdefault(name, PlatformConfig())
 
     def to_dict(self) -> dict[str, Any]:
+        # Le jeton part chiffre au repos (DPAPI), comme les identifiants du
+        # .env : c'est le seul controle d'acces de la page de chat, il n'a pas
+        # de raison de rester lisible dans un fichier JSON.
         return {
-            "overlay_token": self.overlay_token,
+            "overlay_token": secret_store.encrypt(self.overlay_token),
             "platforms": {name: self.platform(name).to_dict() for name in PLATFORMS},
         }
 
@@ -149,7 +154,7 @@ class TwitchChatConfig:
         raw_platforms = raw.get("platforms")
         raw_platforms = raw_platforms if isinstance(raw_platforms, dict) else {}
         return TwitchChatConfig(
-            overlay_token=str(raw.get("overlay_token", "") or ""),
+            overlay_token=secret_store.decrypt(str(raw.get("overlay_token", "") or "")),
             platforms={name: PlatformConfig.from_dict(raw_platforms.get(name))
                        for name in PLATFORMS},
         )
@@ -213,6 +218,17 @@ class TwitchChatStore:
                 logger.exception("Échec sauvegarde multistream.json.")
                 return False
 
+    def _token_needs_rewrite(self) -> bool:
+        """Le jeton sur disque est-il hors du format de chiffrement courant —
+        en clair, ou blob d'une version antérieure ? Lu sur le fichier brut :
+        `load()` déchiffre, donc il ne peut pas répondre à cette question."""
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+            return False
+        jeton = str(raw.get("overlay_token", "") or "") if isinstance(raw, dict) else ""
+        return secret_store.needs_rewrite(jeton)
+
     def ensure_token(self) -> str:
         """Retourne le jeton overlay, en le créant au tout premier appel.
 
@@ -221,6 +237,13 @@ class TwitchChatStore:
         """
         cfg = self.load()
         if cfg.overlay_token:
+            # Fichier hérité (clair, ou blob d'une version antérieure) :
+            # réécrit une fois au format courant. Sans ça, un jeton déjà créé
+            # ne serait converti qu'au prochain changement de réglage du chat
+            # — donc peut-être jamais.
+            if secret_store.available() and self._token_needs_rewrite():
+                self.save(cfg)
+                logger.info("Jeton overlay du chat chiffré au repos (DPAPI).")
             return cfg.overlay_token
         cfg.overlay_token = secrets.token_urlsafe(24)
         self.save(cfg)

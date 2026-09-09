@@ -4,7 +4,23 @@ import io
 import pytest
 from PIL import Image
 
-from cover_service import COVER_HEIGHT, COVER_WIDTH, GameCoverService
+from cover_service import (COVER_HEIGHT, COVER_WIDTH, GameCoverService,
+                           _MAX_IMAGE_BYTES, _fetch_bounded)
+
+
+class _FakeBody:
+    """Réponse en flux minimale : ce que `_fetch_bounded` consomme."""
+
+    def __init__(self, payload=b"", status=200):
+        self.status_code = status
+        self._payload = payload
+
+    def iter_content(self, taille):
+        for debut in range(0, len(self._payload), taille):
+            yield self._payload[debut:debut + taille]
+
+    def close(self):
+        pass
 
 
 def _png(width: int, height: int, color=(200, 30, 30)) -> bytes:
@@ -82,7 +98,7 @@ def test_appdetails_returns_the_real_urls(service):
               "apps/4704690/163e2a742e5f/header.jpg?t=1785908480")
 
     class Session:
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, stream=False):
             assert "appdetails" in url
             return _FakeResponse(payload={"4704690": {"success": True, "data": {
                 "header_image": hashed, "capsule_image": hashed.replace("header", "capsule")}}})
@@ -94,14 +110,14 @@ def test_appdetails_returns_the_real_urls(service):
 
 def test_appdetails_failure_is_not_fatal(service):
     class Session:
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, stream=False):
             raise OSError("réseau coupé")
     assert service._appdetails_urls(Session(), "4704690") == []
 
 
 def test_appdetails_handles_an_unknown_appid(service):
     class Session:
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, stream=False):
             return _FakeResponse(payload={"999": {"success": False}})
     assert service._appdetails_urls(Session(), "999") == []
 
@@ -112,18 +128,38 @@ def test_appdetails_is_only_queried_when_the_guessable_paths_fail(service, tmp_p
     appels = {"appdetails": 0}
 
     class Session:
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, stream=False):
             if "appdetails" in url:
                 appels["appdetails"] += 1
                 return _FakeResponse(payload={"620": {"success": False}})
             if "library_600x900_2x" in url:      # le chemin historique répond
-                import io
-                from PIL import Image
-                buf = io.BytesIO()
-                Image.new("RGB", (600, 900), (30, 60, 90)).save(buf, format="JPEG")
-                return type("R", (), {"status_code": 200, "content": buf.getvalue()})()
-            return type("R", (), {"status_code": 404, "content": b""})()
+                return _FakeBody(_png(600, 900, (30, 60, 90)))
+            return _FakeBody(b"", status=404)
 
     game = type("G", (), {"id": "g1", "name": "Portal 2", "appid": "620"})()
     assert service._fetch_and_cache(Session(), game) is not None
     assert appels["appdetails"] == 0, "appdetails appelé alors que le CDN a répondu"
+
+
+# -- Plafond de téléchargement -------------------------------------------- #
+
+def test_an_oversized_download_is_dropped():
+    """Un hôte tiers ne doit pas pouvoir faire grossir la mémoire sans fin :
+    au-delà du plafond, la lecture s'arrête et l'image est abandonnée."""
+    class Session:
+        def get(self, url, timeout=None, stream=False):
+            return _FakeBody(b"x" * (_MAX_IMAGE_BYTES + 1))
+
+    assert _fetch_bounded(Session(), "http://exemple/enorme.jpg") is None
+
+
+def test_a_normal_download_passes_through():
+    """Le plafond ne doit pas écarter une jaquette de taille normale."""
+    image = _png(600, 900)
+    assert len(image) < _MAX_IMAGE_BYTES
+
+    class Session:
+        def get(self, url, timeout=None, stream=False):
+            return _FakeBody(image)
+
+    assert _fetch_bounded(Session(), "http://exemple/ok.jpg") == image

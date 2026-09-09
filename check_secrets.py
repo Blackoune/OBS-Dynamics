@@ -47,8 +47,9 @@ EXEMPTIONS = frozenset({"data/hotkeys.json"})
 # reconnaître la valeur si elle repasse.
 #
 # e934dd... = mot de passe OBS WebSocket publié dans `752b027` le 2026-08-04.
-# À retirer de cette liste le jour où plus aucune installation ne l'utilise —
-# mais surtout pas avant.
+# Rotation faite le 2026-09-09 : cette valeur n'ouvre plus rien. Le condensat
+# RESTE ici quand même — il ne coûte rien, et il refuse le commit si la
+# vieille valeur reparaissait un jour dans un fichier ou un exemple.
 CONDENSATS_INTERDITS = {
     "e934dd0dec1c18ad2b255889391b0ffa74451448529c675fe0e9391b99447264":
         "mot de passe OBS WebSocket publié dans le commit 752b027",
@@ -60,7 +61,7 @@ CONDENSATS_INTERDITS = {
 CANDIDATS = re.compile(r"[A-Za-z0-9+/=_\-]{8,128}")
 
 # --- 3. Affectations en clair --------------------------------------------- #
-# `enc:v1:` = déjà chiffré par secret_store, donc inoffensif. Une valeur vide
+# `enc:vN:` = déjà chiffré par secret_store, donc inoffensif. Une valeur vide
 # ou un gabarit explicite passent aussi : c'est ce que contient .env.example.
 GABARITS = {"changeme", "votre_mot_de_passe", "xxx", "your_password_here",
             "secret", "motdepasse", "password"}
@@ -133,7 +134,7 @@ def _valeur_inoffensive(valeur: str) -> bool:
     valeur = valeur.strip().strip('"').strip("'")
     return (len(valeur) < LONGUEUR_MINIMALE
             or NOM_DE_VARIABLE.match(valeur) is not None
-            or valeur.startswith("enc:v1:")
+            or valeur.startswith(("enc:v2:", "enc:v1:"))
             or valeur.lower() in GABARITS
             or valeur.startswith("{")          # placeholder de gabarit
             or valeur.startswith("$"))         # référence d'environnement

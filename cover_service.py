@@ -40,12 +40,50 @@ CACHE_VERSION = 2
 
 _HTTP_TIMEOUT = 8
 
+# Plafond d'un téléchargement de jaquette. Les images visées pèsent 50 à 300 Ko ;
+# 8 Mo laissent passer une capsule inhabituellement lourde, tout en empêchant un
+# hôte tiers de nous faire avaler un flux sans fin en mémoire.
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+# Une image de 20 000 x 20 000 pixels tient dans quelques centaines de Ko
+# compressés, mais réclame plus d'un Go une fois décodée : la taille du fichier
+# ne dit rien du coût de décodage. La limite par défaut de Pillow (89 Mpx) se
+# contente d'un avertissement à ce seuil ; 40 Mpx lève, et reste très au-dessus
+# d'une jaquette comme d'une capture d'écran 8K (16,6 Mpx).
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 # Téléchargements réseau : purement I/O-bound, donc les threads se recouvrent
 # bien. Avec un seul worker, scanner une bibliothèque de 40 jeux faisait
 # apparaître les jaquettes une par une pendant une quinzaine de secondes.
 # 6 est un compromis : assez pour que la grille se remplisse d'un bloc, pas
 # assez pour que le CDN Steam nous limite.
 WORKER_THREADS = 6
+
+
+
+def _fetch_bounded(session: requests.Session, url: str) -> Optional[bytes]:
+    """Corps de la réponse, plafonné à `_MAX_IMAGE_BYTES`, ou None.
+
+    `resp.content` lit tout ce que l'hôte veut bien envoyer : un serveur qui ne
+    ferme jamais, ou un `Content-Length` menteur, faisait grossir la mémoire
+    sans limite. Ici la lecture se fait par morceaux et s'arrête au
+    dépassement, avant d'avoir tout accumulé.
+    """
+    resp = session.get(url, timeout=_HTTP_TIMEOUT, stream=True)
+    try:
+        if resp.status_code != 200:
+            return None
+        morceaux: list[bytes] = []
+        total = 0
+        for bloc in resp.iter_content(64 * 1024):
+            total += len(bloc)
+            if total > _MAX_IMAGE_BYTES:
+                logger.debug("Image écartée : dépasse %d octets.", _MAX_IMAGE_BYTES)
+                return None
+            morceaux.append(bloc)
+        return b"".join(morceaux) or None
+    finally:
+        resp.close()
 
 
 class GameCoverService:
@@ -225,10 +263,10 @@ class GameCoverService:
         """Première URL de la liste qui donne une image exploitable."""
         for url in urls:
             try:
-                resp = session.get(url, timeout=_HTTP_TIMEOUT)
-                if resp.status_code != 200 or not resp.content:
+                brut = _fetch_bounded(session, url)
+                if brut is None:
                     continue
-                img = self._process_image(resp.content)
+                img = self._process_image(brut)
                 if img is None:
                     continue
                 tmp_path = file_path.with_suffix(".tmp")
@@ -343,8 +381,13 @@ class GameCoverService:
                         for key in ("background_image", "background_image_additional"):
                             if top.get(key):
                                 urls.append(top[key])
-            except Exception:
-                logger.debug("Requête RAWG échouée pour '%s'", name, exc_info=True)
+            except Exception as erreur:
+                # Surtout PAS `exc_info=True` ici : le message d'une exception
+                # `requests` contient l'URL appelée, et cette URL-là porte la
+                # clé RAWG en clair (`?key=...`). Le journal part avec les
+                # rapports de bug — le type de l'erreur suffit à diagnostiquer.
+                logger.debug("Requête RAWG échouée pour '%s' (%s).",
+                             name, type(erreur).__name__)
 
         if appid:
             urls.extend(self._steam_landscape_urls(appid))

@@ -46,3 +46,18 @@ jobs:
 
       - name: Vérifier que l'application s'importe
         run: python -c "import obs_dynamics; print('import OK')"
+
+      - name: Aucun secret dans le dépôt
+        # Le hook pre-commit est local : il ne protège ni un clone frais où
+        # personne n'a posé core.hooksPath, ni un commit passé avec
+        # --no-verify. Ce contrôle-ci est le filet qui ne s'oublie pas.
+        run: python check_secrets.py --all
+
+      - name: Vulnérabilités connues des dépendances
+        # Les versions sont épinglées, donc elles vieillissent : sans ce
+        # contrôle, une faille publiée après l'épinglage resterait dans le
+        # build sans que rien ne le signale. Échoue si une CVE touche une
+        # version listée dans requirements.txt.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt

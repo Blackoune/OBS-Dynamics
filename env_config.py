@@ -119,7 +119,10 @@ class EnvConfigManager:
             return cfg
 
     def encrypt_secrets_at_rest(self) -> bool:
-        """Chiffre les identifiants restés en clair dans un `.env` hérité.
+        """Met les identifiants du `.env` au format de chiffrement courant.
+
+        Deux cas : une valeur en clair d'avant le chiffrement, et un blob
+        `enc:v1:` scellé sans entropie secondaire.
 
         Sans cet appel, un mot de passe déjà saisi ne serait chiffré qu'au
         prochain enregistrement depuis l'onglet Paramètres — donc peut-être
@@ -144,10 +147,10 @@ class EnvConfigManager:
             key, _, value = stripped.partition("=")
             value = value.strip().strip('"').strip("'")
             if (key.strip().upper() in _SECRET_ENV_BY_KEY
-                    and value and not secret_store.is_encrypted(value)):
+                    and secret_store.needs_rewrite(value)):
                 break
         else:
-            return False        # tout est déjà chiffré, ou aucun secret saisi
+            return False        # tout est au format courant, ou rien de saisi
 
         if not self.save(self.load()):
             return False
