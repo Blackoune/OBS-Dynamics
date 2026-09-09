@@ -42,6 +42,22 @@ a = Analysis(
         "triggers",        # règles raccourci -> média
         "screen_match",    # agent de comparaison écran/référence
         "overlay_server",  # serveur HTTP local des sources navigateur OBS
+        "twitch_chat",     # connecteur de chat Twitch + hub
+        # Modules issus du découpage d'obs_dynamics.py (2026-09-09). Le point
+        # d'entrée les importe explicitement, donc PyInstaller les trouverait
+        # seul ; les lister protège d'un futur import différé.
+        "app_paths",       # chemins, journalisation, éveil DPI
+        "env_config",      # lecture/écriture du .env utilisateur
+        "secret_store",    # chiffrement DPAPI des identifiants au repos
+        "games",           # scan Steam, modèle Game, persistance
+        "detection",       # processus + comparaison visuelle
+        "obs_client",      # WebSocket OBS v5 et boucle de scan
+        "ui_common",       # palette, police, libellés d'état, glisser-déposer
+        "ui_dashboard",    # grille de cartes de jeu
+        "ui_game_dialogs", # fiche de jeu et relecture des patchs
+        "ui_settings",     # vue Paramètres
+        "ui_triggers",     # vue Raccourcis & Overlays
+        "ui_twitch_chat",  # vue Chat Twitch
         "requests",
         "pynput",
         "tkinterdnd2",     # glisser-déposer (extension Tcl tkdnd)

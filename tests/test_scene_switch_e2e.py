@@ -54,7 +54,7 @@ def _ingame_screen(seed=0):
 @pytest.fixture
 def rig(app_module, tmp_path, monkeypatch):
     m = app_module
-    monkeypatch.setattr(m, "is_game_active", lambda game: True)
+    monkeypatch.setattr(m.detection, "is_game_active", lambda game: True)
     m._TEMPLATES = type(m._TEMPLATES)()          # cache vierge entre les tests
 
     menu_png = tmp_path / "menu.png"
@@ -149,7 +149,7 @@ def test_moving_scenery_does_not_flip_the_scene(app_module, tmp_path, monkeypatc
     de quelques images et OBS repartait sur « active » — donc plus de bascule.
     """
     m = app_module
-    monkeypatch.setattr(m, "is_game_active", lambda game: True)
+    monkeypatch.setattr(m.detection, "is_game_active", lambda game: True)
     m._TEMPLATES.clear()
 
     def frame(seed):
@@ -188,13 +188,13 @@ def test_a_near_tie_never_switches_anything(app_module, tmp_path, monkeypatch):
     Une décision prise sur du bruit ressemble à un va-et-vient régulier entre
     les deux scènes. En cas d'égalité, aucune scène n'est imposée."""
     m = app_module
-    monkeypatch.setattr(m, "is_game_active", lambda g: True)
+    monkeypatch.setattr(m.detection, "is_game_active", lambda g: True)
     game = m.Game(id="g1", name="J", source="manual", active_match="j.exe",
                   menu_images=["m.png"], ingame_images=["g.png"],
                   obs_scene_menu="Scene Menu", obs_scene_ingame="Scene En Jeu")
 
     scores = {"m.png": 0.82, "g.png": 0.83}
-    monkeypatch.setattr(m, "_best_match_score",
+    monkeypatch.setattr(m.detection, "_best_match_score",
                         lambda screen, paths: max(scores[p] for p in paths))
     screen = np.zeros((100, 100, 3), dtype=np.uint8)
     assert m.detect_game_state(game, 0.8, screen) == "active"
@@ -211,12 +211,12 @@ def test_a_near_tie_never_switches_anything(app_module, tmp_path, monkeypatch):
 def test_a_clear_winner_still_switches(app_module, tmp_path, monkeypatch):
     """La marge ne doit pas rendre la détection sourde."""
     m = app_module
-    monkeypatch.setattr(m, "is_game_active", lambda g: True)
+    monkeypatch.setattr(m.detection, "is_game_active", lambda g: True)
     game = m.Game(id="g1", name="J", source="manual", active_match="j.exe",
                   menu_images=["m.png"], ingame_images=["g.png"],
                   obs_scene_menu="Scene Menu", obs_scene_ingame="Scene En Jeu")
     scores = {"m.png": 0.10, "g.png": 0.95}
-    monkeypatch.setattr(m, "_best_match_score",
+    monkeypatch.setattr(m.detection, "_best_match_score",
                         lambda screen, paths: max(scores[p] for p in paths))
     screen = np.zeros((100, 100, 3), dtype=np.uint8)
     assert m.detect_game_state(game, 0.8, screen) == "in_game"
@@ -229,13 +229,13 @@ def test_the_state_follows_the_screen_not_a_rhythm(app_module, tmp_path, monkeyp
     """Aucune alternance prédéfinie : des durées irrégulières à l'écran
     produisent exactement autant de bascules que de changements réels."""
     m = app_module
-    monkeypatch.setattr(m, "is_game_active", lambda g: True)
+    monkeypatch.setattr(m.detection, "is_game_active", lambda g: True)
     game = m.Game(id="g1", name="J", source="manual", active_match="j.exe",
                   menu_images=["m.png"], ingame_images=["g.png"],
                   obs_scene_menu="Scene Menu", obs_scene_ingame="Scene En Jeu")
 
     showing = {"what": "menu"}
-    monkeypatch.setattr(m, "_best_match_score", lambda screen, paths: (
+    monkeypatch.setattr(m.detection, "_best_match_score", lambda screen, paths: (
         0.98 if (showing["what"] == "menu") == ("m.png" in paths) else 0.02))
 
     client = FakeClient()

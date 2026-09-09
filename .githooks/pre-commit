@@ -1,0 +1,19 @@
+#!/bin/sh
+# Refuse un commit qui embarquerait un identifiant. Voir check_secrets.py.
+#
+# Versionné dans le dépôt, donc il survit aux clones — contrairement à
+# .git/hooks/, que git ne clone jamais. À activer UNE FOIS par clone :
+#
+#     git config core.hooksPath .githooks
+#
+# Contourner en cas de fausse alerte : git commit --no-verify
+
+for interpreteur in python py python3; do
+    if command -v "$interpreteur" >/dev/null 2>&1; then
+        exec "$interpreteur" check_secrets.py --staged
+    fi
+done
+
+echo "[pre-commit] Python introuvable : le contrôle des secrets n'a pas pu tourner." >&2
+echo "[pre-commit] Commit refusé — un contrôle qui ne s'exécute pas ne protège de rien." >&2
+exit 1

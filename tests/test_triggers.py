@@ -1,6 +1,7 @@
 """Déclencheurs : modèle, persistance, combinaisons, serveur overlay."""
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import time
@@ -446,3 +447,117 @@ def test_port_fallback_when_busy(served):
         assert second.port != srv.port
     finally:
         second.stop()
+
+
+# --- Rebinding DNS et origines étrangères -------------------------------- #
+
+def _raw_get(srv, path, host=None, origin=None, omit_host=False):
+    """Requête brute permettant de forger `Host` et `Origin`.
+
+    urllib impose son propre `Host` et interdit de l'omettre : on parle donc
+    HTTP à la main, seul moyen de rejouer ce que fait un navigateur victime
+    d'un rebinding DNS.
+    """
+    # 15 s, pas 5 : ce qu'on vérifie est un code de statut, jamais un délai.
+    # Dans la suite complète, des dizaines de threads (SSE, scan, hub de chat)
+    # tournent en parallèle et un aller-retour local peut dépasser 5 s.
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=15)
+    try:
+        conn.putrequest("GET", path, skip_host=True, skip_accept_encoding=True)
+        if not omit_host:
+            conn.putheader("Host", host or f"127.0.0.1:{srv.port}")
+        if origin is not None:
+            conn.putheader("Origin", origin)
+        conn.endheaders()
+        response = conn.getresponse()
+        return response.status, response.read()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("path", [
+    "/health", "/overlay/rule1", "/events/rule1", "/media/rule1",
+])
+def test_a_foreign_host_header_is_refused_on_every_route(served, path):
+    """Rebinding DNS : le site pointe son domaine sur 127.0.0.1, et le
+    navigateur nous parle avec CE nom dans Host. Rien ne doit sortir — y
+    compris /health, qui confirmerait sinon que l'application tourne."""
+    srv, _ = served
+    status, _ = _raw_get(srv, path, host=f"evil.example:{srv.port}")
+    assert status == 403
+
+
+def test_a_missing_host_header_is_refused(served):
+    srv, _ = served
+    assert _raw_get(srv, "/health", omit_host=True)[0] == 403
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "LocalHost"])
+def test_loopback_host_names_are_accepted(served, host):
+    """Une URL collée en `localhost` doit continuer de marcher, et la
+    comparaison ne doit pas dépendre de la casse."""
+    srv, _ = served
+    status, body = _raw_get(srv, "/health", host=f"{host}:{srv.port}")
+    assert (status, body) == (200, b"ok")
+
+
+def test_the_port_does_not_take_part_in_the_check(served):
+    """Le serveur bascule sur un port libre quand 4466 est pris : lier le
+    contrôle au port casserait l'overlay au lieu de le protéger."""
+    srv, _ = served
+    assert _raw_get(srv, "/health", host="127.0.0.1:1")[0] == 200
+
+
+def test_a_foreign_origin_is_refused(served):
+    """Un fetch depuis une page tierce porte son Origin ; aucune de nos
+    pages n'en émet vers une autre origine."""
+    srv, _ = served
+    status, _ = _raw_get(srv, "/overlay/rule1", origin="https://evil.example")
+    assert status == 403
+
+
+def test_our_own_origin_is_accepted(served):
+    """L'EventSource de la page overlay envoie l'origine du serveur."""
+    srv, _ = served
+    status, _ = _raw_get(srv, "/overlay/rule1",
+                         origin=f"http://127.0.0.1:{srv.port}")
+    assert status == 200
+
+
+def test_media_is_streamed_not_buffered(served, monkeypatch):
+    """Régression mémoire : `read_bytes()` chargeait tout le fichier avant
+    d'envoyer le premier octet — 4 Go de vidéo = 4 Go de RAM. Neutraliser
+    `read_bytes` prouve que le chemin ne repasse plus par là."""
+    srv, rule = served
+
+    def interdit(self, *args, **kwargs):
+        raise AssertionError("le média a été chargé entièrement en mémoire")
+
+    monkeypatch.setattr(Path, "read_bytes", interdit)
+
+    status, _ctype, body = _get(srv, f"/media/{rule.id}")
+    assert status == 200
+    assert len(body) == 40                     # 8 octets d'en-tête PNG + 32
+    assert body.startswith(b"\x89PNG")
+
+
+def test_a_media_larger_than_one_chunk_arrives_whole(served, tmp_path):
+    """Le transfert boucle par morceaux de 64 Kio : un fichier plus gros
+    qu'un morceau doit arriver entier, pas tronqué au premier passage."""
+    srv, rule = served
+    gros = tmp_path / "gros.bin"
+    contenu = bytes(range(256)) * 2000          # 512 000 octets, ~8 morceaux
+    gros.write_bytes(contenu)
+    rule.media_path = str(gros)
+
+    status, _, body = _get(srv, f"/media/{rule.id}")
+    assert status == 200
+    assert body == contenu
+
+
+def test_media_is_served_with_nosniff(served):
+    """Un média mal typé ne doit pas pouvoir être interprété comme du HTML
+    dans l'origine de l'overlay."""
+    srv, rule = served
+    with urllib.request.urlopen(srv.base_url() + f"/media/{rule.id}", timeout=15) as r:
+        assert r.headers.get("X-Content-Type-Options") == "nosniff"

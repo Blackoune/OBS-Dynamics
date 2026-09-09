@@ -1,5 +1,6 @@
 # Outillage de développement (non requis pour exécuter l'application).
 -r requirements.txt
 
-pyinstaller          # packaging de l'exécutable via build.py / build.spec
-pytest               # suite de tests (dossier tests/)
+# Épinglé pour la même raison que requirements.txt : un build reproductible.
+pyinstaller==6.22.2         # packaging de l'exécutable via build.py / build.spec
+pytest==9.1.1               # suite de tests (dossier tests/)

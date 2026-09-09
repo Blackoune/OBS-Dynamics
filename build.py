@@ -19,7 +19,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-SOURCE_FILE = ROOT / "obs_dynamics.py"
+# Tous les modules livrés, pas seulement obs_dynamics.py : depuis le découpage
+# du 2026-09-09 les libellés t("...") vivent dans ui_*.py, et ne scanner que le
+# point d'entrée laisserait passer une clé manquante jusque dans le .exe.
+SOURCE_FILES = sorted(p for p in ROOT.glob("*.py") if p.name != "build.py")
 I18N_FILE = ROOT / "i18n.json"
 BUILD_SPEC = ROOT / "build.spec"
 DIST_DIR = ROOT / "dist"
@@ -33,15 +36,16 @@ T_CALL_RE = re.compile(r"""\bt\(\s*["']([A-Za-z0-9_]+)["']""")
 def check_i18n_integrity() -> list[str]:
     """Cross-référence chaque clé t("...") utilisée dans le code source avec
     i18n.json[DEFAULT_LANG]. Retourne la liste des clés manquantes."""
-    if not SOURCE_FILE.exists():
-        print(f"[i18n-check] ERREUR : {SOURCE_FILE} introuvable.")
+    if not SOURCE_FILES:
+        print("[i18n-check] ERREUR : aucun module Python trouvé à la racine.")
         sys.exit(1)
     if not I18N_FILE.exists():
         print(f"[i18n-check] ERREUR : {I18N_FILE} introuvable.")
         sys.exit(1)
 
-    source = SOURCE_FILE.read_text(encoding="utf-8")
-    used_keys = set(T_CALL_RE.findall(source))
+    used_keys: set[str] = set()
+    for path in SOURCE_FILES:
+        used_keys |= set(T_CALL_RE.findall(path.read_text(encoding="utf-8")))
 
     try:
         catalog = json.loads(I18N_FILE.read_text(encoding="utf-8"))

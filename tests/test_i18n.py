@@ -68,10 +68,19 @@ def test_shipped_catalog_languages_are_complete():
 
 
 def test_shipped_catalog_covers_every_key_used_in_source():
-    """Filet de sécurité : aucune clé t("...") du code sans traduction."""
+    """Filet de sécurité : aucune clé t("...") du code sans traduction.
+
+    Balaie TOUS les modules de la racine, pas seulement obs_dynamics.py :
+    depuis le découpage du 2026-09-09 la majorité des libellés vit dans
+    ui_dashboard.py, ui_triggers.py, ui_settings.py et ui_twitch_chat.py.
+    """
     import re
-    src = (ROOT / "obs_dynamics.py").read_text(encoding="utf-8")
-    used = set(re.findall(r"""\bt\(\s*["']([A-Za-z0-9_]+)["']""", src))
+    modules = sorted(p for p in ROOT.glob("*.py") if p.name != "build.py")
+    assert modules, "aucun module Python trouvé à la racine du projet"
+    used: set[str] = set()
+    for path in modules:
+        used |= set(re.findall(r"""\bt\(\s*["']([A-Za-z0-9_]+)["']""",
+                               path.read_text(encoding="utf-8")))
     available = set(json.loads(CATALOG.read_text(encoding="utf-8"))["fr"])
     assert not (used - available), f"clés absentes : {sorted(used - available)}"
 

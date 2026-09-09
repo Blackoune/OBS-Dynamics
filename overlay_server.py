@@ -8,11 +8,23 @@ en SSE et affiche le média quand l'application signale l'appui du raccourci.
 Uniquement de la bibliothèque standard (`http.server`) — aucune dépendance
 supplémentaire, et rien n'écoute en dehors de 127.0.0.1.
 
+Le même serveur porte l'overlay du chat (onglet Chat Twitch) : un
+second serveur sur un second port doublerait les risques de conflit et
+donnerait une deuxième URL à surveiller, alors que celui-ci démarre déjà
+avec l'application et écoute sur un port stable.
+
 Routes :
     GET /overlay/<rule_id>   page HTML à coller dans OBS
     GET /events/<rule_id>    flux SSE (une connexion par source ouverte)
     GET /media/<rule_id>     le fichier média lui-même
+    GET /chat/<token>        page HTML du chat
+    GET /chatevents/<token>  flux SSE du chat
     GET /health              sonde de vivacité
+
+Toute requête est refusée (403) si son en-tête `Host` ne désigne pas la
+boucle locale, ou si elle porte une `Origin` étrangère : voir
+`_LOOPBACK_HOSTNAMES`. C'est ce qui empêche un site web visité par
+l'utilisateur de lire ces routes par rebinding DNS.
 """
 from __future__ import annotations
 
@@ -21,6 +33,7 @@ import logging
 import mimetypes
 import os
 import queue
+import secrets
 import threading
 import time
 
@@ -33,6 +46,33 @@ logger = logging.getLogger("obs_dynamics.overlay")
 
 DEFAULT_PORT = 4466            # 4455 est pris par OBS WebSocket
 HOST = "127.0.0.1"
+
+# Noms d'hôte acceptés dans `Host` et dans `Origin`. Tout le reste est refusé.
+#
+# Écouter sur 127.0.0.1 NE SUFFIT PAS à rester privé : un site malveillant
+# peut faire pointer son propre domaine sur 127.0.0.1 (rebinding DNS). Le
+# navigateur de la victime considère alors `http://evil.example/...` comme
+# same-origin avec la page de l'attaquant, et le laisse LIRE nos réponses.
+# Le seul indice qui distingue cette requête d'une vraie est l'en-tête
+# `Host` : le navigateur y met le nom demandé, jamais 127.0.0.1. Le comparer
+# ferme la porte, pour TOUTES les routes à la fois.
+#
+# Le port n'entre pas dans le contrôle : le serveur bascule sur un port libre
+# quand 4466 est occupé, et le rebinding se joue sur le nom, pas sur le port.
+_LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _bare_hostname(authority: str) -> str:
+    """Nom d'hôte nu d'une autorité `hôte[:port]` : sans port ni crochets.
+
+    Gère la forme IPv6 littérale (`[::1]`, `[::1]:4466`), où découper
+    bêtement sur le premier `:` ne donnerait que `[`.
+    """
+    authority = authority.strip()
+    if authority.startswith("["):
+        fin = authority.find("]")
+        return authority[1:fin].lower() if fin > 0 else ""
+    return authority.split(":", 1)[0].lower()
 
 # Laps au-delà duquel une source navigateur inactive reçoit un commentaire
 # SSE de maintien : sans trafic, OBS/Chromium finit par couper la connexion.
@@ -207,6 +247,150 @@ connect();
 """
 
 
+# Page du chat. Même technique de substitution par jetons __XXX__ que
+# ci-dessus, et pour la même raison (CSS avec des "%" et JS plein d'accolades).
+_CHAT_HTML = """<!doctype html>
+<meta charset="utf-8">
+<title>OBS Dynamics — chat</title>
+<style>
+  /* Fond transparent : OBS compose la page par-dessus la scene. */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:"Segoe UI",Inter,system-ui,sans-serif}
+  #wrap{position:absolute;inset:0;display:flex;flex-direction:column;
+    justify-content:flex-end;padding:12px;gap:8px;box-sizing:border-box}
+  .msg{
+    /* Glassmorphism : fond translucide + flou de ce qui est derriere. Sur une
+       source navigateur OBS, "derriere" est la scene elle-meme, donc le flou
+       fait vraiment son effet par-dessus le jeu. */
+    background:rgba(26,21,48,.55);
+    -webkit-backdrop-filter:blur(14px) saturate(140%);
+    backdrop-filter:blur(14px) saturate(140%);
+    border:1px solid rgba(168,85,247,.28);
+    border-left:3px solid var(--accent,#A855F7);
+    border-radius:12px;padding:8px 12px;color:#F3F0FA;font-size:17px;
+    line-height:1.35;box-shadow:0 6px 20px rgba(0,0,0,.35);
+    animation:pop .18s ease-out;word-wrap:break-word;overflow-wrap:anywhere}
+  @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .who{font-weight:700;margin-right:6px}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;
+    text-transform:uppercase;padding:1px 7px;border-radius:999px;margin-right:7px;
+    color:#0F0C1B;vertical-align:2px}
+  /* Banniere d'attente : c'est ce que voit l'utilisateur quand l'application
+     est fermee ou redemarre, plutot qu'une page blanche muette. */
+  #wait{align-self:center;background:rgba(26,21,48,.6);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+    border:1px solid rgba(168,85,247,.3);border-radius:999px;
+    padding:8px 18px;color:#9B93B5;font-size:14px}
+  [hidden]{display:none !important}
+</style>
+<div id="wrap"><div id="wait">__WAIT_TEXT__</div></div>
+<script>
+const TOKEN = __CHAT_TOKEN__;
+const MAX_VISIBLE = __MAX_VISIBLE__;
+const wrap = document.getElementById("wrap");
+const wait = document.getElementById("wait");
+
+function render(m) {
+  const el = document.createElement("div");
+  el.className = "msg";
+  el.style.setProperty("--accent", m.color || "#A855F7");
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  tag.style.background = m.color || "#A855F7";
+  tag.textContent = m.platform;
+  const who = document.createElement("span");
+  who.className = "who";
+  who.style.color = m.color || "#A855F7";
+  who.textContent = m.author;
+  const txt = document.createElement("span");
+  // Affectation par textContent uniquement : un message de chat est du texte
+  // hostile, l'interpreter comme du balisage serait une injection directe.
+  txt.textContent = m.text;
+  el.append(tag, who, txt);
+  wrap.appendChild(el);
+  while (wrap.querySelectorAll(".msg").length > MAX_VISIBLE) {
+    wrap.querySelector(".msg").remove();
+  }
+}
+
+function connect() {
+  const es = new EventSource("/chatevents/" + TOKEN);
+  es.addEventListener("chat", (ev) => {
+    wait.hidden = true;
+    let m = null;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m) render(m);
+  });
+  es.onopen = () => { wait.hidden = true; };
+  es.onerror = () => {
+    // L'application peut redemarrer sous la source ouverte : on repasse en
+    // attente et on retente, au lieu de rester fige sur un chat mort.
+    es.close();
+    wait.hidden = false;
+    setTimeout(connect, 2000);
+  };
+}
+connect();
+</script>
+"""
+
+
+# Libellés de repli, utilisés quand aucun résolveur i18n n'est branché (tests,
+# ou serveur monté seul). Ils ne remplacent pas le catalogue : ils évitent
+# qu'une page parte avec des clés brutes à la place du texte.
+_DEFAULT_TEXTS = {
+    "TWITCH_CHAT_WAIT_TEXT": "En attente de connexion…",
+}
+
+
+def _escape_html(text: str) -> str:
+    """Neutralise le texte injecté dans le corps de la page.
+
+    Le libellé d'attente vient du catalogue i18n, donc du dépôt — mais une
+    traduction contenant `<` casserait silencieusement la mise en page, et
+    rien ne garantit que ce sera toujours la seule source.
+    """
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+class _ChatBinding:
+    """Ce que le serveur sait du chat, ou rien du tout.
+
+    Regrouper les trois dépendances (hub, jeton, libellé d'attente) dans un
+    seul objet évite de trimballer trois paramètres facultatifs à travers le
+    serveur et le handler, et rend l'absence du chat représentable :
+    `_ChatBinding()` sans hub désactive proprement les deux routes.
+    """
+
+    #: Messages affichés simultanément avant éviction du plus ancien.
+    MAX_VISIBLE = 25
+
+    def __init__(self, hub: Optional[Any] = None,
+                 token_getter: Optional[Callable[[], str]] = None) -> None:
+        self.hub = hub
+        self._token_getter = token_getter
+
+    @property
+    def is_enabled(self) -> bool:
+        return self.hub is not None and self._token_getter is not None
+
+    def token(self) -> str:
+        if self._token_getter is None:
+            return ""
+        return self._token_getter() or ""
+
+    def token_matches(self, candidate: str) -> bool:
+        """Comparaison à temps constant : le jeton EST le seul contrôle
+        d'accès de la page, un test naïf donnerait un oracle de timing."""
+        if self._token_getter is None:
+            return False
+        expected = self._token_getter() or ""
+        if not expected or not candidate:
+            return False
+        return secrets.compare_digest(expected, candidate)
+
+
 class _OverlayHTTPServer(ThreadingHTTPServer):
     """Porte le broker et l'accès aux règles.
 
@@ -226,9 +410,13 @@ class _OverlayHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
     def __init__(self, address: tuple[str, int], handler_cls: type,
-                 broker: _Broker, rule_getter: Callable[[str], Optional[Any]]) -> None:
+                 broker: _Broker, rule_getter: Callable[[str], Optional[Any]],
+                 chat: "_ChatBinding",
+                 text_getter: Optional[Callable[[str], str]]) -> None:
         self.broker = broker
         self.rule_getter = rule_getter
+        self.chat = chat
+        self.text_getter = text_getter
         super().__init__(address, handler_cls)
 
 
@@ -243,6 +431,20 @@ class _Handler(BaseHTTPRequestHandler):
     def rule_getter(self) -> Callable[[str], Optional[Any]]:
         return self.server.rule_getter  # type: ignore[attr-defined]
 
+    @property
+    def chat(self) -> "_ChatBinding":
+        return self.server.chat  # type: ignore[attr-defined]
+
+    def text(self, key: str) -> str:
+        """Libellé traduit, avec repli sur le français si rien n'est branché."""
+        getter = self.server.text_getter  # type: ignore[attr-defined]
+        if getter is not None:
+            try:
+                return getter(key)
+            except Exception:
+                logger.debug("Résolution i18n de %s impossible.", key, exc_info=True)
+        return _DEFAULT_TEXTS.get(key, key)
+
     def log_message(self, fmt: str, *args: Any) -> None:
         # Le logger par défaut écrit sur stderr à chaque requête, ce qui
         # noierait la console : on redirige en DEBUG.
@@ -250,15 +452,25 @@ class _Handler(BaseHTTPRequestHandler):
 
     # -- Helpers ---------------------------------------------------------- #
 
-    def _send(self, code: int, body: bytes, content_type: str,
-              extra: Optional[dict[str, str]] = None) -> None:
+    def _send_headers(self, code: int, content_type: str, length: int,
+                      extra: Optional[dict[str, str]] = None) -> None:
+        """En-têtes communs à toutes les réponses, corps en mémoire ou non."""
         self.send_response(code)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
+        # /media renvoie un fichier choisi par l'utilisateur, avec un type
+        # deviné par mimetypes. Sans nosniff, un fichier mal typé pourrait
+        # être interprété comme du HTML par Chromium — donc exécuté dans
+        # l'origine de l'overlay, aux côtés du chat et des déclencheurs.
+        self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
+
+    def _send(self, code: int, body: bytes, content_type: str,
+              extra: Optional[dict[str, str]] = None) -> None:
+        self._send_headers(code, content_type, len(body), extra)
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -267,20 +479,84 @@ class _Handler(BaseHTTPRequestHandler):
     def _not_found(self) -> None:
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
+    def _forbidden(self) -> None:
+        self._send(403, b"forbidden", "text/plain; charset=utf-8")
+
+    # -- Contrôle d'origine ------------------------------------------------ #
+
+    def _host_is_loopback(self) -> bool:
+        """L'en-tête `Host` désigne-t-il bien la boucle locale ?
+
+        Un `Host` absent est refusé : HTTP/1.1 l'impose, et ni OBS ni un
+        navigateur ne l'omettent. Ce qui l'omet est un client brut, donc pas
+        le trafic qu'on sert.
+        """
+        host = self.headers.get("Host", "")
+        if not host:
+            return False
+        return _bare_hostname(host) in _LOOPBACK_HOSTNAMES
+
+    def _origin_is_loopback(self) -> bool:
+        """`Origin` étranger = requête émise par une page tierce.
+
+        Absent, c'est le cas normal : une navigation directe, un `<img>` ou
+        une source navigateur OBS n'en envoient pas. Présent, il ne peut
+        venir que d'un fetch/XHR/EventSource — et les nôtres partent
+        toujours d'une page servie par ce serveur.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        return (urlparse(origin).hostname or "").lower() in _LOOPBACK_HOSTNAMES
+
+    def _request_is_local(self) -> bool:
+        if not self._host_is_loopback():
+            logger.warning("Requête overlay refusée : en-tête Host inattendu (%r). "
+                           "Colle l'URL telle qu'affichée dans l'application.",
+                           self.headers.get("Host", ""))
+            return False
+        if not self._origin_is_loopback():
+            logger.warning("Requête overlay refusée : Origin étrangère (%r).",
+                           self.headers.get("Origin", ""))
+            return False
+        return True
+
     # -- Routage ---------------------------------------------------------- #
 
     def do_GET(self) -> None:  # noqa: N802 (nom imposé par BaseHTTPRequestHandler)
-        path = urlparse(self.path).path
-        parts = [unquote(p) for p in path.strip("/").split("/") if p]
+        # Avant tout routage, y compris /health : une sonde qui répond à
+        # n'importe quel Host confirme à un site tiers que l'application
+        # tourne sur la machine.
+        if not self._request_is_local():
+            self._forbidden()
+            return
+
+        parsed = urlparse(self.path)
+        parts = [unquote(p) for p in parsed.path.strip("/").split("/") if p]
 
         if parts == ["health"]:
             self._send(200, b"ok", "text/plain; charset=utf-8")
             return
+
         if len(parts) != 2:
             self._not_found()
             return
 
-        section, rule_id = parts
+        section, identifier = parts
+
+        # Les routes du chat sont résolues AVANT rule_getter : leur
+        # second segment est un jeton d'accès, pas un identifiant de règle.
+        if section in ("chat", "chatevents"):
+            if not self.chat.token_matches(identifier):
+                self._not_found()
+                return
+            if section == "chat":
+                self._serve_chat_page()
+            else:
+                self._serve_chat_events()
+            return
+
+        rule_id = identifier
         rule = self.rule_getter(rule_id)
         if rule is None:
             self._not_found()
@@ -305,19 +581,93 @@ class _Handler(BaseHTTPRequestHandler):
                 .replace("__MEDIA_STAMP__", json.dumps(OverlayServer.media_stamp(rule))))
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
+    #: Taille des morceaux envoyés par _serve_media. 64 Kio : assez grand pour
+    #: que le coût par appel système reste marginal, assez petit pour que la
+    #: mémoire occupée ne dépende pas de la taille du fichier.
+    MEDIA_CHUNK = 64 * 1024
+
     def _serve_media(self, rule: Any) -> None:
+        """Sert le fichier média **par morceaux**.
+
+        Un `read_bytes()` chargeait tout le fichier en mémoire avant le
+        premier octet envoyé : une vidéo de 4 Go demandait 4 Go de RAM, et
+        rien n'empêche un utilisateur de choisir un gros fichier. La taille
+        vient de `stat()`, et la boucle n'envoie jamais plus que cette
+        taille — un fichier qui grossit pendant le transfert produirait
+        sinon plus d'octets que ne l'annonce Content-Length.
+        """
         path = Path(rule.media_path)
         if not rule.media_path or not path.is_file():
             self._not_found()
             return
         try:
-            data = path.read_bytes()
+            taille = path.stat().st_size
+            fichier = path.open("rb")
         except OSError:
             logger.exception("Lecture du média impossible : %s", path)
             self._send(500, b"media unreadable", "text/plain; charset=utf-8")
             return
+
         ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-        self._send(200, data, ctype)
+        with fichier:
+            self._send_headers(200, ctype, taille)
+            restant = taille
+            try:
+                while restant > 0:
+                    morceau = fichier.read(min(self.MEDIA_CHUNK, restant))
+                    if not morceau:
+                        break        # fichier tronqué en cours de route
+                    self.wfile.write(morceau)
+                    restant -= len(morceau)
+            except (BrokenPipeError, ConnectionResetError):
+                pass                 # OBS a fermé la source pendant le transfert
+
+    # -- Chat --------------------------------------------------------------- #
+
+    def _serve_chat_page(self) -> None:
+        # json.dumps produit des littéraux JS sûrs : ni le jeton ni le libellé
+        # traduit ne peuvent casser le script ou y injecter du code.
+        html = (_CHAT_HTML
+                .replace("__CHAT_TOKEN__", json.dumps(self.chat.token()))
+                .replace("__MAX_VISIBLE__", str(int(_ChatBinding.MAX_VISIBLE)))
+                .replace("__WAIT_TEXT__", _escape_html(self.text("TWITCH_CHAT_WAIT_TEXT"))))
+        self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _serve_chat_events(self) -> None:
+        hub = self.chat.hub
+        if hub is None:
+            self._not_found()
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        sub = hub.subscribe()
+        try:
+            self.wfile.write(b": connected\n\n")
+            # Réamorçage : une source navigateur rouverte (ou l'application
+            # redémarrée sous elle) afficherait sinon un chat vide jusqu'au
+            # message suivant, ce qui ressemble à une panne.
+            for message in hub.history():
+                self.wfile.write(b"event: chat\ndata: "
+                                 + json.dumps(message).encode("utf-8") + b"\n\n")
+            self.wfile.flush()
+            while True:
+                try:
+                    data = sub.get(timeout=_KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(b"event: chat\ndata: " + data.encode("utf-8") + b"\n\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # la source OBS a été fermée : sortie normale
+        finally:
+            hub.unsubscribe(sub)
 
     def _serve_events(self, rule_id: str) -> None:
         self.send_response(200)
@@ -354,10 +704,15 @@ class OverlayServer:
     """
 
     def __init__(self, rule_getter: Callable[[str], Optional[Any]],
-                 port: int = DEFAULT_PORT) -> None:
+                 port: int = DEFAULT_PORT,
+                 chat_hub: Optional[Any] = None,
+                 chat_token_getter: Optional[Callable[[], str]] = None,
+                 text_getter: Optional[Callable[[str], str]] = None) -> None:
         self._rule_getter = rule_getter
         self._requested_port = port
         self._broker = _Broker()
+        self._chat = _ChatBinding(chat_hub, chat_token_getter)
+        self._text_getter = text_getter
         self._httpd: Optional[_OverlayHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -376,6 +731,24 @@ class OverlayServer:
 
     def overlay_url(self, rule_id: str) -> str:
         return f"{self.base_url()}/overlay/{rule_id}"
+
+    def chat_url(self) -> str:
+        """URL de l'overlay du chat, vide tant qu'aucun jeton n'existe."""
+        token = self._chat.token()
+        return f"{self.base_url()}/chat/{token}" if token else ""
+
+    def attach_chat(self, hub: Any, token_getter: Callable[[], str]) -> None:
+        """Branche le chat après coup.
+
+        Le serveur démarre très tôt (les sources OBS doivent le trouver dès
+        l'ouverture de l'application) ; le hub, lui, dépend de la
+        configuration lue plus tard. Le rebrancher ici évite de retarder le
+        démarrage du serveur — ou de le redémarrer, ce qui coupe les sources
+        déjà connectées.
+        """
+        self._chat = _ChatBinding(hub, token_getter)
+        if self._httpd is not None:
+            self._httpd.chat = self._chat
 
     @property
     def requested_port(self) -> int:
@@ -405,7 +778,8 @@ class OverlayServer:
         for attempt in range(1, retries + 1):
             try:
                 self._httpd = _OverlayHTTPServer((HOST, self._requested_port), _Handler,
-                                                  self._broker, self._rule_getter)
+                                                  self._broker, self._rule_getter, self._chat,
+                                                  self._text_getter)
                 break
             except OSError as exc:
                 if attempt == retries:
@@ -417,7 +791,8 @@ class OverlayServer:
         if self._httpd is None:
             try:
                 self._httpd = _OverlayHTTPServer((HOST, 0), _Handler,
-                                                  self._broker, self._rule_getter)
+                                                  self._broker, self._rule_getter, self._chat,
+                                                  self._text_getter)
             except OSError:
                 logger.exception("Impossible de démarrer le serveur overlay.")
                 return False

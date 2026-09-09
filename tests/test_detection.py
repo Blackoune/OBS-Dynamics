@@ -61,7 +61,7 @@ def test_missing_template_returns_none(app_module, tmp_path):
 # --- Machine à états ---------------------------------------------------- #
 
 def test_inactive_when_process_absent(app_module, monkeypatch):
-    monkeypatch.setattr(app_module, "is_game_active", lambda g: False)
+    monkeypatch.setattr(app_module.detection, "is_game_active", lambda g: False)
     game = app_module.Game(id="a", name="X", source="manual", active_match="x.exe")
     assert app_module.detect_game_state(game, 0.8) == "inactive"
 
@@ -69,7 +69,7 @@ def test_inactive_when_process_absent(app_module, monkeypatch):
 def test_active_when_running_without_reference_images(app_module, monkeypatch):
     """Sans image de référence on ne peut pas distinguer menu/en-jeu : on
     reste sur 'active' plutôt que de deviner."""
-    monkeypatch.setattr(app_module, "is_game_active", lambda g: True)
+    monkeypatch.setattr(app_module.detection, "is_game_active", lambda g: True)
     game = app_module.Game(id="a", name="X", source="manual", active_match="x.exe")
     assert app_module.detect_game_state(game, 0.8) == "active"
 
@@ -77,9 +77,9 @@ def test_active_when_running_without_reference_images(app_module, monkeypatch):
 def test_no_screen_capture_when_no_reference_images(app_module, monkeypatch):
     """Régression perf : ne jamais capturer l'écran si aucun jeu n'a d'image
     à comparer."""
-    monkeypatch.setattr(app_module, "is_game_active", lambda g: True)
+    monkeypatch.setattr(app_module.detection, "is_game_active", lambda g: True)
     called = []
-    monkeypatch.setattr(app_module, "_capture_screen_bgr", lambda: called.append(1))
+    monkeypatch.setattr(app_module.detection, "_capture_screen_bgr", lambda: called.append(1))
     game = app_module.Game(id="a", name="X", source="manual", active_match="x.exe")
     app_module.detect_game_state(game, 0.8)
     assert called == []

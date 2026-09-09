@@ -5,12 +5,20 @@
 # itsdangerous, email-validator, pyautogui) ont été retirés : plus aucun
 # fichier actif ne les importe depuis l'abandon du frontend web.
 
-customtkinter        # interface graphique
-opencv-python        # détection visuelle (matchTemplate)
-numpy                # manipulé directement par obs_dynamics.py et cover_service
-Pillow               # capture d'écran (ImageGrab) + traitement des jaquettes
-psutil               # détection des processus de jeu
-simpleobsws          # client OBS WebSocket v5
-requests             # téléchargement des jaquettes (cover_service)
-pynput               # hotkeys globales (dégradation propre si absent)
-tkinterdnd2          # glisser-déposer de médias sur la zone de dépôt
+# Versions ÉPINGLÉES (2026-09-09). Sans `==`, deux installations faites à deux
+# dates différentes ne donnent pas le même logiciel : une version majeure
+# publiée entre-temps casse le build ou change un comportement, et le rapport
+# de bug devient impossible à reproduire. Ce sont les versions sous lesquelles
+# les 380 tests passent.
+#
+# Pour monter une version : la changer ici, relancer `pytest`, puis `build.py`.
+
+customtkinter==6.0.0        # interface graphique
+opencv-python==5.0.0.93     # détection visuelle (matchTemplate)
+numpy==2.5.1                # manipulé directement par detection.py et cover_service
+Pillow==12.3.0              # capture d'écran (ImageGrab) + traitement des jaquettes
+psutil==7.2.2               # détection des processus de jeu
+simpleobsws==1.4.3          # client OBS WebSocket v5
+requests==2.34.2            # téléchargement des jaquettes (cover_service)
+pynput==1.8.2               # hotkeys globales (dégradation propre si absent)
+tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt

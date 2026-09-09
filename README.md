@@ -62,8 +62,54 @@ l'affichage et le masquage immédiats, même sur des appuis rapides et répété
 > collées dans OBS pointent vers l'ancien port et ne répondent plus. L'URL
 > affichée sous chaque ligne est toujours la bonne : il suffit de la recopier.
 >
+> Le serveur ne répond qu'aux requêtes dont l'hôte est `127.0.0.1`,
+> `localhost` ou `::1` ; tout le reste reçoit un `403`. C'est ce qui empêche
+> un site web ouvert dans ton navigateur de lire tes overlays en faisant
+> pointer son domaine sur ta machine. Colle donc l'URL **telle qu'affichée**
+> dans l'application : remplacer `127.0.0.1` par le nom de ton PC ne
+> marchera pas.
+>
 > Le glisser-déposer nécessite `tkinterdnd2` (`pip install tkinterdnd2`).
 > Sans lui, la zone reste cliquable et ouvre le sélecteur de fichier.
+
+## Chat Twitch
+
+L'onglet **Chat Twitch** affiche le chat de ta chaîne dans OBS, par une source
+navigateur.
+
+1. Carte Twitch → **Connexion** → tape le nom de ta chaîne → *Valider*.
+2. Copie le lien affiché en bas de l'onglet.
+3. Dans OBS : **Sources → + → Navigateur → URL**.
+
+C'est tout. Aucun compte, aucune clé, aucune application à déclarer : le chat
+public d'une chaîne Twitch se lit en **IRC anonyme**. Un compte ne serait
+nécessaire que pour écrire ou modérer, ce que cette version ne fait pas.
+
+L'interrupteur de la carte masque le chat dans l'overlay **sans couper la
+connexion** : le réafficher est instantané.
+
+> **Pourquoi seulement Twitch ?** L'onglet a porté un temps YouTube, Kick et
+> TikTok. Tout a été retiré le 2026-09-08 : Twitch était la seule plateforme à
+> fonctionner de façon fiable. Le détail des impasses est dans
+> [HANDOVER.md](HANDOVER.md) §6.
+
+### Le lien overlay
+
+En bas de l'onglet, une URL de la forme
+`http://127.0.0.1:4466/chat/<jeton>`. Copie-la comme source navigateur dans
+OBS. Elle **reste valide après un redémarrage** : le jeton est créé une seule
+fois puis relu dans `data/multistream.json`, et le serveur démarre avec
+l'application, sans action manuelle.
+
+*Régénérer le lien* fabrique un nouveau jeton et **tue l'ancien** : la source
+déjà configurée dans OBS cessera de répondre et devra être recollée. À
+n'utiliser que si tu penses que l'URL a fuité.
+
+Si l'application est fermée, la page affiche « En attente de connexion » et se
+reconnecte d'elle-même dès son redémarrage. Une source ouverte **avant** le
+lancement de l'application affichera en revanche l'erreur d'OBS jusqu'à un
+rafraîchissement : coche « Actualiser le navigateur quand la scène devient
+active » dans les propriétés de la source.
 
 ## Installation
 
@@ -80,6 +126,12 @@ pip install -r requirements.txt
 ```
 
 Copier `.env.example` en `.env`, puis renseigner `OBS_WS_PASSWORD`.
+
+Le fichier vit dans `%APPDATA%\OBS Dynamics\`, **hors du dépôt** : il ne peut
+structurellement pas partir sur GitHub. Le mot de passe OBS et la clé RAWG y
+sont en plus **chiffrés** (DPAPI, clé dérivée de ton compte Windows) — le
+fichier copié ailleurs ou lu par un autre compte ne donne rien. Tu peux
+saisir la valeur en clair : elle est chiffrée au démarrage suivant.
 
 Côté OBS Studio : **Outils → Paramètres du serveur WebSocket** → activer le
 serveur, port `4455`, et reporter le mot de passe dans `.env`.
@@ -116,23 +168,49 @@ touches suivent pynput, **en minuscule** (`f1`, `f5`, `k`…).
 ## Structure
 
 ```
-obs_dynamics.py     application (GUI, scan, client OBS)
+obs_dynamics.py     point d'entrée : fenêtre, navigation, câblage
+app_paths.py        chemins, journalisation, éveil DPI
+env_config.py       lecture / écriture du .env utilisateur
+games.py            scan Steam, modèle Game, persistance
+detection.py        processus + comparaison visuelle (sans interface)
+obs_client.py       WebSocket OBS v5 et boucle de scan
+screen_match.py     agent de comparaison écran / référence
+ui_common.py        palette, police, libellés d'état, glisser-déposer
+ui_dashboard.py     grille de cartes de jeu
+ui_game_dialogs.py  fiche de jeu et relecture des patchs
+ui_settings.py      vue Paramètres
+ui_triggers.py      vue Raccourcis & Overlays
+ui_twitch_chat.py   vue Chat Twitch
 cover_service.py    téléchargement et cache des jaquettes
 hotkeys.py          hotkeys globales et combinaisons (pynput)
 triggers.py         règles « raccourci -> média »
+twitch_chat.py      connecteur de chat Twitch (IRC anonyme) + hub de diffusion
 overlay_server.py   serveur HTTP local des sources navigateur OBS
 i18n.py / i18n.json traductions fr / en / es
 build.py            packaging PyInstaller + validation i18n
 build.spec          spécification PyInstaller
 tests/              suite pytest
-data/               runtime (games.json, hotkeys.json, triggers.json, covers/, logs) — gitignoré
+data/               runtime (games.json, hotkeys.json, triggers.json, multistream.json, covers/, logs) — gitignoré
 ```
+
+Le point d'entrée était un fichier unique de 4177 lignes jusqu'au 2026-09-09.
+Il ré-exporte les noms publics des modules ci-dessus : `import obs_dynamics`
+donne toujours accès à `Game`, `DashboardView`, `detect_game_state`, etc.
 
 ## Développement
 
 ```bash
 pip install -r requirements-dev.txt
 ```
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Cette seconde commande active le hook `pre-commit` qui refuse tout commit
+contenant un identifiant (`check_secrets.py`). À faire **une fois par clone** :
+git ne clone pas `.git/hooks/`. Audit ponctuel :
+`python check_secrets.py --all`.
 
 ```bash
 python -m pytest tests/ -q
