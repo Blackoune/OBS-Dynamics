@@ -14,6 +14,8 @@ import pytest
 
 ctk = pytest.importorskip("customtkinter")
 
+from ui_dashboard import _rgb    # noqa: E402  (après importorskip)
+
 
 @pytest.fixture
 def dashboard(app_module, tmp_path):
@@ -147,6 +149,16 @@ def test_regridding_keeps_every_game_exactly_once(dashboard):
     assert {col for _, col in slots} == {0, 1, 2}
 
 
+def _pin_pointer(card, on_card=True):
+    """Force ce que la carte croit voir sous le curseur.
+
+    L'overlay surveille désormais la position réelle du curseur : sans ce
+    leurre, un `_show_overlay()` déclenché par le test se refermerait aussitôt
+    puisque la souris de la machine de test est ailleurs.
+    """
+    card.winfo_containing = (lambda x, y: card) if on_card else (lambda x, y: None)
+
+
 def test_overlay_is_built_only_on_first_hover(dashboard):
     """L'overlay de survol pesait la moitié du temps de render_games() alors
     qu'une seule carte à la fois l'affiche."""
@@ -154,6 +166,7 @@ def test_overlay_is_built_only_on_first_hover(dashboard):
     card = view._cards["g0"]
     assert card._overlay is None, "overlay construit d'avance"
 
+    _pin_pointer(card)
     card._show_overlay()
     root.update()
     assert card._overlay is not None
@@ -173,6 +186,7 @@ def test_overlay_does_not_swallow_the_wheel(dashboard):
     view, root = dashboard
     canvas = _canvas(view)
     card = view._cards["g0"]
+    _pin_pointer(card)
     card._show_overlay()
     root.update()
 
@@ -188,6 +202,7 @@ def test_hover_overlay_is_suppressed_while_scrolling(dashboard):
     view, root = dashboard
     card = view._cards["g0"]
 
+    _pin_pointer(card)
     view._wheel_handler(type("Evt", (), {"delta": -120})())
     card._show_overlay()
     assert not card._overlay_visible, "overlay ouvert pendant le défilement"
@@ -256,12 +271,13 @@ def test_empty_state_appears_and_disappears(dashboard):
     assert view._empty_lbl is None and set(view._cards) == {"revenu"}
 
 
-def test_cover_fills_the_card_edge_to_edge(dashboard):
+def test_cover_has_no_dead_margin_inside_its_label(dashboard):
     """Régression « deux bandes sur les côtés ».
 
     CTkLabel applique `padx=min(corner_radius, hauteur/2)` autour de son
     contenu. Le corner_radius=12 du label de jaquette laissait 12 px morts à
-    gauche et à droite ET amputait l'image d'autant.
+    gauche et à droite ET amputait l'image d'autant. Les coins arrondis sont
+    désormais dessinés DANS l'image (PIL), le label reste carré.
     """
     view, root = dashboard
     label = view._cards["g0"]._cover_lbl
@@ -270,47 +286,78 @@ def test_cover_fills_the_card_edge_to_edge(dashboard):
         "le label de jaquette réserve une marge : bandes visibles sur les côtés"
 
 
-def test_status_badge_uses_the_two_requested_colours(dashboard):
+def test_the_state_ring_is_drawn_all_around_including_the_corners(dashboard):
+    """Le bug qu'on corrige : le rectangle du label de jaquette mordait dans
+    l'arc du liseré et en peignait un bout, d'où un angle amputé. Liseré et
+    jaquette sont désormais peints dans la même image."""
+    from ui_common import COL_RING_IDLE
     view, root = dashboard
     card = view._cards["g0"]
-
     card.set_state("inactive")
-    assert card._badge.cget("fg_color") == "#D93025"
-    for state in ("active", "menu", "in_game"):
-        card.set_state(state)
-        assert card._badge.cget("fg_color") == "#508267", state
+    image = card._ctk_image._light_image
+    w, h = image.size
+    ring = _rgb(COL_RING_IDLE)
+
+    # Milieu de chaque bord : le liseré, sur toute la périphérie.
+    for x, y in ((1, h // 2), (w - 2, h // 2), (w // 2, 1), (w // 2, h - 2)):
+        assert image.getpixel((x, y)) == ring, f"pas de liseré en {(x, y)}"
+    # Angle : hors de l'arrondi, donc le fond de la grille, jamais le liseré
+    # ni une couleur de carte — c'est ce coin qui était « dégueulasse ».
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        assert image.getpixel((x, y)) != ring, f"angle carré en {(x, y)}"
+    # Diagonale de l'angle : le liseré doit y passer, arrondi mais présent.
+    # Tolérance : l'arc est anticrénelé, le pixel est un mélange très proche.
+    offset = round(card.CARD_RADIUS * 0.3)
+    corner = image.getpixel((offset, offset))
+    assert max(abs(a - b) for a, b in zip(corner, ring)) <= 6,         f"l'arc du liseré est troué dans l'angle : {corner} au lieu de {ring}"
 
 
-def test_badge_text_and_border_stay_white_in_every_state(dashboard):
-    view, root = dashboard
-    card = view._cards["g0"]
-    for state in ("inactive", "active", "menu", "in_game"):
-        card.set_state(state)
-        assert card._badge.cget("border_color") == "#FFFFFF"
-        assert card._badge_lbl.cget("text_color") == "#FFFFFF"
+def test_the_two_roundings_stay_concentric(dashboard):
+    """Rayon intérieur = rayon extérieur - épaisseur : sinon l'angle de la
+    jaquette et celui du liseré ne suivent pas la même courbe."""
+    card = dashboard[0]._cards["g0"]
+    assert card.COVER_RADIUS == card.CARD_RADIUS - card.BORDER_W
+    assert 3 <= card.BORDER_W <= 4, "contour demandé : 3 à 4 px"
+    assert card._cover_lbl.place_info()["x"] == "0",         "le label doit couvrir la carte entière, liseré compris"
 
 
-def test_badge_has_no_rounded_corners(dashboard):
+def test_the_badge_is_painted_into_the_image_not_a_widget(dashboard):
     """CTk peint le reste du canvas d'un coin arrondi avec la couleur du
-    PARENT, pas celle de la jaquette posée dessous : quatre encoches sombres
-    apparaissaient aux angles, par-dessus l'artwork."""
+    PARENT : une pastille CTkFrame arrondie posée sur la jaquette montrait
+    quatre encoches sombres aux angles. Elle est donc composée dans l'image."""
     view, root = dashboard
     card = view._cards["g0"]
-    assert card._badge.cget("corner_radius") == 0
-    assert card._badge_lbl.cget("corner_radius") == 0
+    assert not hasattr(card, "_badge")
+    assert card._ctk_image is not None, \
+        "une carte sans jaquette doit déjà montrer sa pastille"
 
 
-def test_the_badge_only_says_active_or_inactive(dashboard, app_module):
+def test_the_badge_only_says_active_or_inactive(app_module):
     """Les états fins (Menu, En jeu) pilotent la bascule de scène mais
     n'apportent rien sur la carte : on veut y lire si le jeu tourne, point."""
+    assert app_module.badge_text("inactive") == app_module.state_label("inactive")
+    for state in ("active", "menu", "in_game"):
+        assert app_module.badge_text(state) == app_module.state_label("active"), state
+
+
+def test_the_badge_image_differs_between_running_and_stopped(dashboard):
+    """Casse si la pastille cesse d'être recomposée : les deux états doivent
+    produire des pixels différents, pas seulement un libellé différent."""
+    from PIL import Image
     view, root = dashboard
     card = view._cards["g0"]
-
     card.set_state("inactive")
-    assert card._badge_lbl.cget("text") == f"● {app_module.state_label('inactive')}"
-    for state in ("active", "menu", "in_game"):
-        card.set_state(state)
-        assert card._badge_lbl.cget("text") == f"● {app_module.state_label('active')}", state
+    card._on_cover_received(Image.new("RGB", (300, 450), (120, 40, 90)))
+    stopped = card._ctk_image._light_image.copy()
+    card.set_state("active")
+    running = card._ctk_image._light_image
+    assert stopped.tobytes() != running.tobytes()
+
+
+def test_cards_without_a_cover_share_one_placeholder_image(dashboard):
+    """Quarante jeux sans jaquette = quarante images composées, sans ce cache."""
+    view, root = dashboard
+    assert view._cards["g0"]._ctk_image is view._cards["g1"]._ctk_image
 
 
 def test_state_label_keeps_the_four_states_for_the_rest_of_the_app(app_module):
@@ -396,13 +443,69 @@ def test_the_overlay_closes_when_the_cover_arrives_and_the_mouse_left(dashboard)
     view, root = dashboard
     card = view._cards["g0"]
     type(card)._hover_blocked_until = 0.0
+    _pin_pointer(card)
     card._show_overlay()
     root.update()
     assert card._overlay_visible
 
+    _pin_pointer(card, on_card=False)     # la souris a quitté la carte
     card._on_cover_received(Image.new("RGB", (300, 450), (100, 40, 90)))
     root.update()
     assert not card._overlay_visible, "l'overlay est resté collé après l'actualisation"
+
+
+def test_the_overlay_closes_as_soon_as_the_pointer_leaves(dashboard):
+    """Le symptôme : « Éditer / Supprimer » restait affiché et il fallait
+    repasser sur la carte pour s'en débarrasser."""
+    view, root = dashboard
+    card = view._cards["g0"]
+    type(card)._hover_blocked_until = 0.0
+    _pin_pointer(card)
+    card._show_overlay()
+    root.update()
+    assert card._overlay_visible
+
+    _pin_pointer(card, on_card=False)
+    card._on_poster_leave()
+    assert not card._overlay_visible, "l'overlay ne s'est pas fermé au <Leave>"
+
+
+def test_leaving_from_a_button_still_closes_the_overlay(dashboard):
+    """Tk n'envoie PAS de <Leave> au cadre quand le curseur passe d'un de ses
+    boutons directement dehors : c'est ce trajet qui laissait l'overlay collé.
+    La surveillance périodique doit le rattraper."""
+    view, root = dashboard
+    card = view._cards["g0"]
+    type(card)._hover_blocked_until = 0.0
+    _pin_pointer(card)
+    card._show_overlay()
+    root.update()
+    assert card._overlay_visible
+
+    _pin_pointer(card, on_card=False)     # sorti sans le moindre événement
+    deadline = time.monotonic() + 1.0
+    while card._overlay_visible and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.01)
+    assert not card._overlay_visible, "aucun filet : l'overlay reste ouvert"
+    assert card._hover_job is None, "la surveillance tourne encore dans le vide"
+
+
+def test_the_overlay_takes_the_exact_shape_of_the_cover(dashboard):
+    """Même emprise et même arrondi que la jaquette. Les coins du rectangle de
+    l'overlay tombent sur l'arc du liseré : `bg_color` doit donc porter la
+    couleur du liseré, sinon l'angle est troué au survol."""
+    from ui_common import COL_RING_ACTIVE, COL_RING_IDLE
+    card = dashboard[0]._cards["g0"]
+    _pin_pointer(card)
+    card.set_state("inactive")
+    card._show_overlay()
+    assert card.OVERLAY_INSET == card.BORDER_W
+    assert card._overlay.cget("corner_radius") == card.COVER_RADIUS
+    assert card._overlay.cget("bg_color") == COL_RING_IDLE
+
+    card.set_state("active")
+    assert card._overlay.cget("bg_color") == COL_RING_ACTIVE,         "le fond des coins n'a pas suivi le changement d'état"
 
 
 def test_the_overlay_stays_and_comes_back_on_top_if_the_mouse_is_still_there(dashboard):
@@ -410,11 +513,11 @@ def test_the_overlay_stays_and_comes_back_on_top_if_the_mouse_is_still_there(das
     view, root = dashboard
     card = view._cards["g0"]
     type(card)._hover_blocked_until = 0.0
+    _pin_pointer(card)
     card._show_overlay()
     root.update()
 
     card._is_descendant = lambda widget: True      # curseur toujours sur la carte
-    card.winfo_containing = lambda x, y: card
     card._on_cover_received(Image.new("RGB", (300, 450), (40, 90, 100)))
     root.update()
 

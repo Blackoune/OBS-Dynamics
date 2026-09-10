@@ -73,12 +73,11 @@ from overlay_server import (DEFAULT_PORT as OVERLAY_DEFAULT_PORT,  # noqa: E402
 from triggers import (DURATION_PRESETS_MS, MEDIA_EXTENSIONS, MEDIA_TYPES,  # noqa: E402
                       TriggerRule, TriggerStore)
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,  # noqa: E402
-                       COL_BADGE_BG_ACTIVE, COL_BADGE_BG_INACTIVE,
-                       COL_BADGE_FG, COL_BG, COL_BG_GRADIENT_TOP, COL_BORDER,
+                       COL_BG, COL_BG_GRADIENT_TOP, COL_BORDER,
                        COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_GREEN,
                        COL_RED, COL_SIDEBAR, COL_TEXT, COL_TEXT_MUTED,
-                       COL_YELLOW, FONT_FAMILY, STATE_BADGE_BG,
-                       _try_enable_dnd, badge_text, ctk, font,
+                       COL_YELLOW, FONT_FAMILY, STATE_DOT, STATE_RING,
+                       _try_enable_dnd, badge_text, ctk, font, is_running,
                        parse_dropped_files, state_label)
 from ui_dashboard import DashboardView, GameCard  # noqa: E402
 from ui_game_dialogs import GameModal, PatchReviewDialog  # noqa: E402
@@ -110,7 +109,6 @@ class Sidebar(ctk.CTkFrame):
         self._brand_suffix_lbl.pack(side="left")
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
-        self.nav_labels: dict[str, ctk.CTkLabel] = {}
         self._nav_btn("dashboard", t("SIDEBAR_NAV_DASHBOARD"), row=1)
         # Raccourcis & Overlays s'insère ENTRE l'accueil et les paramètres.
         self._nav_btn("triggers", t("SIDEBAR_NAV_TRIGGERS"), row=2)
@@ -143,43 +141,37 @@ class Sidebar(ctk.CTkFrame):
 
         self._is_running = False
 
-    # Icônes de navigation, séparées du libellé traduit.
-    #
-    # Elles étaient auparavant collées dans la chaîne i18n ("⌨️  Raccourcis").
-    # Problème : les emoji n'ont pas tous la même largeur d'avance — 🏠 est
-    # un emoji pleine chasse, ⌨️ et ⚙️ sont des glyphes texte promus en emoji
-    # par un sélecteur de variante (U+FE0F) et se rendent plus étroits. Les
-    # libellés démarraient donc à des abscisses différentes. En plaçant
-    # l'icône dans sa propre colonne de largeur FIXE, le texte de tous les
-    # onglets commence exactement au même endroit.
-    NAV_ICONS = {"dashboard": "🏠", "triggers": "⌨️", "twitch_chat": "💬", "settings": "⚙️"}
-    NAV_ICON_WIDTH = 28
+    # Pas d'icône de navigation. Les emoji couleur d'avant sortaient de la
+    # palette, n'avaient pas tous la même largeur d'avance — d'où des libellés
+    # qui ne démarraient pas à la même abscisse — et aucun équivalent
+    # monochrome plein n'existe pour les quatre onglets. Le libellé seul,
+    # aligné à gauche, suffit et reste cohérent avec le reste de l'interface.
+    NAV_TEXT_PAD = 12          # marge interne du libellé, à gauche du bouton
+
+    # Onglet au repos : cadre discret, TOUJOURS dessiné. Un onglet non
+    # sélectionné était entièrement transparent — rien ne montrait où cliquer.
+    _NAV_IDLE = {"fg_color": COL_SIDEBAR, "border_color": COL_BORDER,
+                 "text_color": COL_TEXT_MUTED}
+    # Onglet sélectionné : fond plus clair, contour accent, texte plein.
+    _NAV_ACTIVE = {"fg_color": COL_CARD, "border_color": COL_BORDER_ACCENT,
+                   "text_color": COL_TEXT}
 
     def _nav_btn(self, key: str, text: str, row: int) -> None:
-        btn = ctk.CTkButton(self, text="", anchor="w", height=42, corner_radius=9,
-                             fg_color="transparent", hover_color=COL_CARD,
-                             command=lambda: self.on_nav(key))
+        # Le libellé est le TEXTE DU BOUTON, plus un CTkLabel posé dessus.
+        # Ce label peignait son propre fond derrière le texte : d'où le
+        # rectangle plus clair, l'effet « surligné ». Le bouton dessine son
+        # texte lui-même, donc plus de rectangle — et plus besoin de relayer
+        # le clic que le label interceptait.
+        btn = ctk.CTkButton(self, text=text, anchor="w", height=42, corner_radius=9,
+                             font=font(13), border_spacing=self.NAV_TEXT_PAD,
+                             border_width=1, hover_color=COL_CARD_HOVER,
+                             command=lambda: self.on_nav(key), **self._NAV_IDLE)
         btn.grid(row=row, column=0, sticky="ew", padx=12, pady=3)
-
-        icon = ctk.CTkLabel(btn, text=self.NAV_ICONS.get(key, ""), font=font(14),
-                             width=self.NAV_ICON_WIDTH, anchor="center", fg_color="transparent")
-        icon.place(x=12, rely=0.5, anchor="w")
-        label = ctk.CTkLabel(btn, text=text, font=font(13), text_color=COL_TEXT,
-                              anchor="w", fg_color="transparent")
-        label.place(x=12 + self.NAV_ICON_WIDTH, rely=0.5, anchor="w")
-
-        # Les labels posés sur le bouton interceptent le clic : on le relaie.
-        for widget in (icon, label):
-            widget.bind("<Button-1>", lambda _e, k=key: self.on_nav(k))
-
         self.nav_buttons[key] = btn
-        self.nav_labels[key] = label
 
     def set_active(self, key: str) -> None:
         for k, btn in self.nav_buttons.items():
-            btn.configure(fg_color=COL_CARD if k == key else "transparent",
-                          border_width=1 if k == key else 0,
-                          border_color=COL_BORDER_ACCENT if k == key else COL_BORDER)
+            btn.configure(**(self._NAV_ACTIVE if k == key else self._NAV_IDLE))
 
     def set_running_state(self, running: bool) -> None:
         self._is_running = running
@@ -191,10 +183,10 @@ class Sidebar(ctk.CTkFrame):
     def refresh_labels(self) -> None:
         self._brand_icon_lbl.configure(text=t("SIDEBAR_BRAND_ICON"))
         self._brand_suffix_lbl.configure(text=t("SIDEBAR_BRAND_SUFFIX"))
-        self.nav_labels["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
-        self.nav_labels["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
-        self.nav_labels["twitch_chat"].configure(text=t("SIDEBAR_NAV_TWITCH_CHAT"))
-        self.nav_labels["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
+        self.nav_buttons["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
+        self.nav_buttons["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
+        self.nav_buttons["twitch_chat"].configure(text=t("SIDEBAR_NAV_TWITCH_CHAT"))
+        self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
         self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
         self.start_btn.configure(text=t("SIDEBAR_BTN_START"))

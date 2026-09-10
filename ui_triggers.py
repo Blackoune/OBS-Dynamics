@@ -13,8 +13,8 @@ from triggers import (DURATION_PRESETS_MS, MEDIA_EXTENSIONS, MEDIA_TYPES,
                       TriggerRule, TriggerStore)
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT, COL_BG,
                        COL_BORDER, COL_BORDER_ACCENT, COL_CARD, COL_RED,
-                       COL_TEXT, COL_TEXT_MUTED, COL_YELLOW, _try_enable_dnd,
-                       ctk, font)
+                       COL_RING_ACTIVE, COL_TEXT, COL_TEXT_MUTED, COL_YELLOW,
+                       _try_enable_dnd, ctk, font)
 
 
 # ============================================================================
@@ -79,7 +79,7 @@ class TriggerRow(ctk.CTkFrame):
         self._duration_menu.grid(row=0, column=3, padx=8, pady=14)
 
         self._delete_btn = ctk.CTkButton(
-            card, text=t("TRIGGER_BTN_DELETE"), width=42, height=38,
+            card, text=t("TRIGGER_BTN_DELETE"), width=84, height=38,
             fg_color="#3A1420", hover_color=COL_RED, font=font(12),
             command=lambda: self._on_delete(self._rule))
         self._delete_btn.grid(row=0, column=4, padx=(8, 14), pady=14)
@@ -110,7 +110,7 @@ class TriggerRow(ctk.CTkFrame):
         self._copy_btn.grid(row=0, column=2, padx=(8, 12), pady=8)
 
         self._status_lbl = ctk.CTkLabel(self, text=self._status_text(), font=font(10),
-                                         text_color=COL_TEXT_MUTED, anchor="w")
+                                         text_color=self._status_color(), anchor="w")
         self._status_lbl.grid(row=2, column=0, sticky="w", padx=20, pady=(4, 0))
 
     # -- Libellés ---------------------------------------------------------- #
@@ -143,6 +143,16 @@ class TriggerRow(ctk.CTkFrame):
             return t("TRIGGER_DURATION_HOLD_HINT")
         return t("TRIGGER_STATUS_READY")
 
+    def _status_color(self) -> str:
+        """Le point plein en tête du libellé est neutre : c'est la couleur du
+        texte qui distingue « prêt » (vert) de « incomplet » (jaune). Avant, ce
+        vert venait de l'emoji de coche ; le label, lui, restait gris."""
+        if not self._rule.is_complete:
+            return COL_YELLOW
+        if self._rule.duration_ms <= 0:
+            return COL_TEXT_MUTED      # simple rappel, pas un état
+        return COL_RING_ACTIVE         # même vert que les cartes actives
+
     def _on_duration_changed(self, _label: str) -> None:
         chosen = self._duration_menu.get()
         for ms in DURATION_PRESETS_MS:
@@ -161,7 +171,8 @@ class TriggerRow(ctk.CTkFrame):
         self._drop_zone.configure(
             text=self._media_label(),
             text_color=COL_TEXT if self._rule.media_path else COL_TEXT_MUTED)
-        self._status_lbl.configure(text=self._status_text())
+        self._status_lbl.configure(text=self._status_text(),
+                                   text_color=self._status_color())
 
     # -- Capture du raccourci ---------------------------------------------- #
 
@@ -187,15 +198,16 @@ class TriggerRow(ctk.CTkFrame):
             return
         conflict = self._store.conflicting(combo, exclude_id=self._rule.id)
         if conflict is not None:
+            # refresh() AVANT le message : il réécrit texte et couleur de la
+            # ligne d'état, donc placé après il effaçait l'avertissement.
+            self.refresh()
             self._status_lbl.configure(
                 text=t("TRIGGER_ERR_HOTKEY_TAKEN", combo=format_combo(combo)),
                 text_color=COL_RED)
-            self.refresh()
             return
         self._rule.hotkey = combo
         self._store.upsert(self._rule)
-        self._status_lbl.configure(text_color=COL_TEXT_MUTED)
-        self.refresh()
+        self.refresh()          # remet aussi la couleur d'état
         self._on_changed()
 
     # -- Média -------------------------------------------------------------- #
@@ -348,15 +360,13 @@ class TriggersView(ctk.CTkFrame):
 
     def _render_empty_state(self) -> None:
         # `box` est centré dans une cellule qui occupe toute la largeur, et
-        # chaque enfant est packé avec fill="x" + un label ancré au centre.
-        # Sans cela l'emoji, seul enfant étroit, se calait sur la largeur du
-        # bloc le plus large au lieu du centre géométrique de la vue.
+        # chaque enfant est packé avec fill="x" + un label ancré au centre :
+        # sinon un enfant étroit se cale sur la largeur du bloc le plus large
+        # au lieu du centre géométrique de la vue. Le gros glyphe de clavier
+        # qui ouvrait ce bloc est parti avec les autres pictogrammes : contour
+        # fin, il jurait avec les glyphes pleins gardés ailleurs.
         box = ctk.CTkFrame(self.scroll, fg_color="transparent")
         box.grid(row=0, column=0, pady=60)
-
-        icon = ctk.CTkLabel(box, text="⌨", font=font(44), text_color=COL_TEXT_MUTED,
-                             anchor="center", justify="center")
-        icon.pack(fill="x")
 
         ctk.CTkLabel(box, text=t("TRIGGERS_EMPTY_TITLE"), font=font(15, "bold"),
                      text_color=COL_TEXT, anchor="center",

@@ -144,3 +144,43 @@ def test_bindings_roundtrip(tmp_path):
     p = tmp_path / "hk.json"
     assert hotkeys.save_bindings(p, {"f9": "in_game"})
     assert hotkeys.load_bindings(p) == {"f9": "in_game"}
+
+
+def test_an_extra_state_wins_when_its_screen_is_the_one_displayed(app_module, tmp_path,
+                                                                 monkeypatch):
+    """Un état supplémentaire concourt exactement comme Menu et En jeu : le
+    meilleur score l'emporte, quel que soit le nombre d'états."""
+    import cv2
+    import numpy as np
+    m = app_module
+    monkeypatch.setattr(m.detection, "is_game_active", lambda game: True)
+
+    def png(path, shade):
+        img = np.full((300, 400, 3), shade, dtype=np.uint8)
+        cv2.rectangle(img, (30, 40), (370, 120), (250, 250, 250), -1)
+        cv2.putText(img, str(shade[0]), (40, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 5)
+        cv2.imwrite(str(path), img)
+        return str(path)
+
+    menu = png(tmp_path / "menu.png", (30, 30, 30))
+    ingame = png(tmp_path / "jeu.png", (120, 60, 60))
+    carte = png(tmp_path / "carte.png", (200, 200, 60))
+
+    game = m.Game(id="g", name="Jeu", source="manual", active_match="j.exe",
+                  menu_images=[menu], ingame_images=[ingame],
+                  extra_states=[{"id": "x1", "name": "Carte", "images": [carte],
+                                 "scene": "Scene Carte"}])
+    screen = m._downscale(cv2.imread(carte))
+    assert m.detect_game_state(game, 0.6, screen) == "extra:x1"
+
+
+def test_the_scene_of_an_extra_state_is_the_one_sent_to_obs(app_module):
+    m = app_module
+    game = m.Game(id="g", name="Jeu", source="manual", active_match="j.exe",
+                  menu_images=["m.png"], ingame_images=["g.png"],
+                  obs_scene_menu="Menu", obs_scene_ingame="Jeu",
+                  extra_states=[{"id": "x1", "name": "Carte", "images": ["c.png"],
+                                 "scene": "Scene Carte"}])
+    assert m.ScanWorker._scene_for_state(game, "extra:x1") == "Scene Carte"
+    assert m.ScanWorker._scene_for_state(game, "extra:inconnu") == ""
+    assert m.ScanWorker._scene_for_state(game, "menu") == "Menu"

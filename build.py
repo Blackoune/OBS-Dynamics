@@ -85,14 +85,20 @@ def run_pyinstaller() -> None:
 
 
 def collect_output() -> None:
-    exe_name = "OBSDynamics.exe" if sys.platform == "win32" else "OBSDynamics"
+    exe_name = "Dynamics.exe" if sys.platform == "win32" else "Dynamics"
     exe_path = DIST_DIR / exe_name
     if not exe_path.exists():
         print(f"[build] ERREUR : exécutable attendu introuvable : {exe_path}")
         sys.exit(1)
     RELEASE_DIR.mkdir(exist_ok=True)
     dest = RELEASE_DIR / exe_name
-    shutil.copy2(exe_path, dest)
+    try:
+        shutil.copy2(exe_path, dest)
+    except PermissionError:
+        # Windows verrouille un .exe en cours d'exécution : sans ce message le
+        # rebuild automatique échouerait avec une trace illisible dans le log.
+        print(f"[build] ERREUR : {dest} est verrouillé — ferme Dynamics puis relance le build.")
+        sys.exit(1)
     print(f"[build] Exécutable copié -> {dest}")
 
 

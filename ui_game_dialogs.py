@@ -26,6 +26,20 @@ from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT, COL_BG,
 # ============================================================================
 PREVIEW_MAX_WIDTH = 760
 
+def bordered_menu(parent, **kwargs) -> tuple[Any, Any]:
+    """CTkOptionMenu entouré d'un cadre fin. Retourne (cadre, menu).
+
+    CustomTkinter REFUSE `border_width` sur un CTkOptionMenu (ValueError :
+    argument non supporté) — le contour ne peut venir que d'un cadre parent.
+    Sans lui, un menu déroulant sur fond sombre n'a pour repère que sa flèche :
+    rien ne montre où le champ commence et où il s'arrête.
+    """
+    frame = ctk.CTkFrame(parent, fg_color="transparent", border_width=1,
+                         border_color=COL_BORDER, corner_radius=8)
+    menu = ctk.CTkOptionMenu(frame, **kwargs)
+    menu.pack(fill="both", expand=True, padx=2, pady=2)
+    return frame, menu
+
 
 class PatchReviewDialog(ctk.CTkToplevel):
     """Montre CE QUE l'agent regarde dans une capture de référence.
@@ -112,12 +126,15 @@ class PatchReviewDialog(ctk.CTkToplevel):
         zone_row = ctk.CTkFrame(manual_box, fg_color="transparent")
         zone_row.grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 6))
         self._zone_var = ctk.StringVar()
-        self._zone_menu = ctk.CTkOptionMenu(
+        # MENU_FRAME : sans contour, un menu déroulant sur fond sombre se fond
+        # dans la fenêtre — rien ne dit où le champ s'arrête tant qu'on ne l'a
+        # pas ouvert.
+        zone_frame, self._zone_menu = bordered_menu(
             zone_row, values=[""], variable=self._zone_var,
             width=240, fg_color=COL_BG, button_color=COL_ACCENT,
             button_hover_color=COL_ACCENT_HOVER, font=font(11),
             command=self._on_zone_selected)
-        self._zone_menu.pack(side="left")
+        zone_frame.pack(side="left")
         ctk.CTkButton(zone_row, text="+", width=38, height=28, font=font(16, "bold"),
                       fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
                       text_color="#0F0C1B", command=self._add_zone).pack(side="left", padx=(8, 0))
@@ -428,6 +445,134 @@ class PatchReviewDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+
+# ============================================================================
+# COMPOSANT : SECTION D'ÉTAT (images de référence + scène OBS)
+# ============================================================================
+class StateSection(ctk.CTkFrame):
+    """Un état de détection dans la fiche de jeu.
+
+    Menu, En jeu et chaque état supplémentaire partagent ce bloc : liste
+    d'images à laquelle on AJOUTE (l'ancien sélecteur remplaçait la liste
+    entière à chaque clic), cadrage réglable image par image, et scène OBS.
+    """
+
+    NAME_MAX = 34          # troncature du nom de fichier affiché
+
+    def __init__(self, master, modal: "GameModal", key: str, title: str,
+                 images: Sequence[str], scene: str, scene_names: list[str],
+                 editable_name: bool, state_id: str = "") -> None:
+        super().__init__(master, fg_color=COL_CARD, corner_radius=10,
+                         border_width=1, border_color=COL_BORDER)
+        self._modal = modal
+        self.key = key
+        self.state_id = state_id
+        self.images: list[str] = list(images)
+        self.name_var = ctk.StringVar(value=title)
+        self.scene_var = ctk.StringVar(value=scene)
+        self.grid_columnconfigure(0, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
+        header.grid_columnconfigure(0, weight=1)
+        if editable_name:
+            ctk.CTkEntry(header, textvariable=self.name_var, height=30,
+                         placeholder_text=t("GAME_MODAL_EXTRA_NAME"),
+                         fg_color=COL_BG, border_color=COL_BORDER,
+                         font=font(12, "bold")).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(header, text=t("GAME_MODAL_BTN_REMOVE_STATE"), width=90, height=30,
+                          fg_color=COL_BG, hover_color=COL_RED, font=font(11),
+                          border_width=1, border_color=COL_BORDER,
+                          command=self._remove_self).grid(row=0, column=1, padx=(8, 0))
+        else:
+            ctk.CTkLabel(header, text=title, font=font(12, "bold"),
+                         anchor="w").grid(row=0, column=0, sticky="w")
+
+        self._rows_box = ctk.CTkFrame(self, fg_color="transparent")
+        self._rows_box.grid(row=1, column=0, sticky="ew", padx=12)
+        self._rows_box.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkButton(self, text=t("GAME_MODAL_BTN_ADD_IMAGES"), height=30,
+                      fg_color=COL_BG, hover_color=COL_CARD_HOVER, font=font(11),
+                      border_width=1, border_color=COL_BORDER,
+                      command=self.add_images).grid(row=2, column=0, sticky="ew",
+                                                    padx=12, pady=(6, 8))
+
+        ctk.CTkLabel(self, text=t("GAME_MODAL_LABEL_SCENE"), font=font(11),
+                     text_color=COL_TEXT_MUTED, anchor="w").grid(row=3, column=0,
+                                                                 sticky="w", padx=12)
+        scene_frame, _menu = bordered_menu(
+            self, values=scene_names or [t("GAME_MODAL_SCENE_NOT_CONNECTED")],
+            variable=self.scene_var, fg_color=COL_BG, button_color=COL_ACCENT,
+            button_hover_color=COL_ACCENT_HOVER)
+        scene_frame.grid(row=4, column=0, sticky="ew", padx=12, pady=(2, 12))
+        self.refresh_rows()
+
+    def name_now(self) -> str:
+        return self.name_var.get().strip()
+
+    # -- Images ------------------------------------------------------------- #
+
+    def add_images(self) -> None:
+        """AJOUTE des images à la liste. Les doublons sont ignorés : rechoisir
+        un fichier déjà présent le ferait apparaître deux fois."""
+        paths = filedialog.askopenfilenames(
+            title=t("GAME_MODAL_FILEDIALOG_TITLE"),
+            filetypes=[(t("GAME_MODAL_FILEDIALOG_FILTER_LABEL"), "*.png")])
+        added = [path for path in paths if path not in self.images]
+        if not added:
+            return
+        self.images.extend(added)
+        self.refresh_rows()
+        # Contrôle du cadrage sur la première image ajoutée, juste après le
+        # choix : c'est le seul moment où l'utilisateur peut corriger sans être
+        # interrompu en pleine partie.
+        self._modal.open_patch_review(added[0], self)
+
+    def remove_image(self, path: str) -> None:
+        self.images = [kept for kept in self.images if kept != path]
+        self.refresh_rows()
+
+    def refresh_rows(self) -> None:
+        """Redessine une ligne par image : nom, cadrage, retrait.
+
+        Un simple compteur (« 3 image(s) ») ne disait pas LESQUELLES, et ne
+        permettait ni d'en retirer une seule ni de régler son cadrage.
+        """
+        for child in self._rows_box.winfo_children():
+            child.destroy()
+        if not self.images:
+            ctk.CTkLabel(self._rows_box, text=t("GAME_MODAL_IMAGES_NONE"), font=font(11),
+                         text_color=COL_TEXT_MUTED, anchor="w").grid(row=0, column=0,
+                                                                     sticky="w", pady=2)
+            return
+        for index, path in enumerate(self.images):
+            row = ctk.CTkFrame(self._rows_box, fg_color="transparent")
+            row.grid(row=index, column=0, sticky="ew", pady=2)
+            row.grid_columnconfigure(0, weight=1)
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if len(name) > self.NAME_MAX:
+                name = name[:self.NAME_MAX - 1] + "\u2026"
+            ctk.CTkLabel(row, text=name, font=font(11), text_color=COL_TEXT_MUTED,
+                         anchor="w").grid(row=0, column=0, sticky="ew")
+            stale = self._modal.review_is_stale(path)
+            ctk.CTkButton(row, text=t("GAME_MODAL_BTN_REVIEW_STALE") if stale
+                          else t("GAME_MODAL_BTN_REVIEW"),
+                          width=140, height=26, font=font(11), fg_color=COL_BG,
+                          hover_color=COL_CARD_HOVER, border_width=1,
+                          border_color=COL_YELLOW if stale else COL_BORDER,
+                          command=lambda p=path: self._modal.open_patch_review(p, self),
+                          ).grid(row=0, column=1, padx=(8, 4))
+            ctk.CTkButton(row, text="\u00d7", width=28, height=26, font=font(13),
+                          fg_color=COL_BG, hover_color=COL_RED, border_width=1,
+                          border_color=COL_BORDER,
+                          command=lambda p=path: self.remove_image(p),
+                          ).grid(row=0, column=2)
+
+    def _remove_self(self) -> None:
+        self._modal.remove_state_section(self)
+
+
 # ============================================================================
 # MODAL : AJOUTER / MODIFIER UN JEU
 # ============================================================================
@@ -449,9 +594,10 @@ class GameModal(ctk.CTkToplevel):
         self._on_saved = on_saved
         self._game = game
         self._steam_candidates = steam_candidates
-        self._menu_images: list[str] = list(game.menu_images) if game else []
-        self._ingame_images: list[str] = list(game.ingame_images) if game else []
+        initial_menu = list(game.menu_images) if game else []
+        initial_ingame = list(game.ingame_images) if game else []
         self._patch_reviews: dict[str, dict[str, Any]] = dict(game.patch_reviews) if game else {}
+        self._sections: list[StateSection] = []
 
         scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=16, pady=16)
@@ -477,10 +623,10 @@ class GameModal(ctk.CTkToplevel):
         # --- Steam: dropdown des jeux détectés non encore ajoutés ---
         self.steam_var = ctk.StringVar()
         steam_names = [f"{g['name']} (appid {g['appid']})" for g in steam_candidates] or [t("GAME_MODAL_STEAM_NONE_DETECTED")]
-        self.steam_menu = ctk.CTkOptionMenu(scroll, values=steam_names, variable=self.steam_var,
-                                             fg_color=COL_BG, button_color=COL_ACCENT,
-                                             button_hover_color=COL_ACCENT_HOVER)
-        self.steam_menu.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 10))
+        steam_frame, self.steam_menu = bordered_menu(
+            scroll, values=steam_names, variable=self.steam_var, fg_color=COL_BG,
+            button_color=COL_ACCENT, button_hover_color=COL_ACCENT_HOVER)
+        steam_frame.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 10))
 
         # --- Manuel: nom + exe ---
         self.name_var = ctk.StringVar(value=game.name if game else "")
@@ -488,57 +634,33 @@ class GameModal(ctk.CTkToplevel):
         self.name_entry = self._labeled_entry(scroll, t("GAME_MODAL_LABEL_NAME"), self.name_var)
         self.exe_entry = self._labeled_entry(scroll, t("GAME_MODAL_LABEL_EXE"), self.exe_var)
 
-        # --- Images ---
-        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_MENU"), font=font(12, "bold"),
-                     anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(10, 2))
-        self.menu_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._menu_images),
-                                           text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
-        self.menu_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
-        menu_btns = ctk.CTkFrame(scroll, fg_color="transparent")
-        menu_btns.grid(row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
-        menu_btns.grid_columnconfigure(0, weight=1)
-        ctk.CTkButton(menu_btns, text=t("GAME_MODAL_BTN_PICK_MENU_IMAGES"), height=30,
-                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("menu")).grid(row=0, column=0, sticky="ew")
-        self._review_btns: dict[str, ctk.CTkButton] = {}
-        self._review_btns["menu"] = ctk.CTkButton(
-            menu_btns, text=t("GAME_MODAL_BTN_REVIEW"), height=30, width=150,
-            fg_color=COL_BG, hover_color=COL_CARD_HOVER, border_width=1,
-            border_color=COL_BORDER, font=font(11),
-            command=lambda: self.open_patch_review("menu"))
-        self._review_btns["menu"].grid(row=0, column=1, padx=(8, 0))
+        # --- États de détection : Menu, En jeu, puis ceux de l'utilisateur ---
+        self._scene_names = self._fetch_scene_names()
+        self._states_box = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._states_box.grid(row=self._next_row(), column=0, sticky="ew", pady=(8, 0))
 
-        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_IMAGES_INGAME"), font=font(12, "bold"),
-                     anchor="w").grid(row=self._next_row(), column=0, sticky="w", pady=(4, 2))
-        self.ingame_list_lbl = ctk.CTkLabel(scroll, text=self._images_summary(self._ingame_images),
-                                             text_color=COL_TEXT_MUTED, anchor="w", font=font(11))
-        self.ingame_list_lbl.grid(row=self._next_row(), column=0, sticky="w")
-        game_btns = ctk.CTkFrame(scroll, fg_color="transparent")
-        game_btns.grid(row=self._next_row(), column=0, sticky="ew", pady=(4, 10))
-        game_btns.grid_columnconfigure(0, weight=1)
-        ctk.CTkButton(game_btns, text=t("GAME_MODAL_BTN_PICK_INGAME_IMAGES"), height=30,
-                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
-                       command=lambda: self._pick_images("ingame")).grid(row=0, column=0, sticky="ew")
-        self._review_btns["ingame"] = ctk.CTkButton(
-            game_btns, text=t("GAME_MODAL_BTN_REVIEW"), height=30, width=150,
-            fg_color=COL_BG, hover_color=COL_CARD_HOVER, border_width=1,
-            border_color=COL_BORDER, font=font(11),
-            command=lambda: self.open_patch_review("ingame"))
-        self._review_btns["ingame"].grid(row=0, column=1, padx=(8, 0))
-        self._refresh_review_buttons()
+        self._add_section("menu", t("GAME_MODAL_LABEL_IMAGES_MENU"),
+                          initial_menu, game.obs_scene_menu if game else "",
+                          editable_name=False)
+        self._add_section("in_game", t("GAME_MODAL_LABEL_IMAGES_INGAME"),
+                          initial_ingame, game.obs_scene_ingame if game else "",
+                          editable_name=False)
+        for extra in (game.extra_states if game else []):
+            self._add_section(f"{Game.EXTRA_PREFIX}{extra.get('id', '')}",
+                              str(extra.get("name", "")),
+                              [str(path) for path in (extra.get("images") or [])],
+                              str(extra.get("scene", "")), editable_name=True,
+                              state_id=str(extra.get("id", "")))
 
-        # --- Scènes OBS ---
-        scene_names = self._fetch_scene_names()
-        self.scene_menu_var = ctk.StringVar(value=game.obs_scene_menu if game else "")
-        self.scene_ingame_var = ctk.StringVar(value=game.obs_scene_ingame if game else "")
-        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_MENU"), font=font(12), anchor="w",
-                     text_color=COL_TEXT_MUTED).grid(row=self._next_row(), column=0,
-                                                     sticky="w", pady=(6, 2))
-        self._scene_selector(scroll, self._next_row(), scene_names, self.scene_menu_var)
-        ctk.CTkLabel(scroll, text=t("GAME_MODAL_LABEL_SCENE_INGAME"), font=font(12), anchor="w",
-                     text_color=COL_TEXT_MUTED).grid(row=self._next_row(), column=0,
-                                                     sticky="w", pady=(6, 2))
-        self._scene_selector(scroll, self._next_row(), scene_names, self.scene_ingame_var)
+        ctk.CTkLabel(scroll, text=t("GAME_MODAL_EXTRA_HINT"), font=font(10),
+                     text_color=COL_TEXT_MUTED, anchor="w", wraplength=420,
+                     justify="left").grid(row=self._next_row(), column=0,
+                                          sticky="w", pady=(8, 2))
+        ctk.CTkButton(scroll, text=t("GAME_MODAL_BTN_ADD_STATE"), height=32,
+                       fg_color=COL_CARD, hover_color=COL_CARD_HOVER, font=font(12),
+                       border_width=1, border_color=COL_BORDER,
+                       command=self._add_extra_state).grid(row=self._next_row(), column=0,
+                                                           sticky="ew", pady=(0, 6))
 
         # --- Création automatique des scènes dans OBS ---
         self.create_scenes_var = ctk.BooleanVar(value=False)
@@ -585,12 +707,6 @@ class GameModal(ctk.CTkToplevel):
         entry.grid(row=self._next_row(), column=0, sticky="ew", pady=(0, 8))
         return entry
 
-    def _scene_selector(self, parent, row: int, scene_names: list[str], var: ctk.StringVar) -> None:
-        values = scene_names or [t("GAME_MODAL_SCENE_NOT_CONNECTED")]
-        ctk.CTkOptionMenu(parent, values=values, variable=var, fg_color=COL_BG,
-                           button_color=COL_ACCENT, button_hover_color=COL_ACCENT_HOVER
-                           ).grid(row=row, column=0, sticky="ew")
-
     def _fetch_scene_names(self) -> list[str]:
         client = self._get_obs_client()
         if client is None or not client.is_connected:
@@ -615,67 +731,97 @@ class GameModal(ctk.CTkToplevel):
         for entry in (self.name_entry, self.exe_entry):
             entry.configure(state="disabled" if is_steam else "normal")
 
-    def _pick_images(self, kind: str) -> None:
-        paths = filedialog.askopenfilenames(
-            title=t("GAME_MODAL_FILEDIALOG_TITLE"),
-            filetypes=[(t("GAME_MODAL_FILEDIALOG_FILTER_LABEL"), "*.png")],
-        )
-        if not paths:
-            return
-        if kind == "menu":
-            self._menu_images = list(paths)
-            self.menu_list_lbl.configure(text=self._images_summary(self._menu_images))
-        else:
-            self._ingame_images = list(paths)
-            self.ingame_list_lbl.configure(text=self._images_summary(self._ingame_images))
-        self._refresh_review_buttons()
-        # Contrôle du cadrage sur la capture principale, juste après le choix :
-        # c'est le seul moment où l'utilisateur peut corriger sans être
-        # interrompu en pleine partie.
-        self.open_patch_review(kind)
+    # -- Sections d'état ----------------------------------------------------- #
+
+    # Les images de Menu et En jeu vivent maintenant dans leur section. Ces deux
+    # propriétés gardent le nom d'origine pour tout ce qui pilote le modal de
+    # l'extérieur, et rafraîchissent l'affichage à l'écriture.
+    @property
+    def _menu_images(self) -> list[str]:
+        return self._sections[0].images
+
+    @_menu_images.setter
+    def _menu_images(self, paths: Sequence[str]) -> None:
+        self._sections[0].images = list(paths)
+        self._sections[0].refresh_rows()
+
+    @property
+    def _ingame_images(self) -> list[str]:
+        return self._sections[1].images
+
+    @_ingame_images.setter
+    def _ingame_images(self, paths: Sequence[str]) -> None:
+        self._sections[1].images = list(paths)
+        self._sections[1].refresh_rows()
+
+    @property
+    def scene_menu_var(self) -> ctk.StringVar:
+        return self._sections[0].scene_var
+
+    @property
+    def scene_ingame_var(self) -> ctk.StringVar:
+        return self._sections[1].scene_var
+
+    def _add_section(self, key: str, title: str, images: Sequence[str], scene: str,
+                     editable_name: bool, state_id: str = "") -> StateSection:
+        section = StateSection(self._states_box, self, key=key, title=title, images=images,
+                               scene=scene, scene_names=self._scene_names,
+                               editable_name=editable_name, state_id=state_id)
+        section.pack(fill="x", pady=(0, 10))
+        self._sections.append(section)
+        return section
+
+    def _add_extra_state(self) -> StateSection:
+        """Ajoute un état vide. L'id est tiré ici : c'est lui qui relie l'état à
+        sa scène OBS et aux cadrages enregistrés, il doit exister avant même que
+        l'utilisateur ait tapé un nom."""
+        state_id = uuid.uuid4().hex
+        return self._add_section(f"{Game.EXTRA_PREFIX}{state_id}",
+                                 t("GAME_MODAL_EXTRA_DEFAULT_NAME"), [], "",
+                                 editable_name=True, state_id=state_id)
+
+    def remove_state_section(self, section: StateSection) -> None:
+        if section not in self._sections[2:]:
+            return          # Menu et En jeu ne se suppriment pas
+        self._sections.remove(section)
+        section.destroy()
 
     # -- Contrôle du cadrage automatique ------------------------------------ #
 
-    def _primary_image(self, kind: str) -> str:
-        images = self._menu_images if kind == "menu" else self._ingame_images
-        return images[0] if images else ""
-
-    def _review_is_stale(self, kind: str) -> bool:
+    def review_is_stale(self, path: str) -> bool:
         """L'image a-t-elle changé depuis la dernière validation ?
 
         C'est exactement le déclencheur demandé : on ne redemande rien tant que
         le fichier ne bouge pas dans le dossier, et on redemande dès qu'il bouge.
         """
-        path = self._primary_image(kind)
         if not path:
             return False
         review = self._patch_reviews.get(path)
         return not review or review.get("stamp") != image_stamp(path)
 
-    def _refresh_review_buttons(self) -> None:
-        for kind, button in getattr(self, "_review_btns", {}).items():
-            has_image = bool(self._primary_image(kind))
-            stale = self._review_is_stale(kind)
-            button.configure(
-                state="normal" if has_image else "disabled",
-                text=t("GAME_MODAL_BTN_REVIEW_STALE") if (has_image and stale)
-                else t("GAME_MODAL_BTN_REVIEW"),
-                border_color=COL_YELLOW if (has_image and stale) else COL_BORDER)
+    def open_patch_review(self, path: str, section: StateSection) -> None:
+        """Ouvre le cadrage d'UNE image précise.
 
-    def open_patch_review(self, kind: str) -> None:
-        path = self._primary_image(kind)
+        Le contrôle ne portait que sur la première image de chaque état : les
+        suivantes gardaient un cadrage que personne n'avait jamais vu.
+        """
         if not path:
             return
         # Les enregistrements antérieurs ne stockaient qu'un centre (2 valeurs) ;
         # extract_patches accepte les deux formats.
         review = self._patch_reviews.get(path, {})
+
         def boxes(key: str) -> list[tuple[float, ...]]:
             return [tuple(float(v) for v in box) for box in (review.get(key) or [])]
 
+        # Le verdict croisé compare l'état de CETTE image à tous les autres :
+        # avec des états supplémentaires, « menu contre en jeu » ne suffit plus.
+        others = [p for other in self._sections if other is not section
+                  for p in other.images]
         stored = review.get("count")
         PatchReviewDialog(
-            self, image_path=path, kind=kind,
-            menu_images=self._menu_images, ingame_images=self._ingame_images,
+            self, image_path=path, kind=section.key,
+            menu_images=list(section.images), ingame_images=others,
             excluded=boxes("excluded"), manual=boxes("manual"),
             count=int(stored) if stored else None,
             on_validated=lambda ex, man, n, p=path: self._on_review_validated(p, ex, man, n))
@@ -692,7 +838,8 @@ class GameModal(ctk.CTkToplevel):
             "count": count,
         }
         _REVIEWS.set(path, excluded, manual, count)
-        self._refresh_review_buttons()
+        for section in self._sections:
+            section.refresh_rows()   # le bouton « à revalider » redevient neutre
 
     def _create_obs_scenes(self, name: str, active_match: str) -> Optional[tuple[str, str]]:
         """Crée les scènes du jeu dans OBS. Retourne (menu, en_jeu) ou None si
@@ -753,8 +900,9 @@ class GameModal(ctk.CTkToplevel):
                 return
             source, active_match, appid = "manual", exe, ""
 
-        scene_menu = self._selected_scene(self.scene_menu_var)
-        scene_ingame = self._selected_scene(self.scene_ingame_var)
+        menu_section, ingame_section = self._sections[0], self._sections[1]
+        scene_menu = self._selected_scene(menu_section.scene_var)
+        scene_ingame = self._selected_scene(ingame_section.scene_var)
 
         if self.create_scenes_var.get():
             created = self._create_obs_scenes(name, active_match)
@@ -765,18 +913,27 @@ class GameModal(ctk.CTkToplevel):
             # servent qu'à remplir un champ resté vide.
             scene_menu = scene_menu or created[0]
             scene_ingame = scene_ingame or created[1]
-            self.scene_menu_var.set(scene_menu)
-            self.scene_ingame_var.set(scene_ingame)
+            menu_section.scene_var.set(scene_menu)
+            ingame_section.scene_var.set(scene_ingame)
+
+        extra_states = [{
+            "id": section.state_id,
+            "name": section.name_now() or t("GAME_MODAL_EXTRA_DEFAULT_NAME"),
+            "images": list(section.images),
+            "scene": self._selected_scene(section.scene_var),
+        } for section in self._sections[2:]]
+        known_images = {path for section in self._sections for path in section.images}
 
         game = Game(
             id=self._game.id if self._game else uuid.uuid4().hex,
             name=name, source=source, active_match=active_match, appid=appid,
-            menu_images=self._menu_images, ingame_images=self._ingame_images,
+            menu_images=list(menu_section.images), ingame_images=list(ingame_section.images),
             obs_scene_menu=scene_menu, obs_scene_ingame=scene_ingame,
+            extra_states=extra_states,
             # On ne garde que les validations des images encore référencées,
             # sinon games.json accumulerait indéfiniment des chemins morts.
             patch_reviews={path: review for path, review in self._patch_reviews.items()
-                           if path in self._menu_images or path in self._ingame_images},
+                           if path in known_images},
         )
         if self._store.upsert(game):
             self._on_saved()

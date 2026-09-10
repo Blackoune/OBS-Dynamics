@@ -39,12 +39,17 @@ COL_TEXT_MUTED = "#9B93B5"
 COL_GREEN = "#22C55E"
 COL_YELLOW = "#F1C40F"
 COL_RED = "#EF4444"
-# Pastille d'état des cartes de jeu : deux couleurs pleines, texte et contour
-# en blanc. Fond plein (et non teinte sombre + texte coloré) pour que la
-# pastille reste lisible par-dessus n'importe quelle jaquette.
-COL_BADGE_BG_INACTIVE = "#D93025"
-COL_BADGE_BG_ACTIVE = "#508267"
-COL_BADGE_FG = "#FFFFFF"
+
+# --- État des cartes de jeu (actif / inactif) -------------------------------
+# Le statut se lit sur DEUX signaux volontairement discrets plutôt qu'avec un
+# gros rectangle rouge : le liseré de la carte et une pastille translucide
+# incrustée dans la jaquette (voir ui_dashboard). Le rouge est réservé aux
+# erreurs — un jeu qui ne tourne pas n'est pas une erreur, d'où le gris ardoise.
+COL_RING_ACTIVE = "#3FBF87"     # liseré de la carte, jeu lancé
+COL_RING_IDLE = "#342B4F"       # liseré de la carte, jeu arrêté
+COL_DOT_ACTIVE = "#4ADE80"      # point de la pastille, jeu lancé
+COL_DOT_IDLE = "#8E86A8"        # point de la pastille, jeu arrêté
+COL_BADGE_FG = "#F3F0FA"
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -74,22 +79,25 @@ def state_label(state: str) -> str:
 
 # Le texte de la pastille dit déjà l'état précis (Menu, En jeu, Actif) : la
 # couleur ne distingue donc plus que « le jeu tourne » de « il ne tourne pas ».
-# STATE_COLORS n'existe plus : texte et contour sont blancs quel que soit l'état.
 def badge_text(state: str) -> str:
     """Libellé de la pastille : uniquement « Actif » ou « Inactif ».
 
     Les états fins (Menu, En jeu) restent calculés — c'est eux qui pilotent la
     bascule de scène OBS — mais ils n'apportent rien sur la carte : ce qu'on
-    veut y lire d'un coup d'œil, c'est si le jeu tourne ou non.
+    veut y lire d'un coup d'œil, c'est si le jeu tourne ou non. Le point est
+    dessiné dans l'image de la pastille, pas collé au texte : un glyphe « ● »
+    concaténé ici n'aurait ni la bonne taille ni la bonne couleur.
     """
-    label = state_label("inactive" if state == "inactive" else "active")
-    return f"\u25cf {label}"
+    return state_label("inactive" if state == "inactive" else "active")
 
 
-STATE_BADGE_BG = {
-    "inactive": COL_BADGE_BG_INACTIVE, "active": COL_BADGE_BG_ACTIVE,
-    "menu": COL_BADGE_BG_ACTIVE, "in_game": COL_BADGE_BG_ACTIVE,
-}
+def is_running(state: str) -> bool:
+    """Seule distinction visible sur une carte : le jeu tourne, ou non."""
+    return state != "inactive"
+
+
+STATE_RING = {True: COL_RING_ACTIVE, False: COL_RING_IDLE}
+STATE_DOT = {True: COL_DOT_ACTIVE, False: COL_DOT_IDLE}
 
 
 # ============================================================================

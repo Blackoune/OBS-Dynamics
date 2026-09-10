@@ -87,13 +87,19 @@ class SettingsView(ctk.CTkFrame):
                                         fg_color=COL_BG, border_color=COL_BORDER)
         self._pwd_entry.pack(side="left")
         self._pwd_visible = False
-        ctk.CTkButton(wrapper, text="👁", width=34, height=34, fg_color=COL_BG,
-                      hover_color=COL_BORDER, command=self._toggle_pwd).pack(side="left", padx=(4, 0))
+        # Point plein = mot de passe masqué, cercle vide = mot de passe en
+        # clair. Deux glyphes monochromes de la même famille que le reste de
+        # l'interface, là où l'emoji d'œil imposait ses propres couleurs.
+        self._pwd_btn = ctk.CTkButton(wrapper, text="●", width=34, height=34,
+                                      fg_color=COL_BG, hover_color=COL_BORDER,
+                                      command=self._toggle_pwd)
+        self._pwd_btn.pack(side="left", padx=(4, 0))
         return lbl
 
     def _toggle_pwd(self) -> None:
         self._pwd_visible = not self._pwd_visible
         self._pwd_entry.configure(show="" if self._pwd_visible else "•")
+        self._pwd_btn.configure(text="○" if self._pwd_visible else "●")
 
     def _load_into_form(self) -> None:
         cfg = self.config_mgr.load()

@@ -6,7 +6,9 @@ import time
 from tkinter import messagebox
 from typing import Any, Callable, Optional
 
-from PIL import Image
+from functools import lru_cache
+
+from PIL import Image, ImageDraw, ImageFont
 
 from app_paths import logger
 from cover_service import GameCoverService
@@ -14,10 +16,97 @@ from games import Game, GameStore, SteamScanner
 from i18n import t
 from obs_client import AsyncLoopThread, OBSClient
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,
-                       COL_BADGE_BG_INACTIVE, COL_BADGE_FG, COL_BORDER,
-                       COL_CARD, COL_CARD_HOVER, COL_GREEN, COL_RED, COL_TEXT,
-                       COL_TEXT_MUTED, STATE_BADGE_BG, badge_text, ctk, font)
+                       COL_BADGE_FG, COL_BG, COL_BORDER, COL_CARD,
+                       COL_CARD_HOVER, COL_GREEN, COL_RED, COL_TEXT,
+                       COL_TEXT_MUTED, STATE_DOT, STATE_RING, badge_text, ctk,
+                       font, is_running)
 from ui_game_dialogs import GameModal
+
+
+# ============================================================================
+# RENDU PIL : coins arrondis de la jaquette + pastille d'état incrustée
+# ============================================================================
+# Pourquoi PIL plutôt que des widgets CustomTkinter : CTk peint le reste du
+# canvas d'un coin arrondi avec la couleur du PARENT, pas celle de l'image
+# posée dessous. Une pastille CTkFrame arrondie sur la jaquette montrait donc
+# quatre encoches sombres aux angles, et l'artwork restait un rectangle net
+# dans une carte arrondie. En composant les deux DANS l'image on récupère
+# l'anticrénelage et l'alpha réels de PIL — et deux widgets Tk de moins par
+# carte, ce qui compte sur une grille de quarante jeux.
+_BADGE_H = 22          # hauteur de la pastille, en px logiques
+_BADGE_MARGIN = 9      # retrait par rapport aux bords de la jaquette
+_BADGE_DOT = 7
+_SUPERSAMPLE = 4       # masque des coins tracé 4x puis réduit = bords lisses
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    color = color.lstrip("#")
+    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+@lru_cache(maxsize=8)
+def _badge_font(px: int) -> Any:
+    """Police de la pastille. Les familles sont essayées dans l'ordre ;
+    `load_default()` ne ferme la liste que pour ne jamais faire échouer un
+    rendu à cause d'une police absente."""
+    for name in ("seguisb.ttf", "segoeui.ttf", "DejaVuSans.ttf", "Arial.ttf"):
+        try:
+            return ImageFont.truetype(name, px)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _rounded_mask(size: tuple[int, int], radius: float) -> Image.Image:
+    """Masque d'un rectangle à coins arrondis, anticrénelé.
+
+    Tracé en `_SUPERSAMPLE`x puis réduit : `rounded_rectangle` ne lisse pas
+    ses bords, et un arrondi crénelé sur une carte se voit tout de suite.
+    """
+    big = (size[0] * _SUPERSAMPLE, size[1] * _SUPERSAMPLE)
+    mask = Image.new("L", big, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big[0] - 1, big[1] - 1),
+                                           radius=radius * _SUPERSAMPLE, fill=255)
+    return mask.resize(size, Image.Resampling.LANCZOS)
+
+
+def _with_badge(base: Image.Image, state: str, scale: float,
+                margin: float = _BADGE_MARGIN) -> Image.Image:
+    """Incruste la pastille « Actif / Inactif » en haut à droite.
+
+    Fond sombre translucide + liseré clair à 15 % : la pastille reste lisible
+    sur une jaquette claire comme sombre sans masquer l'artwork, là où un
+    rectangle plein rouge ou vert faisait tache.
+    """
+    def px(value: float) -> int:
+        return max(1, round(value * scale))
+
+    try:
+        label = badge_text(state)
+        fnt = _badge_font(max(8, round(11 * scale)))
+        margin, height, dot = px(margin), px(_BADGE_H), px(_BADGE_DOT)
+        side = px(9)
+        width = side + dot + px(6) + round(fnt.getlength(label)) + side
+        x1, y0 = base.width - margin, margin
+        x0, y1 = x1 - width, y0 + height
+
+        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=height / 2,
+                               fill=(13, 10, 24, 214), outline=(255, 255, 255, 38),
+                               width=px(1))
+        middle = (y0 + y1) / 2
+        dot_x = x0 + side
+        draw.ellipse((dot_x, middle - dot / 2, dot_x + dot, middle + dot / 2),
+                     fill=_rgb(STATE_DOT[is_running(state)]))
+        draw.text((dot_x + dot + px(6), middle), label, font=fnt,
+                  fill=_rgb(COL_BADGE_FG), anchor="lm")
+        return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
+    except Exception:
+        # Police exotique, `anchor` non supporté par une police bitmap... :
+        # mieux vaut une jaquette sans pastille qu'une carte vide.
+        logger.debug("Incrustation de la pastille d'état échouée.", exc_info=True)
+        return base
 
 
 # ============================================================================
@@ -30,13 +119,43 @@ class GameCard(ctk.CTkFrame):
 
     CARD_WIDTH = 190
     CARD_HEIGHT = 285  # ratio 2:3
+    # Liseré autour de la jaquette : c'est LUI qui dit l'état de la carte.
+    # 4 px : assez pour se lire d'un coup d'œil sur une grille entière, et
+    # assez épais pour que l'arrondi extérieur et celui de la jaquette restent
+    # concentriques (rayon intérieur = rayon extérieur - épaisseur).
+    BORDER_W = 4
+    CARD_RADIUS = 14
+    COVER_RADIUS = CARD_RADIUS - BORDER_W
+    INNER_WIDTH = CARD_WIDTH - 2 * BORDER_W
+    INNER_HEIGHT = CARD_HEIGHT - 2 * BORDER_W
+    # L'overlay de survol occupe EXACTEMENT la place de la jaquette : même
+    # retrait, même arrondi. Le coin de son rectangle mord bien dans l'arc du
+    # liseré, mais `bg_color` (la couleur peinte hors des coins arrondis) est
+    # réglée sur la couleur du liseré : l'arc reste continu.
+    OVERLAY_INSET = BORDER_W
+    OVERLAY_RADIUS = COVER_RADIUS
+    # Surveillance du curseur pendant que l'overlay est ouvert. Tk n'envoie PAS
+    # de <Leave> au cadre de l'overlay quand le curseur passe d'un de ses
+    # boutons directement à l'extérieur de la carte : l'overlay restait affiché
+    # jusqu'à ce qu'on repasse dessus. Un test de position périodique rattrape
+    # ces cas, quels que soient les événements reçus.
+    HOVER_POLL_MS = 50
+
+    # Les cartes sans jaquette partagent leur image : le placeholder ne dépend
+    # que de l'état, de la langue et du facteur d'échelle, pas du jeu. Sans ce
+    # cache, afficher quarante jeux sans jaquette fabriquait quarante images.
+    _placeholder_cache: dict[tuple[Any, ...], ctk.CTkImage] = {}
 
     def __init__(self, master, game: Game, state: str,
                  on_edit: Callable[[Game], None], on_delete: Callable[[Game], None],
                  cover_service: Optional[GameCoverService] = None,
                  bind_wheel: Optional[Callable[[Any], None]] = None, **kwargs) -> None:
-        super().__init__(master, fg_color=COL_CARD, corner_radius=12,
-                          border_width=1, border_color=COL_BORDER,
+        # Ni bordure ni coins arrondis CTk : liseré d'état, arrondis et jaquette
+        # sont peints ensemble dans UNE image (voir _card_image). Le cadre ne
+        # sert plus qu'à réserver la place ; les angles arrondis de l'image
+        # laissent voir le fond de la grille.
+        super().__init__(master, fg_color="transparent", corner_radius=0,
+                          border_width=0,
                           width=self.CARD_WIDTH, height=self.CARD_HEIGHT, **kwargs)
         self.grid_propagate(False)
         self.pack_propagate(False)
@@ -52,55 +171,48 @@ class GameCard(ctk.CTkFrame):
         self._cover_service = cover_service
         self._bind_wheel = bind_wheel
         self._ctk_image: Optional[ctk.CTkImage] = None
+        self._base_cover = None   # jaquette prête (PIL), sans pastille
         self._overlay: Optional[ctk.CTkFrame] = None
         self._overlay_visible = False
+        self._hover_job: Optional[str] = None
 
-        # --- Zone "jaquette" : image si disponible, sinon icône + titre ---
+        # --- Zone "jaquette" ------------------------------------------------
         # Les enfants sont posés directement sur la carte : le cadre
         # intermédiaire d'autrefois n'apportait rien visuellement et ajoutait
         # deux fenêtres Tk par carte, toutes déplacées à chaque cran de
         # défilement. Moins de fenêtres = moins de repeints partiels visibles.
         self._poster = self
 
-        # Le label de jaquette occupe toute la carte et sert aussi de
-        # placeholder (emoji) tant que l'image n'est pas arrivée.
+        # Le label couvre TOUTE la carte, liseré compris. C'est ce point qui
+        # règle les angles : un label rentré de BORDER_W reste un rectangle, et
+        # le coin de ce rectangle mord dans l'arc du liseré — il en peignait un
+        # bout avec sa propre couleur, d'où l'angle amputé.
         # corner_radius=0 IMPÉRATIF : CTkLabel pose un
-        # `padx=min(corner_radius, hauteur/2)` autour de son contenu. Avec 12,
-        # la jaquette était encadrée de deux bandes mortes de 12 px à gauche
-        # et à droite ET amputée d'autant — c'est ce qui donnait cette
-        # impression de cadrage raté. Les coins arrondis viennent de la carte
-        # parente, ce label n'a pas à les redessiner.
-        self._cover_lbl = ctk.CTkLabel(self._poster, text="🎮", font=font(46),
-                                        text_color=COL_TEXT_MUTED, fg_color=COL_CARD,
-                                        corner_radius=0)
-        self._cover_lbl.place(relx=0, rely=0, relwidth=1, relheight=1)
+        # `padx=min(corner_radius, hauteur/2)` autour de son contenu, ce qui
+        # encadrait la jaquette de deux bandes mortes et l'amputait d'autant.
+        self._cover_lbl = ctk.CTkLabel(self._poster, text="", fg_color="transparent",
+                                        corner_radius=0, width=self.CARD_WIDTH,
+                                        height=self.CARD_HEIGHT)
+        self._cover_lbl.place(x=0, y=0)
 
         icon_lbl = self._cover_lbl  # conservé pour les bindings de survol
 
+        # Sans jaquette, le titre est le seul contenu de la carte : il occupe
+        # donc le centre. L'emoji placeholder qui trônait ici jurait avec le
+        # reste de l'interface et ne disait rien de plus que le titre.
+        # fg_color explicite : « transparent » prendrait la couleur du CADRE,
+        # désormais celle de la grille, et poserait une bande étrangère sur la
+        # carte. Ce titre ne s'affiche que faute de jaquette, donc sur COL_CARD.
         self._title_static = ctk.CTkLabel(self._poster, text=game.name, font=font(13, "bold"),
                                            text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24,
-                                           justify="center")
-        self._title_static.place(relx=0.5, rely=0.82, anchor="center")
+                                           justify="center", fg_color=COL_CARD)
+        self._title_static.place(relx=0.5, rely=0.5, anchor="center")
         title_static = self._title_static
 
-        # --- Badge unique de statut (top-right) — jamais plus d'un par carte ---
-        # corner_radius=0 IMPÉRATIF. CTk dessine un coin arrondi sur un canvas
-        # dont le reste prend la couleur du PARENT, pas celle de la jaquette
-        # posée dessous : quatre encoches sombres apparaissaient donc aux
-        # angles, par-dessus l'artwork. Aucun moyen de rendre ces angles
-        # transparents en CustomTkinter — on prend donc un rectangle net.
-        self._badge = ctk.CTkFrame(self._poster,
-                                    fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE),
-                                    corner_radius=0, border_width=1,
-                                    border_color=COL_BADGE_FG)
-        self._badge.place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
-        # Point et texte dans UN seul label : deux labels côte à côte, c'était
-        # trois fenêtres Tk de plus par carte pour un rendu identique.
-        self._badge_lbl = ctk.CTkLabel(self._badge, text=badge_text(state),
-                                        font=font(10, "bold"),
-                                        fg_color="transparent", corner_radius=0,
-                                        text_color=COL_BADGE_FG)
-        self._badge_lbl.pack(padx=8, pady=3)
+        # Pastille d'état : incrustée dans l'image, pas un widget (voir
+        # _with_badge). L'appel ci-dessous affiche le placeholder avec sa
+        # pastille tant que la jaquette n'est pas arrivée.
+        self._apply_image()
 
         # L'overlay de survol n'est PAS construit ici : voir _build_overlay().
         # dict.fromkeys : _poster vaut self depuis la suppression du cadre
@@ -131,7 +243,7 @@ class GameCard(ctk.CTkFrame):
         except Exception:
             return
         if pil_image is None:
-            return  # on garde le placeholder emoji + titre
+            return  # on garde le placeholder (titre + pastille)
         try:
             # CTkImage redimensionne en interne avec le rééchantillonnage par
             # défaut de Pillow (bicubique), qui adoucit nettement en réduction :
@@ -140,12 +252,11 @@ class GameCard(ctk.CTkFrame):
             # à la taille exacte que CTkImage demandera — son propre resize
             # devient alors sans effet.
             scaling = ctk.ScalingTracker.get_widget_scaling(self)
-            target = (max(1, round(self.CARD_WIDTH * scaling)),
-                      max(1, round(self.CARD_HEIGHT * scaling)))
-            sharp = pil_image.resize(target, Image.Resampling.LANCZOS)
-            self._ctk_image = ctk.CTkImage(light_image=sharp, dark_image=sharp,
-                                           size=(self.CARD_WIDTH, self.CARD_HEIGHT))
-            self._cover_lbl.configure(image=self._ctk_image, text="")
+            border = max(1, round(self.BORDER_W * scaling))
+            target = (max(1, round(self.CARD_WIDTH * scaling)) - 2 * border,
+                      max(1, round(self.CARD_HEIGHT * scaling)) - 2 * border)
+            self._base_cover = pil_image.resize(target, Image.Resampling.LANCZOS)
+            self._apply_image()
             # La jaquette porte déjà le titre du jeu : afficher le nôtre
             # par-dessus ferait doublon illisible.
             self._title_static.place_forget()
@@ -157,6 +268,87 @@ class GameCard(ctk.CTkFrame):
         except Exception:
             logger.debug("Application de la jaquette échouée pour %s.", self._game.name,
                          exc_info=True)
+
+    # -- Image affichée (jaquette ou placeholder) + pastille d'état --------- #
+
+    @classmethod
+    def _card_image(cls, cover, state: str, scaling: float,
+                    backdrop: str) -> Image.Image:
+        """Peint la carte entière : fond de grille, liseré d'état arrondi,
+        jaquette arrondie par-dessus, puis la pastille.
+
+        Les deux arrondis sont concentriques et anticrénelés par le même
+        masque, donc les angles se referment proprement — ce que la bordure
+        d'un CTkFrame, recouverte aux coins par le rectangle du label, ne
+        savait pas faire.
+        """
+        width = max(1, round(cls.CARD_WIDTH * scaling))
+        height = max(1, round(cls.CARD_HEIGHT * scaling))
+        border = max(1, round(cls.BORDER_W * scaling))
+
+        card = Image.new("RGB", (width, height), _rgb(backdrop))
+        ring = Image.new("RGB", (width, height), _rgb(STATE_RING[is_running(state)]))
+        card.paste(ring, (0, 0), _rounded_mask((width, height), cls.CARD_RADIUS * scaling))
+
+        inner_size = (width - 2 * border, height - 2 * border)
+        inner = Image.new("RGB", inner_size, _rgb(COL_CARD)) if cover is None else cover
+        if inner.size != inner_size:
+            inner = inner.resize(inner_size, Image.Resampling.LANCZOS)
+        card.paste(inner, (border, border),
+                   _rounded_mask(inner_size, cls.COVER_RADIUS * scaling))
+        return _with_badge(card, state, scaling, margin=_BADGE_MARGIN + cls.BORDER_W)
+
+    @classmethod
+    def _placeholder_image(cls, state: str, scaling: float,
+                           backdrop: str) -> ctk.CTkImage:
+        """Image des cartes sans jaquette : liseré + fond de carte + pastille.
+
+        Mutualisée entre toutes les cartes du même état (clé = état + libellé
+        traduit + échelle + fond), donc une carte de plus ne coûte rien.
+        """
+        key = (is_running(state), badge_text(state), round(scaling, 2), backdrop)
+        image = cls._placeholder_cache.get(key)
+        if image is None:
+            shown = cls._card_image(None, state, scaling, backdrop)
+            image = ctk.CTkImage(light_image=shown, dark_image=shown,
+                                 size=(cls.CARD_WIDTH, cls.CARD_HEIGHT))
+            cls._placeholder_cache[key] = image
+        return image
+
+    def _backdrop(self) -> str:
+        """Couleur que laissent voir les angles arrondis : celle de la grille.
+
+        `_detect_color_of_master()` remonte la chaîne des parents transparents ;
+        s'il échoue, le fond général de l'application reste le bon repli.
+        """
+        try:
+            color = self._detect_color_of_master()
+            if isinstance(color, (list, tuple)):
+                color = color[0 if ctk.get_appearance_mode() == "Light" else 1]
+            if isinstance(color, str) and color.startswith("#"):
+                return color
+        except Exception:
+            logger.debug("Couleur de fond de la grille indétectable.", exc_info=True)
+        return COL_BG
+
+    def _apply_image(self) -> None:
+        """(Re)compose l'image de la carte. Appelée à la construction, à
+        l'arrivée de la jaquette, à chaque changement d'état et de langue."""
+        try:
+            scaling = ctk.ScalingTracker.get_widget_scaling(self)
+            backdrop = self._backdrop()
+            if self._base_cover is None:
+                self._ctk_image = GameCard._placeholder_image(self._current_state,
+                                                              scaling, backdrop)
+            else:
+                shown = self._card_image(self._base_cover, self._current_state,
+                                         scaling, backdrop)
+                self._ctk_image = ctk.CTkImage(light_image=shown, dark_image=shown,
+                                               size=(self.CARD_WIDTH, self.CARD_HEIGHT))
+            self._cover_lbl.configure(image=self._ctk_image)
+        except Exception:
+            logger.debug("Composition de l'image de carte échouée pour %s.",
+                         self._game.name, exc_info=True)
 
     def _build_overlay(self) -> None:
         """Construit l'overlay de survol à la PREMIÈRE entrée souris.
@@ -172,7 +364,11 @@ class GameCard(ctk.CTkFrame):
         game = self._game
         source_txt = t("GAME_SOURCE_STEAM") if game.source == "steam" else t("GAME_SOURCE_MANUAL")
 
-        self._overlay = ctk.CTkFrame(self, fg_color="#08060F", corner_radius=12)
+        self._overlay = ctk.CTkFrame(self, fg_color="#08060F",
+                                     bg_color=STATE_RING[is_running(self._current_state)],
+                                     corner_radius=self.OVERLAY_RADIUS,
+                                     width=self.CARD_WIDTH - 2 * self.OVERLAY_INSET,
+                                     height=self.CARD_HEIGHT - 2 * self.OVERLAY_INSET)
         self._overlay_title = ctk.CTkLabel(self._overlay, text=game.name, font=font(13, "bold"),
                                             text_color=COL_TEXT, wraplength=self.CARD_WIDTH - 24,
                                             justify="center")
@@ -194,7 +390,13 @@ class GameCard(ctk.CTkFrame):
                                           command=lambda: self._on_delete(self._game))
         self._delete_btn.pack(side="left", padx=3)
 
-        self._overlay.bind("<Leave>", self._hide_overlay)
+        # <Leave> sur le cadre ET sur toute sa descendance : sans les enfants,
+        # sortir de la carte depuis un bouton ne fermait rien. Et on ne ferme
+        # pas à l'aveugle — passer du cadre à son propre bouton émet aussi un
+        # <Leave> : c'est la position réelle du curseur qui décide.
+        for widget in (self._overlay, self._overlay_title, self._overlay_source,
+                       btn_row, self._edit_btn, self._delete_btn):
+            widget.bind("<Leave>", self._on_poster_leave)
         # Créés après le binding récursif de la grille : sans ça l'overlay
         # avalerait la molette et bloquerait le défilement sous le curseur.
         if self._bind_wheel is not None:
@@ -215,8 +417,11 @@ class GameCard(ctk.CTkFrame):
         if self._overlay is None:
             self._build_overlay()
         self._overlay_visible = True
-        self._overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        # Le liseré peut avoir changé de couleur depuis la dernière ouverture.
+        self._overlay.configure(bg_color=STATE_RING[is_running(self._current_state)])
+        self._overlay.place(x=self.OVERLAY_INSET, y=self.OVERLAY_INSET)
         self._overlay.lift()
+        self._watch_pointer()
 
     def _settle_overlay(self) -> None:
         """Remet l'overlay dans l'état que dicte la position réelle du curseur."""
@@ -231,11 +436,33 @@ class GameCard(ctk.CTkFrame):
         if self._overlay_visible and self._overlay is not None:
             self._overlay.lift()   # la jaquette vient de passer devant
 
-    def _on_poster_leave(self, event: Any) -> None:
-        # Tolère les micro-déplacements entre poster et overlay (évite un
-        # flicker d'ouverture/fermeture lors du passage de souris entre les
-        # deux widgets superposés).
-        self.after(60, self._maybe_hide, event.widget.winfo_pointerxy())
+    def _on_poster_leave(self, _event: Any = None) -> None:
+        # Fermeture INSTANTANÉE : plus de délai de 60 ms. Il servait à tolérer
+        # le passage du poster à l'overlay, mais _maybe_hide teste déjà ce que
+        # le curseur survole vraiment — un widget de la carte ne ferme rien.
+        try:
+            self._maybe_hide(self.winfo_pointerxy())
+        except Exception:
+            self._hide_overlay()
+
+    def _watch_pointer(self) -> None:
+        """Vérifie la position du curseur tant que l'overlay est ouvert.
+
+        Filet de sécurité : certains trajets ne produisent aucun <Leave>
+        exploitable — bouton vers l'extérieur, fenêtre qui perd le focus,
+        carte qui glisse sous un curseur immobile.
+        """
+        self._hover_job = None
+        if not self._overlay_visible:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+            self._maybe_hide(self.winfo_pointerxy())
+            if self._overlay_visible:
+                self._hover_job = self.after(self.HOVER_POLL_MS, self._watch_pointer)
+        except Exception:
+            logger.debug("Surveillance du curseur interrompue.", exc_info=True)
 
     def _maybe_hide(self, pointer_xy: tuple[int, int]) -> None:
         x, y = pointer_xy
@@ -258,12 +485,28 @@ class GameCard(ctk.CTkFrame):
         if not self._overlay_visible:
             return
         self._overlay_visible = False
+        self._cancel_pointer_watch()
         self._overlay.place_forget()
+
+    def _cancel_pointer_watch(self) -> None:
+        if self._hover_job is None:
+            return
+        try:
+            self.after_cancel(self._hover_job)
+        except Exception:
+            pass
+        self._hover_job = None
+
+    def destroy(self) -> None:
+        # Une carte détruite pendant un survol laissait un `after` en attente
+        # sur un widget disparu.
+        self._cancel_pointer_watch()
+        super().destroy()
 
     def refresh_labels(self) -> None:
         """Recharge les libellés dynamiques (source, boutons, badge) après un
         changement de langue à chaud — sans recréer les widgets."""
-        self._badge_lbl.configure(text=badge_text(self._current_state))
+        self._apply_image()          # la pastille porte un libellé traduit
         if self._overlay is None:
             return  # jamais survolée : il sera bâti avec les bons libellés
         source_txt = t("GAME_SOURCE_STEAM") if self._game.source == "steam" else t("GAME_SOURCE_MANUAL")
@@ -276,11 +519,16 @@ class GameCard(ctk.CTkFrame):
         (appelé à chaque cycle de scan — doit rester O(1) et sans flicker)."""
         if state == self._current_state:
             return
+        was_running = is_running(self._current_state)
         self._current_state = state
-        # Seul le FOND change d'un état à l'autre : texte et contour restent
-        # blancs, donc lisibles sur les deux couleurs.
-        self._badge.configure(fg_color=STATE_BADGE_BG.get(state, COL_BADGE_BG_INACTIVE))
-        self._badge_lbl.configure(text=badge_text(state))
+        # Deux signaux, un changement de couleur chacun : le liseré de la carte
+        # et le point de la pastille. Les états fins (menu / en jeu) ne changent
+        # rien visuellement, donc rien à recomposer pour eux.
+        if is_running(state) == was_running and self._ctk_image is not None:
+            return
+        self._apply_image()
+        if self._overlay is not None:
+            self._overlay.configure(bg_color=STATE_RING[is_running(state)])
 
 
 # ============================================================================

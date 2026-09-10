@@ -1,0 +1,62 @@
+#!/bin/sh
+# Reconstruit dist_release/Dynamics.exe après chaque changement de code.
+#
+# Appelé par les hooks post-commit et post-merge : le déclencheur est le commit
+# (ou le pull), pas la sauvegarde de fichier — un rebuild PyInstaller dure ~1
+# minute, le lancer à chaque frappe rendrait l'éditeur inutilisable.
+#
+# Le raccourci du Bureau pointe vers dist_release/Dynamics.exe : ce fichier est
+# remplacé sur place, donc le raccourci reste valide sans rien refaire.
+#
+# À activer UNE FOIS par clone (comme pre-commit) :
+#
+#     git config core.hooksPath .githooks
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+# Rien à reconstruire si le commit ne touche que de la doc. assets/ compte :
+# build.spec l'embarque dans le binaire, donc changer l'icône doit déclencher
+# un rebuild. Un commit de fusion ne liste aucun fichier ici : on reconstruit
+# alors par précaution plutôt que de laisser l'exe en retard sur le code.
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+if [ -n "$CHANGED" ]; then
+    if ! printf '%s\n' "$CHANGED" | grep -qE '\.(py|spec)$|(^|/)i18n\.json$|(^|/)requirements\.txt$|^assets/'; then
+        exit 0
+    fi
+fi
+
+# Le venv du projet est le seul interpréteur dont on sait qu'il a PyInstaller.
+PY=""
+for candidat in venv/Scripts/python.exe .venv/Scripts/python.exe venv/bin/python .venv/bin/python; do
+    if [ -x "$candidat" ]; then
+        PY="$candidat"
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    for candidat in python py python3; do
+        if command -v "$candidat" >/dev/null 2>&1; then
+            PY="$candidat"
+            break
+        fi
+    done
+fi
+if [ -z "$PY" ]; then
+    echo "[rebuild] Python introuvable : Dynamics.exe n'a PAS été reconstruit." >&2
+    exit 0
+fi
+
+LOG=build_auto.log
+# Détaché : un commit ne doit pas bloquer une minute. Toute la sortie va dans le
+# log, y compris le verdict final, pour qu'un échec ne passe pas inaperçu.
+(
+    if "$PY" build.py >"$LOG" 2>&1; then
+        echo "[rebuild] SUCCES — dist_release/Dynamics.exe à jour." >>"$LOG"
+    else
+        echo "[rebuild] ECHEC — Dynamics.exe est resté sur la version précédente." >>"$LOG"
+    fi
+) </dev/null >/dev/null 2>&1 &
+
+echo "[rebuild] Reconstruction de Dynamics.exe lancée en arrière-plan (~1 min, log : build_auto.log)"
+exit 0

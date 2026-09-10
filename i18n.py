@@ -1,26 +1,24 @@
 """
 i18n.py — Loader centralisé pour OBS Dynamics.
-Charge i18n.json (racine du projet) une seule fois, expose t(key, **kwargs).
+Charge i18n.json (chemin résolu par app_paths) une fois, expose t(key, **kwargs).
 Fallback: clé manquante -> retourne la clé elle-même (jamais de crash UI).
 """
 from __future__ import annotations
 
 import json
 import logging
-import sys
 from pathlib import Path
 from typing import Any, Callable
+
+# Le chemin vient d'app_paths : en mode figé, i18n.json est extrait dans
+# sys._MEIPASS et pas à côté du .exe. Une deuxième copie de cette règle ici
+# avait déjà divergé — le .exe perdait toutes ses traductions.
+from app_paths import I18N_PATH
 
 logger = logging.getLogger("obs_dynamics.i18n")
 
 DEFAULT_LANG = "fr"
 SUPPORTED_LANGS = ("fr", "en", "es")
-
-
-def _get_base_path() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).parent
 
 
 class I18n:
@@ -29,7 +27,7 @@ class I18n:
     réussi, ce qui permet de reconstruire leurs libellés sans redémarrage."""
 
     def __init__(self, path: Path | None = None, lang: str = DEFAULT_LANG) -> None:
-        self._path = path or (_get_base_path() / "i18n.json")
+        self._path = path or I18N_PATH
         self._lang = lang
         self._data: dict[str, dict[str, str]] = {}
         self._listeners: list[Callable[[str], None]] = []

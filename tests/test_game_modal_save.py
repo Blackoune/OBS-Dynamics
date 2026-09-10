@@ -5,7 +5,6 @@ Le modal est un vrai CTkToplevel ; seuls OBS et le scan Steam sont simulés.
 from __future__ import annotations
 
 import concurrent.futures
-import json
 
 import pytest
 
@@ -160,8 +159,9 @@ def _png(path):
 def test_a_freshly_picked_image_needs_a_review(modal, tmp_path):
     m, _store, _client, open_modal = modal
     mod = open_modal()
-    mod._menu_images = [_png(tmp_path / "menu.png")]
-    assert mod._review_is_stale("menu")
+    path = _png(tmp_path / "menu.png")
+    mod._menu_images = [path]
+    assert mod.review_is_stale(path)
 
 
 def test_validating_records_the_file_fingerprint(modal, tmp_path):
@@ -173,7 +173,7 @@ def test_validating_records_the_file_fingerprint(modal, tmp_path):
     mod._menu_images = [path]
     mod._on_review_validated(path, [(0.25, 0.75, 0.1, 0.1)], [], 3)
 
-    assert not mod._review_is_stale("menu")
+    assert not mod.review_is_stale(path)
     assert mod._patch_reviews[path]["stamp"] == m.image_stamp(path)
     assert mod._patch_reviews[path]["excluded"] == [[0.25, 0.75, 0.1, 0.1]]
     assert m._REVIEWS.excluded_for(path) == [(0.25, 0.75, 0.1, 0.1)]
@@ -187,11 +187,11 @@ def test_changing_the_file_makes_the_review_stale_again(modal, tmp_path):
     mod = open_modal()
     mod._menu_images = [path]
     mod._on_review_validated(path, [], [], 2)
-    assert not mod._review_is_stale("menu")
+    assert not mod.review_is_stale(path)
 
     _png(tmp_path / "menu.png")                       # image remplacée
     os.utime(path, (time.time() + 5, time.time() + 5))
-    assert mod._review_is_stale("menu"), "changer l'image ne redemande pas de validation"
+    assert mod.review_is_stale(path), "changer l'image ne redemande pas de validation"
     m._REVIEWS.clear()
 
 
@@ -213,3 +213,78 @@ def test_saving_keeps_reviews_and_drops_the_orphans(modal, tmp_path):
     assert saved.patch_reviews[kept]["manual"] == [[0.6, 0.7, 0.2, 0.2]]
     assert orphan not in saved.patch_reviews, "chemin mort conservé dans games.json"
     m._REVIEWS.clear()
+
+
+# -- États supplémentaires ------------------------------------------------ #
+
+def test_an_extra_state_survives_the_round_trip(modal, tmp_path):
+    """Le « + » du bas ajoute un état avec ses images et sa scène : il doit
+    revenir tel quel après enregistrement puis réouverture."""
+    m, store, _client, open_modal = modal
+    mod = open_modal()
+    mod.source_var.set("manual")
+    mod.name_var.set("Jeu")
+    mod.exe_var.set("j.exe")
+    section = mod._add_extra_state()
+    section.name_var.set("Carte")
+    section.images = [_png(tmp_path / "carte.png")]
+    section.scene_var.set("Scene B")
+    mod._save()
+
+    saved = store.load()[0]
+    assert [extra["name"] for extra in saved.extra_states] == ["Carte"]
+    assert saved.extra_states[0]["scene"] == "Scene B"
+    assert saved.extra_states[0]["images"] == [str(tmp_path / "carte.png")]
+
+    again = open_modal(game=saved)
+    assert len(again._sections) == 3
+    assert again._sections[2].name_now() == "Carte"
+
+
+def test_menu_and_ingame_sections_cannot_be_removed(modal):
+    """Supprimer « Menu » ou « En jeu » laisserait un jeu sans état de base."""
+    m, _store, _client, open_modal = modal
+    mod = open_modal()
+    mod.remove_state_section(mod._sections[0])
+    assert len(mod._sections) == 2
+
+    extra = mod._add_extra_state()
+    mod.remove_state_section(extra)
+    assert len(mod._sections) == 2
+
+
+def test_an_extra_state_gets_its_own_id(modal):
+    """L'id relie l'état à sa scène et à ses cadrages : deux états ajoutés
+    coup sur coup ne peuvent pas le partager."""
+    m, _store, _client, open_modal = modal
+    mod = open_modal()
+    first, second = mod._add_extra_state(), mod._add_extra_state()
+    assert first.state_id and first.state_id != second.state_id
+    assert first.key.startswith(m.Game.EXTRA_PREFIX)
+
+
+def test_picking_images_adds_instead_of_replacing(modal, tmp_path, monkeypatch):
+    """Le sélecteur remplaçait la liste entière : impossible d'ajouter une
+    seconde image sans rechoisir la première."""
+    m, _store, _client, open_modal = modal
+    mod = open_modal()
+    section = mod._sections[0]
+    section.images = [_png(tmp_path / "a.png")]
+    import ui_game_dialogs
+    monkeypatch.setattr(ui_game_dialogs.filedialog, "askopenfilenames",
+                        lambda **kwargs: (str(tmp_path / "a.png"), _png(tmp_path / "b.png")))
+    monkeypatch.setattr(type(mod), "open_patch_review", lambda self, path, section: None)
+    section.add_images()
+
+    assert section.images == [str(tmp_path / "a.png"), str(tmp_path / "b.png")], \
+        "l'ajout a écrasé la liste, ou a laissé passer un doublon"
+
+
+def test_removing_one_image_keeps_the_others(modal, tmp_path):
+    m, _store, _client, open_modal = modal
+    mod = open_modal()
+    section = mod._sections[1]
+    first, second = _png(tmp_path / "a.png"), _png(tmp_path / "b.png")
+    section.images = [first, second]
+    section.remove_image(first)
+    assert section.images == [second]

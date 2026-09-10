@@ -411,7 +411,7 @@ def _best_match_score(screen_small: np.ndarray, template_paths: list[str]) -> fl
 def detect_game_state(game: Game, threshold: float,
                       screen_small: Optional[np.ndarray] = None) -> str:
     """'inactive' | 'active' (process seul, sans images de référence) |
-    'menu' | 'in_game' (avec correspondance visuelle OpenCV).
+    'menu' | 'in_game' | 'extra:<id>' (correspondance visuelle OpenCV).
 
     `screen_small` est la capture d'écran DÉJÀ réduite, partagée par tous les
     jeux d'un même cycle de scan. Avant, chaque jeu déclenchait son propre
@@ -421,24 +421,27 @@ def detect_game_state(game: Game, threshold: float,
     """
     if not is_game_active(game):
         return "inactive"
-    if not game.menu_images and not game.ingame_images:
+    states = [(key, images) for key, images, _scene in game.detection_states() if images]
+    if not states:
         return "active"
     if screen_small is None:
         raw = _capture_screen_bgr()
         if raw is None:
             return "active"
         screen_small = _downscale(raw)
-    menu_score = _best_match_score(screen_small, game.menu_images) if game.menu_images else 0.0
-    ingame_score = _best_match_score(screen_small, game.ingame_images) if game.ingame_images else 0.0
+
+    scores = sorted(((_best_match_score(screen_small, images), key) for key, images in states),
+                    reverse=True)
 
     # L'état sort UNIQUEMENT de ce qui est à l'écran : le meilleur score doit
-    # franchir le seuil, ET devancer l'autre d'une marge nette. Sans cette
+    # franchir le seuil, ET devancer le suivant d'une marge nette. Sans cette
     # marge, menu=0,82 contre jeu=0,83 suffisait à basculer — une décision
     # prise sur du bruit, qui donnait l'impression d'un va-et-vient régulier
     # entre les deux scènes. En cas d'égalité, on renvoie "active" : aucune
     # scène n'y est associée, donc OBS n'est pas touché et l'affichage reste
-    # sur ce qu'il montrait.
-    best, other = max(menu_score, ingame_score), min(menu_score, ingame_score)
-    if best < threshold or best - other < DECISION_MARGIN:
+    # sur ce qu'il montrait. La règle vaut pour deux états comme pour dix.
+    best, best_key = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0.0
+    if best < threshold or best - runner_up < DECISION_MARGIN:
         return "active"
-    return "in_game" if ingame_score > menu_score else "menu"
+    return best_key

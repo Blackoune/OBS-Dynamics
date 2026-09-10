@@ -98,7 +98,7 @@ connexion** : le réafficher est instantané.
 En bas de l'onglet, une URL de la forme
 `http://127.0.0.1:4466/chat/<jeton>`. Copie-la comme source navigateur dans
 OBS. Elle **reste valide après un redémarrage** : le jeton est créé une seule
-fois puis relu dans `data/multistream.json`, et le serveur démarre avec
+fois puis relu dans `%APPDATA%\OBS Dynamics\data\multistream.json`, et le serveur démarre avec
 l'application, sans action manuelle.
 
 *Régénérer le lien* fabrique un nouveau jeton et **tue l'ancien** : la source
@@ -133,6 +133,17 @@ sont en plus **chiffrés** (DPAPI, clé dérivée de ton compte Windows) — le
 fichier copié ailleurs ou lu par un autre compte ne donne rien. Tu peux
 saisir la valeur en clair : elle est chiffrée au démarrage suivant.
 
+### Où vivent tes données
+
+Bibliothèque de jeux, jaquettes, hotkeys, déclencheurs et journaux vivent tous
+dans `%APPDATA%\OBS Dynamics\data\`, à côté du `.env`. Cet emplacement ne
+dépend pas d'où le programme est lancé : `Dynamics.exe` et
+`python obs_dynamics.py` lisent et écrivent exactement les mêmes fichiers.
+
+Une bibliothèque restée dans `<dépôt>/data/` (installations d'avant le
+2026-09-10) est reprise automatiquement au premier démarrage ; l'ancien
+dossier est renommé `data.old` pour qu'il ne subsiste qu'une seule source.
+
 Côté OBS Studio : **Outils → Paramètres du serveur WebSocket** → activer le
 serveur, port `4455`, et reporter le mot de passe dans `.env`.
 
@@ -156,7 +167,7 @@ commentées dans [`.env.example`](.env.example) — toute autre clé est ignoré
 | `OBS_APP_LANG` | Langue : `fr`, `en`, `es` | `fr` |
 | `RAWG_API_KEY` | Jaquettes des jeux non-Steam (optionnel) | *(vide)* |
 
-Les hotkeys se configurent dans `data/hotkeys.json` :
+Les hotkeys se configurent dans `%APPDATA%\OBS Dynamics\data\hotkeys.json` :
 
 ```json
 { "f1": "in_game", "f2": "menu", "f3": "inactive" }
@@ -190,7 +201,7 @@ i18n.py / i18n.json traductions fr / en / es
 build.py            packaging PyInstaller + validation i18n
 build.spec          spécification PyInstaller
 tests/              suite pytest
-data/               runtime (games.json, hotkeys.json, triggers.json, multistream.json, covers/, logs) — gitignoré
+make_shortcut.py    raccourci « Dynamics » sur le Bureau
 ```
 
 Le point d'entrée était un fichier unique de 4177 lignes jusqu'au 2026-09-09.
@@ -207,10 +218,17 @@ pip install -r requirements-dev.txt
 git config core.hooksPath .githooks
 ```
 
-Cette seconde commande active le hook `pre-commit` qui refuse tout commit
-contenant un identifiant (`check_secrets.py`). À faire **une fois par clone** :
-git ne clone pas `.git/hooks/`. Audit ponctuel :
-`python check_secrets.py --all`.
+Cette seconde commande active les hooks versionnés. À faire **une fois par
+clone** : git ne clone pas `.git/hooks/`.
+
+- `pre-commit` refuse tout commit contenant un identifiant
+  (`check_secrets.py`). Audit ponctuel : `python check_secrets.py --all`.
+  Contourner une fausse alerte : `git commit --no-verify`.
+- `post-commit` et `post-merge` reconstruisent `dist_release/Dynamics.exe` en
+  arrière-plan dès qu'un commit ou un pull touche un `.py`, `build.spec`,
+  `i18n.json`, `requirements.txt` ou `assets/`. Le raccourci du Bureau pointe
+  vers ce fichier : il reste valide sans rien refaire. Verdict du rebuild dans
+  `build_auto.log` (gitignoré).
 
 ```bash
 python -m pytest tests/ -q
@@ -229,7 +247,15 @@ python build.py
 Le script vérifie d'abord que chaque clé `t("...")` du code existe dans
 `i18n.json` — un build ne peut donc pas produire un `.exe` affichant des clés
 brutes à l'écran — puis lance PyInstaller et copie le binaire dans
-`dist_release/`.
+`dist_release/Dynamics.exe` (icône : `assets/icon.ico`).
+
+Ce build manuel n'est utile que pour forcer une reconstruction hors commit :
+les hooks `post-commit` / `post-merge` ci-dessus le lancent déjà tout seuls.
+Windows verrouille un `.exe` en cours d'exécution — si Dynamics tourne, le
+build s'arrête avec un message explicite et l'ancienne version reste en place.
+
+Raccourci Bureau : `python make_shortcut.py` crée « Dynamics » sur le Bureau,
+pointant vers `dist_release/Dynamics.exe`. À faire une seule fois.
 
 ## Traductions
 

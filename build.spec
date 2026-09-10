@@ -81,7 +81,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="OBSDynamics",
+    name="Dynamics",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

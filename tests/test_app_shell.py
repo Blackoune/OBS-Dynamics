@@ -100,11 +100,32 @@ def test_the_sidebar_has_a_button_for_every_view(app):
     assert set(app.sidebar.nav_buttons) == set(app.views)
 
 
-def test_every_nav_entry_has_an_icon(app):
-    """Une icône manquante décale le libellé : la colonne d'icône est de
-    largeur fixe, mais son contenu vide se voit."""
-    manquantes = set(app.views) - set(type(app.sidebar).NAV_ICONS)
-    assert not manquantes, f"onglets sans icône : {sorted(manquantes)}"
+def test_every_nav_entry_has_a_label(app):
+    """Les onglets n'ont plus d'icône — les emoji couleur sortaient de la
+    palette et décalaient les libellés d'un onglet à l'autre. Reste le
+    libellé, porté par le bouton lui-même : sans lui, l'onglet est vide."""
+    manquantes = set(app.views) - set(app.sidebar.nav_buttons)
+    assert not manquantes, f"onglets sans libellé : {sorted(manquantes)}"
+    assert all(app.sidebar.nav_buttons[key].cget("text") for key in app.views)
+
+
+def test_every_tab_shows_its_frame_even_unselected(app):
+    """Un onglet non sélectionné était entièrement transparent : rien
+    n'indiquait où cliquer. Tous portent désormais leur cadre."""
+    app._navigate("triggers")
+    app.update()
+    for key, btn in app.sidebar.nav_buttons.items():
+        assert btn.cget("border_width") == 1, key
+        assert btn.cget("fg_color") != "transparent", key
+
+
+def test_the_nav_label_has_no_box_of_its_own(app):
+    """Le libellé était un CTkLabel posé sur le bouton : son fond dessinait un
+    rectangle plus clair autour du texte, d'où l'effet « surligné »."""
+    import customtkinter as ctk
+    btn = app.sidebar.nav_buttons["settings"]
+    poses = [child for child in btn.winfo_children() if isinstance(child, ctk.CTkLabel)]
+    assert not poses, "un label est reposé sur le bouton : le rectangle revient"
 
 
 def test_clicking_a_sidebar_button_navigates(app):
@@ -116,11 +137,18 @@ def test_clicking_a_sidebar_button_navigates(app):
 
 
 def test_the_active_tab_is_the_only_one_highlighted(app):
+    """Tous les onglets ont un cadre : ce sont sa COULEUR, celle du fond et
+    celle du texte qui disent lequel est sélectionné."""
+    from ui_common import COL_BORDER_ACCENT
     app._navigate("triggers")
     app.update()
     surlignes = [k for k, b in app.sidebar.nav_buttons.items()
-                 if b.cget("border_width") == 1]
+                 if b.cget("border_color") == COL_BORDER_ACCENT]
     assert surlignes == ["triggers"]
+    actif = app.sidebar.nav_buttons["triggers"]
+    repos = app.sidebar.nav_buttons["settings"]
+    assert actif.cget("fg_color") != repos.cget("fg_color")
+    assert actif.cget("text_color") != repos.cget("text_color")
 
 
 # --- File UI thread-safe -------------------------------------------------- #
@@ -179,14 +207,14 @@ def test_running_state_swaps_the_buttons(app):
 def test_changing_language_relabels_the_sidebar(app, app_module):
     """Changement de langue à chaud : les libellés se refont sans recréer les
     widgets, donc sans perdre l'onglet actif."""
-    avant = app.sidebar.nav_labels["settings"].cget("text")
+    avant = app.sidebar.nav_buttons["settings"].cget("text")
     app._navigate("triggers")
 
     cible = "en" if app_module.i18n.current_lang() != "en" else "fr"
     assert app_module.i18n.set_lang(cible)
     app.update()
 
-    assert app.sidebar.nav_labels["settings"].cget("text") != avant
+    assert app.sidebar.nav_buttons["settings"].cget("text") != avant
     assert app.views["triggers"].winfo_manager() == "grid", "onglet actif perdu"
 
 

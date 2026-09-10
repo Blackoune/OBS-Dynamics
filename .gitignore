@@ -39,3 +39,6 @@ dist_release/
 .pytest_cache/
 
 graphify-out/
+
+# Journal du rebuild automatique du .exe (hook post-commit).
+build_auto.log

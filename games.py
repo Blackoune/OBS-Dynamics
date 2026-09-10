@@ -111,6 +111,11 @@ class Game:
     ingame_images: list[str] = field(default_factory=list)
     obs_scene_menu: str = ""
     obs_scene_ingame: str = ""
+    # États supplémentaires définis par l'utilisateur, en plus de Menu et
+    # En jeu : [{"id", "name", "images": [...], "scene"}]. Un jeu a souvent
+    # plusieurs écrans (inventaire, carte, pause) qu'une seule liste d'images
+    # ne sépare pas ; chacun peut désormais avoir sa scène OBS.
+    extra_states: list[dict[str, Any]] = field(default_factory=list)
     # Validation du cadrage automatique, par image de référence :
     #   {chemin: {"stamp": "<mtime>:<taille>", "excluded": [[fx, fy], ...]}}
     # `stamp` sert à redemander une validation UNIQUEMENT quand le fichier
@@ -125,8 +130,42 @@ class Game:
             "active_match": self.active_match, "appid": self.appid,
             "menu_images": self.menu_images, "ingame_images": self.ingame_images,
             "obs_scene_menu": self.obs_scene_menu, "obs_scene_ingame": self.obs_scene_ingame,
+            "extra_states": self.extra_states,
             "patch_reviews": self.patch_reviews,
         }
+
+    # -- États de détection ------------------------------------------------ #
+
+    EXTRA_PREFIX = "extra:"
+
+    def detection_states(self) -> list[tuple[str, list[str], str]]:
+        """(clé d'état, images de référence, scène OBS) pour TOUS les états.
+
+        Un seul endroit décrit la liste : la détection, la bascule de scène et
+        la fiche de jeu la parcourent, au lieu de traiter « menu » et « en jeu »
+        en dur chacune de son côté.
+        """
+        states = [("menu", list(self.menu_images), self.obs_scene_menu),
+                  ("in_game", list(self.ingame_images), self.obs_scene_ingame)]
+        for extra in self.extra_states:
+            states.append((f"{self.EXTRA_PREFIX}{extra.get('id', '')}",
+                           [str(path) for path in (extra.get("images") or [])],
+                           str(extra.get("scene", ""))))
+        return states
+
+    def state_name(self, state: str) -> str:
+        """Nom donné par l'utilisateur à un état supplémentaire, "" sinon."""
+        if not state.startswith(self.EXTRA_PREFIX):
+            return ""
+        wanted = state[len(self.EXTRA_PREFIX):]
+        for extra in self.extra_states:
+            if str(extra.get("id", "")) == wanted:
+                return str(extra.get("name", ""))
+        return ""
+
+    def reference_images(self) -> list[str]:
+        """Toutes les images de référence, états supplémentaires compris."""
+        return [path for _key, images, _scene in self.detection_states() for path in images]
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Game":
@@ -140,6 +179,14 @@ class Game:
             ingame_images=[str(p) for p in data.get("ingame_images", [])],
             obs_scene_menu=str(data.get("obs_scene_menu", "")),
             obs_scene_ingame=str(data.get("obs_scene_ingame", "")),
+            # Absent des games.json antérieurs. Chaque entrée est normalisée
+            # ici : un id manquant rendrait l'état impossible à référencer.
+            extra_states=[{
+                "id": str(extra.get("id") or uuid.uuid4().hex),
+                "name": str(extra.get("name", "")),
+                "images": [str(path) for path in (extra.get("images") or [])],
+                "scene": str(extra.get("scene", "")),
+            } for extra in (data.get("extra_states") or []) if isinstance(extra, dict)],
             # Absent des games.json antérieurs : un dict vide signifie « jamais
             # validé », ce qui déclenchera simplement une première validation.
             patch_reviews=dict(data.get("patch_reviews") or {}),

@@ -126,7 +126,10 @@ class TwitchChatCard(ctk.CTkFrame):
     """Carte d'une plateforme : interrupteur d'affichage, bouton de connexion
     et pastille d'état."""
 
-    ICONS = {"twitch": "🟣"}
+    # Point plein coloré par la plateforme : même glyphe que les pastilles
+    # d'état du reste de l'interface, et il suit la palette au lieu d'imposer
+    # les couleurs figées d'un emoji.
+    DOT = "●"
 
     def __init__(self, master, platform: str,
                  on_toggle: Callable[[str, bool], None],
@@ -142,8 +145,9 @@ class TwitchChatCard(ctk.CTkFrame):
         header.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 10))
         header.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(header, text=self.ICONS.get(platform, "●"), font=font(15),
-                     width=24).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text=self.DOT, font=font(15), width=24,
+                     text_color=CHAT_COLORS.get(platform, COL_TEXT)).grid(
+                         row=0, column=0, sticky="w")
         self._name_lbl = ctk.CTkLabel(header, text=t(f"TWITCH_CHAT_PLATFORM_{suffix}"),
                                       font=font(15, "bold"),
                                       text_color=CHAT_COLORS.get(platform, COL_TEXT),
@@ -160,9 +164,8 @@ class TwitchChatCard(ctk.CTkFrame):
                                         text_color=COL_TEXT_MUTED, anchor="w")
         self._switch_lbl.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 12))
 
-        # Bouton rectangulaire, icône de prise À L'INTÉRIEUR du bouton.
         self._connect_btn = ctk.CTkButton(
-            self, text=f"🔌  {t('TWITCH_CHAT_BTN_CONNECT')}", height=40, corner_radius=9,
+            self, text=t("TWITCH_CHAT_BTN_CONNECT"), height=40, corner_radius=9,
             fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER, text_color=COL_BG,
             font=font(13, "bold"), command=lambda: on_connect(platform))
         self._connect_btn.grid(row=2, column=0, sticky="ew", padx=18)
@@ -200,7 +203,7 @@ class TwitchChatCard(ctk.CTkFrame):
         suffix = self._platform.upper()
         self._name_lbl.configure(text=t(f"TWITCH_CHAT_PLATFORM_{suffix}"))
         self._switch_lbl.configure(text=t("TWITCH_CHAT_SWITCH_LABEL"))
-        self._connect_btn.configure(text=f"🔌  {t('TWITCH_CHAT_BTN_CONNECT')}")
+        self._connect_btn.configure(text=t("TWITCH_CHAT_BTN_CONNECT"))
         self._dot.configure(text_color=_CHAT_STATUS_COLORS.get(self._status, COL_TEXT_MUTED))
         key = _CHAT_STATUS_KEYS.get(self._status, "TWITCH_CHAT_STATUS_DISCONNECTED")
         # Seul l'état « connecté » consomme le détail comme nom de chaîne.

@@ -330,11 +330,10 @@ class ScanWorker:
     @staticmethod
     def _scene_for_state(game: Game, state: str) -> str:
         """Scène OBS à afficher pour un état, "" s'il ne faut rien changer."""
-        if state == "in_game":
-            return game.obs_scene_ingame
-        if state == "menu":
-            return game.obs_scene_menu
-        if state == "active" and not game.menu_images and not game.ingame_images:
+        scenes = {key: scene for key, _images, scene in game.detection_states()}
+        if state in scenes:
+            return scenes[state]
+        if state == "active" and not game.reference_images():
             # Jeu lancé, mais AUCUNE image de référence : la détection visuelle
             # ne pourra jamais distinguer le menu du jeu, l'état restera
             # "active" pour toujours. Basculer sur la scène de menu au

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -37,15 +38,23 @@ def enable_dpi_awareness() -> None:
 # CHEMINS / CONSTANTES
 # ============================================================================
 def get_base_path() -> Path:
+    """Racine des ressources EMPAQUETÉES, en lecture seule : i18n.json, assets/.
+
+    En mode figé, PyInstaller (--onefile) extrait ces fichiers dans un dossier
+    temporaire exposé par `sys._MEIPASS` — surtout PAS à côté du .exe. Renvoyer
+    le dossier de l'exe faisait chercher i18n.json dans `dist_release/`, où il
+    n'a jamais existé : le chargement échouait et l'interface repartait sur ses
+    libellés de secours, alors que `python obs_dynamics.py` affichait les vrais.
+    """
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     return Path(__file__).parent
 
 
 BASE_DIR = get_base_path()
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
-COVERS_DIR = DATA_DIR / "covers"
+ASSETS_DIR = BASE_DIR / "assets"
+ICON_PATH = ASSETS_DIR / "icon.ico"
+I18N_PATH = BASE_DIR / "i18n.json"
 
 
 def get_user_config_dir() -> Path:
@@ -69,6 +78,16 @@ def get_user_config_dir() -> Path:
 USER_CONFIG_DIR = get_user_config_dir()
 ENV_PATH = USER_CONFIG_DIR / ".env"
 
+# Données utilisateur : UN SEUL emplacement, partagé par le .exe et par
+# `python obs_dynamics.py`. Les faire vivre à côté du code donnait deux
+# bibliothèques distinctes — celle du dépôt en mode script, celle de
+# `dist_release/` en mode figé — donc un .exe qui s'ouvrait sans aucun jeu.
+# Ici l'emplacement ne dépend plus de d'où le programme a été lancé.
+DATA_DIR = USER_CONFIG_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+COVERS_DIR = DATA_DIR / "covers"
+
+
 
 def migrate_legacy_env(legacy: Path, target: Path) -> bool:
     """Reprend un ancien `.env` resté à la racine du dépôt.
@@ -91,6 +110,36 @@ def migrate_legacy_env(legacy: Path, target: Path) -> bool:
         return False
     logger.info("Identifiants déplacés vers %s (l'ancien .env est devenu .env.old).", target)
     return True
+
+
+def migrate_legacy_data(legacy: Path, target: Path) -> bool:
+    """Reprend un dossier `data/` resté à côté du code ou du .exe.
+
+    Même geste que migrate_legacy_env : copier puis renommer l'ancien en
+    `data.old`, pour qu'il ne subsiste qu'UNE bibliothèque visible. Les
+    journaux ne sont pas repris — sans valeur, et le fichier courant est déjà
+    ouvert par le handler de rotation, donc Windows refuserait de l'écraser et
+    ferait échouer toute la migration.
+
+    `games.json` sert de sentinelle dans les deux sens : absent de l'ancien
+    dossier, il n'y a rien qui vaille une reprise ; présent dans la cible, la
+    migration a déjà eu lieu et écraser serait une perte de données.
+    """
+    if not legacy.is_dir() or not (legacy / "games.json").exists():
+        return False
+    if (target / "games.json").exists():
+        return False
+    try:
+        if legacy.resolve() == target.resolve():
+            return False
+        shutil.copytree(legacy, target, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("*.log", "*.log.*"))
+        legacy.replace(legacy.with_name(legacy.name + ".old"))
+    except OSError:
+        logger.exception("Migration de %s vers %s impossible.", legacy, target)
+        return False
+    logger.info("Bibliothèque déplacée vers %s (l'ancien dossier est devenu data.old).", target)
+    return True
 GAMES_PATH = DATA_DIR / "games.json"
 HOTKEYS_PATH = DATA_DIR / "hotkeys.json"
 TRIGGERS_PATH = DATA_DIR / "triggers.json"
@@ -100,10 +149,7 @@ TRIGGERS_PATH = DATA_DIR / "triggers.json"
 # nouveau nom en trouverait un vide, donc en régénérerait un — et la source
 # navigateur déjà collée dans OBS cesserait de répondre.
 TWITCH_CHAT_PATH = DATA_DIR / "multistream.json"
-ASSETS_DIR = BASE_DIR / "assets"
-ICON_PATH = ASSETS_DIR / "icon.ico"
 LOG_PATH = DATA_DIR / "obs_dynamics.log"
-I18N_PATH = BASE_DIR / "i18n.json"
 
 # Rotation des logs : sans elle obs_dynamics.log grossit indéfiniment (la
 # boucle de scan écrit à chaque bascule de scène). 2 Mo x 3 fichiers = 6 Mo
@@ -125,6 +171,14 @@ logger = logging.getLogger("obs_dynamics")
 
 # Reprise d'une installation antérieure où .env vivait dans le dépôt.
 migrate_legacy_env(BASE_DIR / ".env", ENV_PATH)
+
+# Reprise de la bibliothèque d'une installation antérieure. Deux emplacements
+# historiques : à côté des sources (lancement `python obs_dynamics.py`) et à
+# côté du .exe (lancement du binaire figé). Le premier qui porte un games.json
+# gagne ; les autres sont laissés intacts.
+for _legacy_data in (Path(__file__).parent / "data", Path(sys.executable).parent / "data"):
+    if migrate_legacy_data(_legacy_data, DATA_DIR):
+        break
 
 # Le chemin exact est journalisé : il dépend de %APPDATA%, donc du compte et
 # de l'environnement de lancement. Sans cette trace, un réglage « qui ne
