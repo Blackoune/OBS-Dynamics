@@ -113,6 +113,8 @@ active » dans les propriétés de la source.
 
 ## Installation
 
+Python **3.12 minimum** (numpy 2.5.1 n'existe pas pour 3.11). Le `.exe` est construit sous 3.14.
+
 ```bash
 python -m venv venv
 ```
