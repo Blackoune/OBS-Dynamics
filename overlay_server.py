@@ -96,6 +96,11 @@ def _bare_hostname(authority: str) -> str:
 # SSE de maintien : sans trafic, OBS/Chromium finit par couper la connexion.
 _KEEPALIVE_SECONDS = 15.0
 
+#: Pas de reveil d un flux SSE en attente. Ne change RIEN a la cadence
+#: du commentaire de maintien : borne seulement le temps qu un flux met
+#: a remarquer que le serveur s arrete.
+_REVEIL_SECONDS = 0.5
+
 
 class _Broker:
     """Distribue les événements de déclenchement aux pages connectées."""
@@ -437,6 +442,10 @@ class _OverlayHTTPServer(ThreadingHTTPServer):
         self.chat = chat
         self.music_hub = music_hub
         self.text_getter = text_getter
+        # Les flux SSE dorment en attendant un evenement. Sans ce
+        # drapeau, ils ne s apercoivent de l arret du serveur qu a leur
+        # prochaine ecriture, et leurs threads lui survivent.
+        self.arret = threading.Event()
         super().__init__(address, handler_cls)
 
 
@@ -697,15 +706,25 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         prefix = f"event: {event_name}\ndata: ".encode("utf-8")
+        arret = getattr(self.server, "arret", None)
         try:
             self.wfile.write(b": connected\n\n")
             for data in backlog:
                 self.wfile.write(prefix + data.encode("utf-8") + b"\n\n")
             self.wfile.flush()
+            dernier = time.monotonic()
             while True:
+                if arret is not None and arret.is_set():
+                    return
                 try:
-                    data = sub.get(timeout=_KEEPALIVE_SECONDS)
+                    # Par tranches, et non un seul sommeil de la duree
+                    # du commentaire de maintien : c est ce qui permet
+                    # de remarquer l arret sans attendre l echeance.
+                    data = sub.get(timeout=_REVEIL_SECONDS)
                 except queue.Empty:
+                    if time.monotonic() - dernier < _KEEPALIVE_SECONDS:
+                        continue
+                    dernier = time.monotonic()
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
                     continue
@@ -931,6 +950,9 @@ class OverlayServer:
     def stop(self) -> None:
         if self._httpd is None:
             return
+        # Avant shutdown() : server_close() ne joint pas les threads
+        # demons, donc un flux endormi survivrait au serveur.
+        self._httpd.arret.set()
         try:
             self._httpd.shutdown()
             self._httpd.server_close()

@@ -40,22 +40,35 @@ def monte(tmp_path):
         serveur.stop()
 
 
+#: Delai de lecture du flux. Court VOLONTAIREMENT : une socket bloquee dans
+#: un `recv` ne se reveille pas sous Windows, ni en fermant le fichier, ni en
+#: appelant `shutdown` dessus. Le seul levier est l echeance elle-meme, et
+#: chaque test payait sinon les dix secondes du delai a sa derniere ligne.
+LECTURE_S = 1.0
+
+
 class _Overlay:
     """Une source navigateur : lit le flux SSE dans un thread, comme OBS."""
 
     def __init__(self, url: str) -> None:
         self.recus: list[dict] = []
-        self._flux = urllib.request.urlopen(url, timeout=10)
+        self._stop = threading.Event()
+        self._flux = urllib.request.urlopen(url, timeout=LECTURE_S)
         self._thread = threading.Thread(target=self._lire, daemon=True)
         self._thread.start()
 
     def _lire(self) -> None:
-        try:
-            for ligne in self._flux:
-                if ligne.startswith(b"data: "):
-                    self.recus.append(json.loads(ligne[6:]))
-        except Exception:
-            pass                      # flux ferme : sortie normale
+        while not self._stop.is_set():
+            try:
+                ligne = self._flux.readline()
+            except TimeoutError:
+                continue          # rien a lire pour l instant : on repasse
+            except Exception:
+                return            # flux ferme : sortie normale
+            if not ligne:
+                return
+            if ligne.startswith(b"data: "):
+                self.recus.append(json.loads(ligne[6:]))
 
     def attendre(self, combien: int, delai: float = 6.0) -> None:
         """Attend d'avoir reçu `combien` messages, sinon échoue."""
@@ -68,6 +81,8 @@ class _Overlay:
                              f"{combien} attendu(s) : {self.recus}")
 
     def fermer(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
         try:
             self._flux.close()
         except Exception:

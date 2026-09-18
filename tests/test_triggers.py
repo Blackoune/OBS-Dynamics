@@ -458,10 +458,12 @@ def _raw_get(srv, path, host=None, origin=None, omit_host=False):
     HTTP à la main, seul moyen de rejouer ce que fait un navigateur victime
     d'un rebinding DNS.
     """
-    # 15 s, pas 5 : ce qu'on vérifie est un code de statut, jamais un délai.
-    # Dans la suite complète, des dizaines de threads (SSE, scan, hub de chat)
-    # tournent en parallèle et un aller-retour local peut dépasser 5 s.
-    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=15)
+    # 60 s : ce qu'on vérifie est un code de statut, jamais un délai.
+    # Sur un runner d'intégration à deux cœurs, un aller-retour local a
+    # déjà dépassé 15 s sous la charge du reste de la suite, et le test
+    # échouait alors sur un TimeoutError au lieu de dire quoi que ce soit
+    # du contrôle d'origine.
+    conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=60)
     try:
         conn.putrequest("GET", path, skip_host=True, skip_accept_encoding=True)
         if not omit_host:
