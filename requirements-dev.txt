@@ -4,3 +4,11 @@
 # Épinglé pour la même raison que requirements.txt : un build reproductible.
 pyinstaller==6.22.2         # packaging de l'exécutable via build.py / build.spec
 pytest==9.1.1               # suite de tests (dossier tests/)
+
+# Uniquement pour refabriquer les logos des lecteurs
+# (tools/generer_logos_musique.py). Les PNG produits sont
+# versionnes : rien de tout ceci n'est requis pour lancer ni
+# packager l'application.
+simpleicons==7.21.0        # traces de marques (CC0)
+svglib==2.2.0              # SVG -> dessin reportlab
+rlPyCairo==0.4.0           # rendu bitmap de ce dessin

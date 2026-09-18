@@ -111,6 +111,107 @@ lancement de l'application affichera en revanche l'erreur d'OBS jusqu'à un
 rafraîchissement : coche « Actualiser le navigateur quand la scène devient
 active » dans les propriétés de la source.
 
+## Widget Musique
+
+Un overlay « en cours de lecture » par lecteur : pochette, titre, artiste,
+application, et une forme d'onde qui suit le son. Les métadonnées viennent de
+l'API multimédia de Windows (SMTC) : **aucun compte à connecter**, aucun mot de
+passe, aucune clé d'API. L'onglet lit ce que l'application déjà ouverte publie
+au système.
+
+### Lecteurs pris en charge
+
+| Lecteur | Titre, artiste, pochette | Son isolé |
+|---|---|---|
+| Spotify | Oui | Oui |
+| Apple Music | Oui | Oui |
+| iTunes | Oui | Oui |
+| Deezer | Oui | Oui |
+| Tidal | Oui | Oui |
+| Amazon Music | Oui | Oui |
+| SoundCloud | Oui | Oui |
+| YouTube Music | Oui | Oui |
+| Navigateur (Chrome, Edge, Firefox…) | Oui, mais voir ci-dessous | Partiel |
+
+Chaque lecteur porte **son logo** — le cercle vert de Spotify, celui d'iTunes,
+les barres de Deezer — sur sa carte comme dans l'overlay. Une source hors
+catalogue, un navigateur par exemple, affiche à la place ses initiales dans
+sa couleur. Les fichiers sont dans `assets/music/` : en remplacer un suffit
+à changer le logo affiché.
+
+Les huit services sont **toujours listés** dans l'onglet, même éteints, et leur
+lien d'overlay ne change jamais : on prépare la source dans OBS une fois, elle
+s'allume d'elle-même le jour où ce lecteur joue.
+
+> **Le cas du navigateur.** Un lecteur utilisé dans un onglet est bien détecté —
+> titre, artiste et pochette s'affichent normalement. Mais Windows ne dit pas
+> *quel site* joue : il annonce seulement le navigateur. La pastille affichera
+> donc **CHROME** (ou EDGE, FIREFOX…), jamais « Spotify », « Deezer » ou
+> « YouTube Music ». Pour obtenir le nom du service, il faut son application
+> installée.
+>
+> Même limite pour le son : l'isolation se fait **par processus**. En
+> navigateur, la forme d'onde suit donc tout le son de ce navigateur, y compris
+> celui d'un autre onglet.
+
+SoundCloud et YouTube Music n'ont pas d'application Windows native chez la
+plupart des gens : ils s'écoutent dans un onglet et retombent alors dans le cas
+ci-dessus. Leurs cartes existent et sont prêtes ; elles s'allument si tu
+installes leur version application ou PWA.
+
+### Taille de la source navigateur
+
+Une source navigateur OBS ne peut pas se redimensionner toute seule : sa taille
+est celle que tu saisis dans ses propriétés. Deux choses à savoir.
+
+**Trop grand ne coûte rien.** Le fond de la page est transparent et la carte
+est **centrée** dans la source : le surplus se répartit autour d'elle et
+reste invisible. **Trop petit rogne.**
+
+**Si tu ne veux pas réfléchir : 1132 × 383.** Cette taille couvre toutes les
+combinaisons possibles, quelle que soit la disposition choisie ensuite.
+
+**Après une mise à jour de l'application, les sources ouvertes se rechargent
+toutes seules.** Une source navigateur restée en place garde sinon son
+ancienne page : elle recevrait les nouveaux réglages sans savoir les
+afficher, par exemple un modèle macOS privé de ses pastilles et de sa barre
+de progression. La page compare son empreinte à celle envoyée par
+l'application et se recharge une fois si elle a changé.
+
+Pour une scène plus serrée, l'application affiche la taille exacte de la
+combinaison en cours — sous l'aperçu de la fenêtre **Widget**, et à côté du
+lien sur la carte. Le chiffre suit les réglages en direct. Par disposition :
+
+| Disposition | Taille maximale |
+|---|---|
+| Compact | 902 × 241 |
+| Blocs | 1132 × 252 |
+| Galerie | 670 × 383 |
+| Minimal | 666 × 223 |
+| Bandeau | 918 × 247 |
+
+Ces valeurs sont des **maximums garantis** : la largeur du titre et de
+l'artiste est plafonnée par la feuille de style, donc aucun morceau au nom à
+rallonge ne peut faire déborder la carte. Elles sont calculées à partir des
+mêmes constantes que le CSS de la page (`GEOMETRIE` dans `music_style.py`),
+pour qu'un chiffre affiché ne puisse pas cesser de correspondre au rendu.
+
+### Forme d'onde
+
+Le niveau est lu sur le compteur de la session audio de l'application ciblée —
+le même que le mélangeur de volume de Windows. Chaque overlay ne réagit donc
+qu'au son de SA source.
+
+Ce compteur donne une **amplitude**, pas un spectre : la forme d'onde montre
+l'amplitude dans le temps, elle défile. Un vrai spectre par application
+demanderait le flux PCM du seul processus visé
+(`ActivateAudioInterfaceAsync` en mode `PROCESS_LOOPBACK`, l'API derrière la
+source « Application Audio Capture » d'OBS) ; elle refuse l'appel depuis Python
+avec `E_ILLEGAL_METHOD_CALL` et demanderait une extension native.
+
+Le relevé ne tourne que tant qu'un overlay est connecté à cette source : aucun
+périphérique ni aucune session audio n'est interrogé pour personne.
+
 ## Installation
 
 Python **3.12 minimum** (numpy 2.5.1 n'existe pas pour 3.11). Le `.exe` est construit sous 3.14.
@@ -199,11 +300,19 @@ hotkeys.py          hotkeys globales et combinaisons (pynput)
 triggers.py         règles « raccourci -> média »
 twitch_chat.py      connecteur de chat Twitch (IRC anonyme) + hub de diffusion
 overlay_server.py   serveur HTTP local des sources navigateur OBS
+music_smtc.py       sonde SMTC : titre, artiste, pochette du morceau en cours
+music_catalog.py    lecteurs connus, couleurs de marque, logos
+music_audio.py      niveau audio par application (compteur de session)
+music_style.py      apparence de l overlay, templates, geometrie et tailles
+music_overlay.py    etat partage par source et page servie a OBS
+ui_music.py         vue Widget Musique
+ui_music_style.py   fenetre Widget : formes, couleurs, image personnalisee
 i18n.py / i18n.json traductions fr / en / es
 build.py            packaging PyInstaller + validation i18n
 build.spec          spécification PyInstaller
 tests/              suite pytest
 make_shortcut.py    raccourci « Dynamics » sur le Bureau
+tools/              outils hors execution (logos des lecteurs)
 ```
 
 Le point d'entrée était un fichier unique de 4177 lignes jusqu'au 2026-09-09.

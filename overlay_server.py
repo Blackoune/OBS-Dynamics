@@ -39,8 +39,8 @@ import time
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Optional
-from urllib.parse import unquote, urlparse
+from typing import Any, Callable, Optional, Sequence
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 logger = logging.getLogger("obs_dynamics.overlay")
 
@@ -358,6 +358,7 @@ connect();
 # qu'une page parte avec des clés brutes à la place du texte.
 _DEFAULT_TEXTS = {
     "TWITCH_CHAT_WAIT_TEXT": "En attente de connexion…",
+    "MUSIC_OVERLAY_WAIT": "En attente de lecture…",
 }
 
 
@@ -429,11 +430,12 @@ class _OverlayHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, address: tuple[str, int], handler_cls: type,
                  broker: _Broker, rule_getter: Callable[[str], Optional[Any]],
-                 chat: "_ChatBinding",
+                 chat: "_ChatBinding", music_hub: Optional[Any],
                  text_getter: Optional[Callable[[str], str]]) -> None:
         self.broker = broker
         self.rule_getter = rule_getter
         self.chat = chat
+        self.music_hub = music_hub
         self.text_getter = text_getter
         super().__init__(address, handler_cls)
 
@@ -452,6 +454,10 @@ class _Handler(BaseHTTPRequestHandler):
     @property
     def chat(self) -> "_ChatBinding":
         return self.server.chat  # type: ignore[attr-defined]
+
+    @property
+    def music_hub(self) -> Optional[Any]:
+        return self.server.music_hub  # type: ignore[attr-defined]
 
     def text(self, key: str) -> str:
         """Libellé traduit, avec repli sur le français si rien n'est branché."""
@@ -578,6 +584,25 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_chat_events()
             return
 
+        if section in ("music", "musicevents", "musiccover", "musiclogo",
+                       "musicbg"):
+            hub = self.music_hub
+            if hub is None or not hub.token_matches(identifier):
+                self._not_found()
+                return
+            source = self._music_source(parsed)
+            if section == "music":
+                self._serve_music_page(identifier, source)
+            elif section == "musicevents":
+                self._serve_music_events(source)
+            elif section == "musiccover":
+                self._serve_music_cover(source)
+            elif section == "musiclogo":
+                self._serve_music_logo(source)
+            else:
+                self._serve_music_background(source)
+            return
+
         rule_id = identifier
         rule = self.rule_getter(rule_id)
         if rule is None:
@@ -655,27 +680,27 @@ class _Handler(BaseHTTPRequestHandler):
                 .replace("__WAIT_TEXT__", _escape_html(self.text("TWITCH_CHAT_WAIT_TEXT"))))
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
-    def _serve_chat_events(self) -> None:
-        hub = self.chat.hub
-        if hub is None:
-            self._not_found()
-            return
+    def _stream_sse(self, event_name: str, sub: "queue.Queue[str]",
+                    release: Callable[[], None],
+                    backlog: Sequence[str] = ()) -> None:
+        """Boucle d'émission commune à toutes les routes SSE.
 
+        `backlog` part avant la boucle : une source navigateur rouverte, ou
+        l'application redémarrée sous elle, resterait sinon vide jusqu'au
+        prochain événement, ce qui ressemble à une panne. Le commentaire de
+        maintien évite que Chromium coupe une connexion sans trafic.
+        """
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        sub = hub.subscribe()
+        prefix = f"event: {event_name}\ndata: ".encode("utf-8")
         try:
             self.wfile.write(b": connected\n\n")
-            # Réamorçage : une source navigateur rouverte (ou l'application
-            # redémarrée sous elle) afficherait sinon un chat vide jusqu'au
-            # message suivant, ce qui ressemble à une panne.
-            for message in hub.history():
-                self.wfile.write(b"event: chat\ndata: "
-                                 + json.dumps(message).encode("utf-8") + b"\n\n")
+            for data in backlog:
+                self.wfile.write(prefix + data.encode("utf-8") + b"\n\n")
             self.wfile.flush()
             while True:
                 try:
@@ -684,37 +709,89 @@ class _Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
                     continue
-                self.wfile.write(b"event: chat\ndata: " + data.encode("utf-8") + b"\n\n")
+                self.wfile.write(prefix + data.encode("utf-8") + b"\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # la source OBS a été fermée : sortie normale
         finally:
-            hub.unsubscribe(sub)
+            release()
+
+    def _serve_chat_events(self) -> None:
+        hub = self.chat.hub
+        if hub is None:
+            self._not_found()
+            return
+        sub = hub.subscribe()
+        self._stream_sse("chat", sub, lambda: hub.unsubscribe(sub),
+                         [json.dumps(message) for message in hub.history()])
 
     def _serve_events(self, rule_id: str) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-
         q = self.broker.subscribe(rule_id)
-        try:
-            self.wfile.write(b": connected\n\n")
-            self.wfile.flush()
-            while True:
-                try:
-                    data = q.get(timeout=_KEEPALIVE_SECONDS)
-                except queue.Empty:
-                    self.wfile.write(b": keepalive\n\n")   # évite la coupure
-                    self.wfile.flush()
-                    continue
-                self.wfile.write(b"event: trigger\ndata: " + data.encode("utf-8") + b"\n\n")
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass  # la source OBS a été fermée : sortie normale
-        finally:
-            self.broker.unsubscribe(rule_id, q)
+        self._stream_sse("trigger", q,
+                         lambda: self.broker.unsubscribe(rule_id, q))
+
+    # -- Widget musique ---------------------------------------------------- #
+    # Ces trois routes sont le seul point de contact entre le serveur et le
+    # widget musique. Retirer le paramètre `music_hub`, ce bloc et sa branche
+    # dans do_GET suffit à les enlever : rien d'autre ici n'en dépend.
+
+    @staticmethod
+    def _music_source(parsed: Any) -> str:
+        """Source demandée, lue dans la chaîne de requête.
+
+        Elle n'est PAS un segment de chemin : le routage n'en accepte que deux,
+        et un AppUserModelId (`SpotifyAB.SpotifyMusic_zpd...!Spotify`) s'y
+        prêterait mal.
+        """
+        return parse_qs(parsed.query).get("source", [""])[0]
+
+    def _serve_music_page(self, token: str, source: str) -> None:
+        html = self.music_hub.page_html(token, source,
+                                        self.text("MUSIC_OVERLAY_WAIT"))
+        self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _serve_music_events(self, source: str) -> None:
+        hub = self.music_hub
+        sub = hub.subscribe(source)
+        # Toujours un premier message : il porte le style, et le morceau en
+        # cours s il y en a un.
+        self._stream_sse("music", sub, lambda: hub.unsubscribe(source, sub),
+                         [json.dumps(hub.initial_payload(source))])
+
+    def _serve_music_cover(self, source: str) -> None:
+        data = self.music_hub.cover(source)
+        if not data:
+            self._not_found()
+            return
+        # L'URL porte l'empreinte du contenu : une image donnée ne change
+        # jamais, donc la garder en cache est sans risque.
+        self._send(200, data, "image/png",
+                   {"Cache-Control": "private, max-age=3600"})
+
+    def _serve_music_logo(self, source: str) -> None:
+        """Logo déposé par l'utilisateur dans `assets/music/`.
+
+        Pas de cache long, contrairement à la pochette : l'URL ne porte pas
+        d'empreinte, et remplacer le fichier doit se voir dès le rechargement
+        de la source navigateur.
+        """
+        data = self.music_hub.logo(source)
+        if not data:
+            self._not_found()
+            return
+        self._send(200, data, "image/png")
+
+    def _serve_music_background(self, source: str) -> None:
+        """Fond dessiné par l'utilisateur pour cette source.
+
+        Sans cache, comme le logo : remplacer le dessin doit se voir dès le
+        rechargement de la source navigateur.
+        """
+        data = self.music_hub.background(source)
+        if not data:
+            self._not_found()
+            return
+        self._send(200, data, "image/png")
 
 
 class OverlayServer:
@@ -729,11 +806,13 @@ class OverlayServer:
                  port: int = DEFAULT_PORT,
                  chat_hub: Optional[Any] = None,
                  chat_token_getter: Optional[Callable[[], str]] = None,
+                 music_hub: Optional[Any] = None,
                  text_getter: Optional[Callable[[str], str]] = None) -> None:
         self._rule_getter = rule_getter
         self._requested_port = port
         self._broker = _Broker()
         self._chat = _ChatBinding(chat_hub, chat_token_getter)
+        self._music_hub = music_hub
         self._text_getter = text_getter
         self._httpd: Optional[_OverlayHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -753,6 +832,26 @@ class OverlayServer:
 
     def overlay_url(self, rule_id: str) -> str:
         return f"{self.base_url()}/overlay/{rule_id}"
+
+    def music_url(self, key: str) -> str:
+        """URL de l'overlay d'un lecteur, vide tant qu'aucun hub n'est branché.
+
+        `key` est une clé de catalogue (`spotify`, `deezer`…), pas un
+        AppUserModelId : elle existe avant que le lecteur ne tourne, et ne
+        change pas d'une exécution à l'autre. C'est ce qui permet de coller le
+        lien dans OBS une fois pour toutes.
+
+        La clé voyage dans la chaîne de requête : le routage n'accepte que
+        deux segments de chemin.
+        """
+        hub = self._music_hub
+        if hub is None:
+            return ""
+        token = hub.ensure_token()
+        if not token:
+            return ""
+        return (f"{self.base_url()}/music/{token}"
+                f"?source={quote(key, safe='')}")
 
     def chat_url(self) -> str:
         """URL de l'overlay du chat, vide tant qu'aucun jeton n'existe."""
@@ -801,7 +900,7 @@ class OverlayServer:
             try:
                 self._httpd = _OverlayHTTPServer((HOST, self._requested_port), _Handler,
                                                   self._broker, self._rule_getter, self._chat,
-                                                  self._text_getter)
+                                                  self._music_hub, self._text_getter)
                 break
             except OSError as exc:
                 if attempt == retries:
@@ -814,7 +913,7 @@ class OverlayServer:
             try:
                 self._httpd = _OverlayHTTPServer((HOST, 0), _Handler,
                                                   self._broker, self._rule_getter, self._chat,
-                                                  self._text_getter)
+                                                  self._music_hub, self._text_getter)
             except OSError:
                 logger.exception("Impossible de démarrer le serveur overlay.")
                 return False

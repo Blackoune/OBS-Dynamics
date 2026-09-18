@@ -81,6 +81,8 @@ from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,  # noqa: E
                        parse_dropped_files, state_label)
 from ui_dashboard import DashboardView, GameCard  # noqa: E402
 from ui_game_dialogs import GameModal, PatchReviewDialog  # noqa: E402
+from music_overlay import MusicHub  # noqa: E402
+from ui_music import MusicView  # noqa: E402
 from ui_twitch_chat import (ConnectionDialog, TwitchChatCard,  # noqa: E402
                             TwitchChatView)
 from ui_settings import LanguageSegmentedControl, SettingsView  # noqa: E402
@@ -114,15 +116,17 @@ class Sidebar(ctk.CTkFrame):
         self._nav_btn("triggers", t("SIDEBAR_NAV_TRIGGERS"), row=2)
         # Multi Stream s'insère ENTRE Raccourcis & Overlays et Paramètres.
         self._nav_btn("twitch_chat", t("SIDEBAR_NAV_TWITCH_CHAT"), row=3)
-        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=4)
+        # Widget Musique s'insère ENTRE Multi Stream et Paramètres.
+        self._nav_btn("music", t("SIDEBAR_NAV_MUSIC"), row=4)
+        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=5)
 
         self._folder_btn = ctk.CTkButton(self, text=t("SIDEBAR_BTN_OPEN_FOLDER"), anchor="w", height=36,
                                           corner_radius=8, fg_color="transparent", hover_color=COL_CARD,
                                           text_color=COL_TEXT_MUTED, font=font(12), command=on_open_folder)
-        self._folder_btn.grid(row=5, column=0, sticky="ew", padx=12, pady=(10, 3))
+        self._folder_btn.grid(row=6, column=0, sticky="ew", padx=12, pady=(10, 3))
 
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
-        ctrl.grid(row=6, column=0, sticky="sew", padx=16, pady=20)
+        ctrl.grid(row=7, column=0, sticky="sew", padx=16, pady=20)
 
         self.status_dot = ctk.CTkLabel(ctrl, text="●", text_color=COL_RED, font=font(14))
         self.status_dot.pack(anchor="w")
@@ -186,6 +190,7 @@ class Sidebar(ctk.CTkFrame):
         self.nav_buttons["dashboard"].configure(text=t("SIDEBAR_NAV_DASHBOARD"))
         self.nav_buttons["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
         self.nav_buttons["twitch_chat"].configure(text=t("SIDEBAR_NAV_TWITCH_CHAT"))
+        self.nav_buttons["music"].configure(text=t("SIDEBAR_NAV_MUSIC"))
         self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
         self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
@@ -261,10 +266,20 @@ class App(ctk.CTk):
         self.chat_hub = ChatHub(self.twitch_chat_store,
                                 on_status_change=self._on_chat_status)
 
+        # --- Widget Musique -------------------------------------------------
+        # Construit AVANT le serveur, comme le hub du chat : une source
+        # navigateur déjà ouverte dans OBS interroge le serveur à la seconde
+        # où il écoute, et son jeton doit déjà exister à ce moment.
+        # `with_audio` : c'est l'application, et elle seule, qui ouvre la
+        # carte son — pour la forme d'onde des overlays.
+        self.music_hub = MusicHub(with_audio=True)
+        self.music_hub.ensure_token()
+
         self.overlay = OverlayServer(
             self.trigger_store.get, port=_saved_cfg.overlay_port,
             chat_hub=self.chat_hub,
             chat_token_getter=lambda: self.twitch_chat_store.load().overlay_token,
+            music_hub=self.music_hub,
             text_getter=t)
         self.overlay.start()
         self.chat_hub.apply_config(self.twitch_chat_store.load())
@@ -295,11 +310,16 @@ class App(ctk.CTk):
                                       on_rules_changed=self._rebuild_combo_map)
         self.twitch_chat = TwitchChatView(self.content, store=self.twitch_chat_store,
                                             hub=self.chat_hub, overlay=self.overlay)
+        # Widget Musique : la vue possède sa propre sonde SMTC, arrêtée dans
+        # _on_close. Rien d'autre dans l'application n'en dépend.
+        self.music = MusicView(self.content, post_ui=self.post_ui,
+                                hub=self.music_hub, overlay=self.overlay)
         self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
         self.views: dict[str, ctk.CTkFrame] = {
             "dashboard": self.dashboard,
             "triggers": self.triggers,
             "twitch_chat": self.twitch_chat,
+            "music": self.music,
             "settings": self.settings,
         }
         self._navigate("dashboard")
@@ -317,6 +337,7 @@ class App(ctk.CTk):
         self.dashboard.refresh_labels()
         self.triggers.refresh_labels()
         self.twitch_chat.refresh_labels()
+        self.music.refresh_labels()
         self.settings.refresh_labels()
 
     def _on_chat_status(self, platform: str, status: str, detail: str) -> None:
@@ -580,6 +601,10 @@ class App(ctk.CTk):
         self.hotkey_manager.stop()
         self._combo_listener.stop()
         self.chat_hub.stop_all()
+        self.music.stop()
+        # Le hub porte la capture audio : la vue seule ne suffit pas a la
+        # rendre, et un thread de capture survivrait a la fenetre.
+        self.music_hub.stop()
         self.overlay.stop()
         self._stop_reconnect_supervisor()
         self.cover_service.stop()

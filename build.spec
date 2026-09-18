@@ -58,6 +58,18 @@ a = Analysis(
         "ui_settings",     # vue Paramètres
         "ui_triggers",     # vue Raccourcis & Overlays
         "ui_twitch_chat",  # vue Chat Twitch
+        "music_smtc",      # sonde SMTC du widget musique
+        "music_overlay",   # hub et page d'overlay du widget musique
+        "music_catalog",   # lecteurs connus, couleurs et logos
+        "music_style",     # apparence de l'overlay, templates, gabarit
+        "music_audio",     # niveau audio par application
+        "pycaw",           # compteurs de session audio
+        "comtypes",        # interfaces COM chargees dynamiquement
+        "ui_music_style",  # fenêtre Widget
+        "ui_music",        # vue Widget Musique
+        # Chargée à la volée par la projection WinRT, jamais importée par nos
+        # fichiers : PyInstaller ne peut pas la déduire de l'arbre d'imports.
+        "winrt.windows.foundation.collections",
         "requests",
         "pynput",
         "tkinterdnd2",     # glisser-déposer (extension Tcl tkdnd)

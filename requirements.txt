@@ -21,4 +21,26 @@ psutil==7.2.2               # détection des processus de jeu
 simpleobsws==1.4.3          # client OBS WebSocket v5
 requests==2.34.2            # téléchargement des jaquettes (cover_service)
 pynput==1.8.2               # hotkeys globales (dégradation propre si absent)
+
+# Widget Musique : lecture des métadonnées « en cours de lecture » publiées par
+# Windows (SMTC). Le paquet `winsdk`, cité par presque tous les exemples en
+# ligne, n'a PAS de roue pour Python 3.14 : ce sont les projections `winrt-*`
+# qu'il faut. `winrt-Windows.Foundation.Collections` n'est importé par aucun
+# de nos fichiers, mais la projection le charge à la volée dès le premier
+# `get_sessions()` — sans lui, ModuleNotFoundError au premier morceau lu.
+# `music_smtc` dégrade proprement si ces paquets manquent : l'onglet affiche
+# l'erreur et la commande d'installation, le reste de l'application fonctionne.
+winrt-Windows.Media.Control==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-runtime==3.2.1
+
+# Forme d'onde du widget musique : niveau audio PAR APPLICATION, lu sur le
+# compteur de la session (`IAudioMeterInformation`) — le meme que le melangeur
+# de volume de Windows. C'est ce qui permet a l'overlay Spotify de ne reagir
+# qu'au son de Spotify. Windows uniquement ; `music_audio.available()` est faux
+# ailleurs et l'overlay fonctionne sans forme d'onde.
+pycaw==20251023
+comtypes==1.4.16
 tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
