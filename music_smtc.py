@@ -50,6 +50,20 @@ def available() -> bool:
     return _Manager is not None
 
 
+#: Signale que Windows ne rend pas le gestionnaire de sessions. Sentinelle et
+#: non phrase : c'est la vue qui la traduit.
+SMTC_TIMEOUT = "SMTC_TIMEOUT"
+
+#: Délai laissé à Windows pour rendre ce gestionnaire, en secondes.
+#:
+#: `RequestAsync` peut ne JAMAIS se terminer : le service de sessions média se
+#: bloque parfois et l'opération reste au statut « démarrée » indéfiniment
+#: (constaté sur cette machine : statut 0 pendant des minutes, quel que soit
+#: l'appartement COM, alors qu'une autre opération WinRT se terminait dans la
+#: milliseconde). Sans ce délai, la sonde restait sans gestionnaire pour
+#: toujours, sans rien en dire.
+SETUP_TIMEOUT_S = 8.0
+
 # Fenêtre de regroupement des événements SMTC, en secondes. Changer de morceau
 # émet plusieurs notifications d'affilée (propriétés, puis état de lecture) ;
 # sans ce délai la vue serait reconstruite deux ou trois fois pour un seul
@@ -245,7 +259,45 @@ class MusicWatcher:
                 pending.cancel()
 
     async def _setup(self) -> None:
-        self._manager = await _Manager.request_async()
+        """Obtient le gestionnaire, en disant ce qui se passe s'il tarde.
+
+        L'opération n'est ni annulée ni relancée : une nouvelle demande ne
+        débloquerait pas un service qui l'est déjà, et les empiler laisserait
+        une opération en vol toutes les huit secondes. On attend donc
+        CELLE-CI, en signalant l'attente une seule fois ; si Windows finit par
+        répondre, la sonde repart d'elle-même et la vue efface l'erreur au
+        premier relevé.
+        """
+        if self._stopping.is_set():
+            # Fenêtre fermée avant même que ce thread ait sa boucle : rien ne
+            # sert de demander un gestionnaire dont personne ne veut plus.
+            return
+        operation = asyncio.ensure_future(_Manager.request_async())
+        # La demande d'arrêt est attendue EN MÊME TEMPS que l'opération :
+        # sinon fermer la fenêtre pendant que Windows ne répond pas obligeait
+        # à attendre la fin de la tranche en cours, et `stop()` rendait la
+        # main au bout de son délai de jointure au lieu de tout de suite.
+        arret = asyncio.ensure_future(self._stopped.wait())
+        signale = False
+        try:
+            while True:
+                fini, _ = await asyncio.wait({operation, arret},
+                                             timeout=SETUP_TIMEOUT_S,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if operation in fini:
+                    break
+                if arret in fini or self._stopping.is_set():
+                    return
+                if not signale:
+                    signale = True
+                    logger.warning("Windows ne rend pas le gestionnaire de "
+                                   "sessions média (toujours en attente après "
+                                   "%.0f s).", SETUP_TIMEOUT_S)
+                    self._report_error(SMTC_TIMEOUT)
+        finally:
+            arret.cancel()
+
+        self._manager = operation.result()
         self._subscribe_manager()
         await self._refresh()
 
@@ -316,6 +368,12 @@ class MusicWatcher:
     # -- lecture ----------------------------------------------------------- #
 
     async def _refresh(self) -> None:
+        if self._manager is None:
+            # Relecture demandée avant que Windows ait rendu le gestionnaire —
+            # par le bouton Actualiser, par exemple. Lire dessus levait un
+            # AttributeError affiché tel quel à l'utilisateur, à la place de
+            # l'attente réelle.
+            return
         sessions = list(self._manager.get_sessions())
         self._subscribe_sessions(sessions)
         current = self._manager.get_current_session()

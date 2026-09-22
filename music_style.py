@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app_paths import DATA_DIR, logger
+from music_catalog import is_valid_key
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -298,6 +299,9 @@ class StyleStore:
     def __init__(self, path: Path, backgrounds: Optional[Path] = None) -> None:
         self._path = path
         self._backgrounds = backgrounds or BACKGROUNDS_DIR
+        # UN verrou pour tout le fichier, jeton compris : le jeton et les
+        # styles s'écrivaient par deux chemins différents, chacun avec son
+        # verrou, et le dernier arrivé écrasait l'autre.
         self._lock = threading.Lock()
 
     # -- lecture ----------------------------------------------------------- #
@@ -308,6 +312,71 @@ class StyleStore:
             return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError):
             return {}
+
+    def _read_for_update(self) -> dict[str, Any]:
+        """Contenu à modifier puis réécrire. Appelée sous `self._lock`.
+
+        Un fichier ILLISIBLE n'est pas un fichier vide. Le réécrire tel quel
+        effaçait tous les styles, et surtout le jeton : chaque lien d'overlay
+        déjà collé dans OBS cessait de répondre, sans rien qui l'explique.
+        Le fichier abîmé est donc mis de côté, et le jeton en est extrait
+        s'il est encore lisible — une écriture interrompue laisse
+        généralement le début du document intact, et le jeton y est en tête.
+        """
+        try:
+            texte = self._path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
+        # Toute autre OSError remonte : un fichier qu'on ne peut pas lire ne
+        # doit pas être écrasé à l'aveugle.
+        try:
+            data = json.loads(texte)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+        copie = self._path.with_name(self._path.name + ".corrompu")
+        try:
+            copie.write_text(texte, encoding="utf-8")
+        except OSError:
+            logger.warning("Copie du fichier abîmé impossible (%s).", copie)
+        logger.warning("Fichier du widget musique illisible, mis de côté dans "
+                       "%s. Les styles repartent de zéro.", copie.name)
+        trouve = re.search(r'"overlay_token"\s*:\s*"([A-Za-z0-9_-]{16,})"', texte)
+        return {"overlay_token": trouve.group(1)} if trouve else {}
+
+    def _write(self, data: dict[str, Any]) -> None:
+        """Écriture atomique : un fichier temporaire, puis un remplacement.
+
+        `write_text` directement sur le fichier le tronquait avant d'écrire :
+        un plantage ou une coupure à ce moment laissait un document à moitié
+        vide, c'est-à-dire la situation que `_read_for_update` doit réparer.
+        """
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(self._path)
+
+    # -- jeton ------------------------------------------------------------- #
+
+    def ensure_token(self, fabriquer) -> str:
+        """Le jeton persisté, créé par `fabriquer()` s'il n'y en a pas.
+
+        Écrit dans le document existant, jamais à sa place : c'est ce qui
+        garde les styles déjà enregistrés. Lève `OSError` si le jeton neuf ne
+        peut pas être persisté — l'appelant doit alors prévenir que le lien
+        changera au prochain démarrage.
+        """
+        with self._lock:
+            data = self._read_for_update()
+            jeton = data.get("overlay_token")
+            if isinstance(jeton, str) and jeton:
+                return jeton
+            jeton = fabriquer()
+            data["overlay_token"] = jeton
+            self._write(data)
+            return jeton
 
     def get(self, key: str) -> Style:
         """Réglages d'un lecteur, ou le style par défaut s'il n'en a pas.
@@ -344,35 +413,38 @@ class StyleStore:
         casserait toutes les sources navigateur déjà configurées dans OBS.
         """
         with self._lock:
-            data = self._read()
-            styles = data.get("styles")
-            if not isinstance(styles, dict):
-                styles = {}
-            styles[key] = style.as_dict()
-            data["styles"] = styles
             try:
-                self._path.write_text(json.dumps(data, indent=2) + "\n",
-                                      encoding="utf-8")
+                data = self._read_for_update()
+                styles = data.get("styles")
+                if not isinstance(styles, dict):
+                    styles = {}
+                styles[key] = style.as_dict()
+                data["styles"] = styles
+                self._write(data)
             except OSError:
                 logger.warning("Réglages du widget musique non enregistrés (%s).",
                                self._path)
 
     def reset(self, key: str) -> None:
         with self._lock:
-            data = self._read()
-            styles = data.get("styles")
-            if isinstance(styles, dict) and styles.pop(key, None) is not None:
-                data["styles"] = styles
-                try:
-                    self._path.write_text(json.dumps(data, indent=2) + "\n",
-                                          encoding="utf-8")
-                except OSError:
-                    logger.warning("Réinitialisation non enregistrée (%s).",
-                                   self._path)
+            try:
+                data = self._read_for_update()
+                styles = data.get("styles")
+                if isinstance(styles, dict) and styles.pop(key, None) is not None:
+                    data["styles"] = styles
+                    self._write(data)
+            except OSError:
+                logger.warning("Réinitialisation non enregistrée (%s).",
+                               self._path)
 
     # -- image de fond ----------------------------------------------------- #
 
     def background_path(self, key: str) -> Optional[Path]:
+        # La clé peut venir d'une URL (`/musicbg/<jeton>?source=`) : sans ce
+        # contrôle, `?source=C:/…/photo` désignait n'importe quel PNG du
+        # disque, et la route le servait.
+        if not is_valid_key(key):
+            return None
         chemin = self._backgrounds / f"{key}.png"
         try:
             return chemin if chemin.is_file() else None
@@ -386,7 +458,7 @@ class StyleStore:
         sur le bureau finit déplacé ou supprimé, et l'overlay tomberait en
         panne pendant une diffusion sans que rien ne l'explique.
         """
-        if Image is None:
+        if Image is None or not is_valid_key(key):
             return False
         try:
             self._backgrounds.mkdir(parents=True, exist_ok=True)

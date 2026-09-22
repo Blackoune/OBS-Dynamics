@@ -600,6 +600,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._not_found()
                 return
             source = self._music_source(parsed)
+            # Refusée ICI, avant toute route : la source finit en nom de
+            # fichier (`<clé>.png`) pour le logo et le fond, et en clé
+            # d'abonnement pour le flux.
+            if not hub.accepts_source(source):
+                self._not_found()
+                return
             if section == "music":
                 self._serve_music_page(identifier, source)
             elif section == "musicevents":

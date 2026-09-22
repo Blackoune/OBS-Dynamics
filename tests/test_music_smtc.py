@@ -360,3 +360,92 @@ def test_un_arret_immediat_ne_laisse_ni_erreur_ni_thread(delai_s):
     assert watcher._thread is None
     assert erreurs == []
     assert watcher._tokens == []
+
+
+# ----------------------------------------------------------------------------
+# Windows qui ne repond pas
+# ----------------------------------------------------------------------------
+class _GestionnaireFactice:
+    """Le minimum que `_setup` puis `_refresh` demandent au gestionnaire."""
+
+    def __init__(self):
+        self.abonnements = 0
+
+    def add_sessions_changed(self, _handler):
+        self.abonnements += 1
+        return "jeton"
+
+    def add_current_session_changed(self, _handler):
+        self.abonnements += 1
+        return "jeton"
+
+    def get_sessions(self):
+        return []
+
+    def get_current_session(self):
+        return None
+
+
+class _ManagerLent:
+    """`request_async()` qui met plus longtemps que le delai a repondre."""
+
+    gestionnaire = _GestionnaireFactice()
+
+    @classmethod
+    async def request_async(cls, delai=0.25):
+        await asyncio.sleep(delai)
+        return cls.gestionnaire
+
+
+def test_une_relecture_avant_le_gestionnaire_ne_leve_pas():
+    """Regression : le bouton Actualiser pendant l attente de Windows.
+
+    `_manager` valait encore None, et la vue affichait
+    `AttributeError: NoneType object has no attribute get_sessions` a la
+    place de l attente reelle.
+    """
+    recus = []
+    watcher = MusicWatcher(on_update=recus.append, dispatch=lambda fn: fn())
+
+    asyncio.run(watcher._refresh())
+
+    assert recus == []
+
+
+def test_une_attente_trop_longue_est_signalee(monkeypatch):
+    monkeypatch.setattr(music_smtc, "_Manager", _ManagerLent)
+    monkeypatch.setattr(music_smtc, "SETUP_TIMEOUT_S", 0.05)
+    erreurs, recus = [], []
+    watcher = MusicWatcher(on_update=recus.append, dispatch=lambda fn: fn(),
+                           on_error=erreurs.append)
+
+    asyncio.run(watcher._setup())
+
+    assert erreurs == [music_smtc.SMTC_TIMEOUT]
+    assert watcher._manager is _ManagerLent.gestionnaire
+    assert recus == [[]]            # la sonde repart d elle-meme
+
+
+def test_lattente_nest_signalee_quune_fois(monkeypatch):
+    # Sinon la vue clignoterait entre deux messages toutes les secondes.
+    monkeypatch.setattr(music_smtc, "_Manager", _ManagerLent)
+    monkeypatch.setattr(music_smtc, "SETUP_TIMEOUT_S", 0.02)
+    erreurs = []
+    watcher = MusicWatcher(on_update=lambda _s: None, dispatch=lambda fn: fn(),
+                           on_error=erreurs.append)
+
+    asyncio.run(watcher._setup())
+
+    assert erreurs == [music_smtc.SMTC_TIMEOUT]
+
+
+def test_un_arret_pendant_lattente_sort_sans_gestionnaire(monkeypatch):
+    monkeypatch.setattr(music_smtc, "_Manager", _ManagerLent)
+    monkeypatch.setattr(music_smtc, "SETUP_TIMEOUT_S", 0.02)
+    watcher = MusicWatcher(on_update=lambda _s: None, dispatch=lambda fn: fn())
+    watcher._stopping.set()
+
+    asyncio.run(watcher._setup())
+
+    assert watcher._manager is None
+    assert watcher._tokens == []

@@ -30,6 +30,20 @@ from app_paths import ASSETS_DIR
 #: Dossier où chercher un logo fourni par l'utilisateur, un PNG par clé.
 LOGOS_DIR = ASSETS_DIR / "music"
 
+#: Forme de TOUTE clé de lecteur : celles du catalogue (`apple_music`) comme
+#: celles fabriquées par `_slug` pour une source inconnue (`chrome-exe`).
+#:
+#: C'est la seule barrière entre le paramètre `?source=` d'une URL d'overlay
+#: et un chemin de fichier : la clé finit en `<dossier>/<clé>.png`. Sans
+#: elle, `?source=C:/Users/.../photo` servait n'importe quel PNG du disque —
+#: pathlib remplace le dossier de base dès qu'on lui joint un chemin absolu.
+_KEY = re.compile(r"[a-z0-9_-]{1,40}")
+
+
+def is_valid_key(key: object) -> bool:
+    """La chaîne a-t-elle la forme d'une clé de lecteur, et rien de plus ?"""
+    return isinstance(key, str) and _KEY.fullmatch(key) is not None
+
 
 @dataclass(frozen=True)
 class MusicApp:
@@ -141,6 +155,8 @@ def logo_path(key: str) -> Optional[Path]:
     Une source hors catalogue n'en a pas : l'appelant retombe alors sur le
     monogramme. Remplacer un fichier suffit à changer le logo affiché.
     """
+    if not is_valid_key(key):
+        return None
     chemin = LOGOS_DIR / f"{key}.png"
     try:
         return chemin if chemin.is_file() else None

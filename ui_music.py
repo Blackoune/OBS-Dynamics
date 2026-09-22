@@ -21,7 +21,8 @@ from typing import Any, Callable, Optional
 from i18n import t
 from music_catalog import BUILT_IN, MusicApp, identify, logo_path
 from music_overlay import MusicHub
-from music_smtc import IMPORT_ERROR, MusicWatcher, Session, available
+from music_smtc import (IMPORT_ERROR, SMTC_TIMEOUT, MusicWatcher, Session,
+                        available)
 from music_style import Style, StyleStore, overlay_size, preview_png
 from ui_music_style import StyleDialog
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_BG, COL_BORDER,
@@ -467,7 +468,13 @@ class MusicView(ctk.CTkFrame):
         return self._overlay.music_url(app.key)
 
     def _apply_error(self, message: str) -> None:
-        self._error = message
+        """Affiche l'erreur, traduite quand la sonde en donne la raison.
+
+        Les autres messages sont des exceptions brutes : elles partent telles
+        quelles dans le relevé à coller dans un ticket.
+        """
+        self._error = (t("MUSIC_ERROR_TIMEOUT") if message == SMTC_TIMEOUT
+                       else message)
         self._render()
 
     def _copy_report(self) -> None:

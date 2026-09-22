@@ -32,6 +32,11 @@ CHEMINS_INTERDITS = (
     re.compile(r"(^|/)config\.json$"),
     re.compile(r"(^|/)data/"),
     re.compile(r"(^|/)oauth_tokens\.dat$"),
+    # Journaux : un message d'erreur `requests` recopie l'URL appelée, clé
+    # comprise. C'est ainsi qu'une clé de stream YouTube est arrivée dans
+    # `data.old/obs_dynamics.log`, puis dans le commit 833d1df.
+    re.compile(r"(^|/)data\.old/"),
+    re.compile(r"\.log(\.\d+)?$"),
 )
 
 # `data/hotkeys.json` est suivi depuis avant que `data/` n'entre au
@@ -53,6 +58,12 @@ EXEMPTIONS = frozenset({"data/hotkeys.json"})
 CONDENSATS_INTERDITS = {
     "e934dd0dec1c18ad2b255889391b0ffa74451448529c675fe0e9391b99447264":
         "mot de passe OBS WebSocket publié dans le commit 752b027",
+    # d85f4c... = clé de stream YouTube recopiée dans un journal versionné
+    # (`data.old/obs_dynamics.log`, commit 833d1df). À réinitialiser dans
+    # YouTube Studio : tant qu'elle ne l'est pas, elle permet de diffuser
+    # sur la chaîne.
+    "d85f4c7a8012bbbf1c010944db5d6d56d1383accac8610c7c1a335d539d625f3":
+        "clé de stream YouTube publiée dans le commit 833d1df",
 }
 
 # Ce qui ressemble à une valeur de secret dans un texte quelconque : on hache
@@ -68,6 +79,24 @@ GABARITS = {"changeme", "votre_mot_de_passe", "xxx", "your_password_here",
 AFFECTATIONS = (
     re.compile(r"^\s*(OBS_WS_PASSWORD|RAWG_API_KEY)\s*=\s*(?P<valeur>\S+)", re.M),
     re.compile(r'"(?:password|client_secret|api_key|token)"\s*:\s*"(?P<valeur>[^"]+)"'),
+)
+
+# --- 4. Secrets reconnaissables à leur FORME ------------------------------ #
+# Les règles précédentes cherchent une affectation (`CLE=valeur`). Un secret
+# recopié AILLEURS — dans l'URL d'un message d'erreur, par exemple — leur
+# échappait : c'est exactement comme ça que la clé de stream YouTube est
+# passée. Ces formes-là se reconnaissent seules, où qu'elles apparaissent.
+MOTIFS_DE_SECRETS = (
+    # Clé de stream YouTube : cinq groupes de quatre, en minuscules. Les
+    # bornes excluent un UUID (8-4-4-4-12), qui n'a jamais cette forme.
+    (re.compile(r"(?<![a-z0-9-])[a-z0-9]{4}(?:-[a-z0-9]{4}){4}(?![a-z0-9-])"),
+     "clé de stream YouTube"),
+    # Adresse d'ingestion RTMP, en clair ou encodée dans une URL : elle porte
+    # la clé de stream en dernier segment.
+    (re.compile(r"rtmps?(?::|%3A)(?://|%2F%2F)", re.I),
+     "adresse de diffusion RTMP (porte la clé de stream)"),
+    # Clé d'API Google.
+    (re.compile(r"AIza[0-9A-Za-z_\-]{35}"), "clé d'API Google"),
 )
 
 
@@ -163,6 +192,14 @@ def analyser(chemin: str, texte: str) -> list[str]:
                 trouvailles.append(
                     f"{chemin}:{ligne} : identifiant en clair "
                     f"({len(valeur.strip(chr(34)))} caractères)")
+
+    for motif, nature in MOTIFS_DE_SECRETS:
+        correspondance = motif.search(texte)
+        if correspondance:
+            # La position seulement, jamais la valeur : ce message s'affiche
+            # dans un terminal, et part parfois dans un rapport de CI.
+            ligne = texte[:correspondance.start()].count("\n") + 1
+            trouvailles.append(f"{chemin}:{ligne} : {nature}")
     return trouvailles
 
 

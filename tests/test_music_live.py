@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -289,3 +290,37 @@ def test_la_reinitialisation_revient_au_style_par_defaut(monte):
 
     assert overlay.recus[-1]["style"]["bg"] == Style().bg
     assert overlay.recus[-1]["style"]["opacity"] == Style().opacity
+
+
+# ----------------------------------------------------------------------------
+# Traversee de chemin par ?source=
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("route", ["musiclogo", "musicbg", "musiccover",
+                                   "musicevents", "music"])
+@pytest.mark.parametrize("forme", ["absolu", "relatif", "majuscules"])
+def test_une_source_hors_forme_recoit_un_404(monte, tmp_path, route, forme):
+    """Regression : `?source=C:/.../photo` servait n importe quel PNG du disque.
+
+    Le PNG vise EXISTE : avant le correctif, `/musiclogo` le renvoyait avec
+    un 200 et son contenu.
+    """
+    hub, serveur = monte
+    (tmp_path / "photo.png").write_bytes(b"\x89PNG-contenu-prive")
+    source = {"absolu": (tmp_path / "photo").as_posix(),
+              "relatif": "../../../../photo",
+              "majuscules": "SPOTIFY"}[forme]
+    url = (f"{serveur.base_url()}/{route}/{hub.ensure_token()}"
+           f"?source={urllib.parse.quote(source, safe='')}")
+
+    with pytest.raises(urllib.error.HTTPError) as erreur:
+        urllib.request.urlopen(url, timeout=10)
+
+    assert erreur.value.code == 404
+
+
+def test_une_source_legitime_passe_toujours(monte):
+    hub, serveur = monte
+    url = f"{serveur.base_url()}/music/{hub.ensure_token()}?source=spotify"
+
+    with urllib.request.urlopen(url, timeout=10) as reponse:
+        assert reponse.status == 200

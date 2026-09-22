@@ -160,3 +160,46 @@ def test_un_logo_depose_est_trouve(tmp_path, monkeypatch):
 def test_un_dossier_de_logos_absent_ne_fait_rien_tomber(tmp_path, monkeypatch):
     monkeypatch.setattr(music_catalog, "LOGOS_DIR", tmp_path / "jamais-cree")
     assert logo_path("spotify") is None
+
+
+# ----------------------------------------------------------------------------
+# Cles venues d une URL
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("cle", [
+    "../../secret", "..\\..\\secret", "C:/Users/x/photo", "/etc/passwd",
+    "spotify/../../x", "SPOTIFY", "", "a" * 41, "spo tify", "spotify.png",
+])
+def test_une_cle_hors_forme_ne_designe_aucun_fichier(cle, tmp_path, monkeypatch):
+    """Regression : `?source=` finissait tel quel dans un chemin de fichier.
+
+    `LOGOS_DIR / "C:/.../photo.png"` rend le chemin absolu : pathlib jette le
+    dossier de base. La route servait alors n importe quel PNG du disque.
+    """
+    monkeypatch.setattr(music_catalog, "LOGOS_DIR", tmp_path / "logos")
+    (tmp_path / "secret.png").write_bytes(b"PNG")
+
+    assert logo_path(cle) is None
+
+
+def test_un_png_hors_du_dossier_des_logos_reste_inaccessible(tmp_path, monkeypatch):
+    # Le fichier EXISTE : avant le correctif, ces deux cles le designaient.
+    monkeypatch.setattr(music_catalog, "LOGOS_DIR", tmp_path / "logos")
+    (tmp_path / "logos").mkdir()
+    (tmp_path / "secret.png").write_bytes(b"PNG")
+
+    assert logo_path("../secret") is None
+    assert logo_path((tmp_path / "secret").as_posix()) is None
+
+
+@pytest.mark.parametrize("cle", [app.key for app in BUILT_IN]
+                         + ["chrome-exe", "source", "vlc_2"])
+def test_les_cles_legitimes_restent_valides(cle):
+    assert music_catalog.is_valid_key(cle)
+
+
+def test_toute_cle_fabriquee_pour_une_source_inconnue_est_valide():
+    # Une cle refusee couperait le lien d overlay de cette source.
+    for app_id in ("chrome.exe",
+                   "Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic",
+                   "!!!", "x" * 200, "Été à Noël.exe"):
+        assert music_catalog.is_valid_key(identify(app_id).key), app_id

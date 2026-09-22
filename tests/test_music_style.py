@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
 
 import pytest
 
@@ -538,3 +539,91 @@ def test_les_vignettes_ont_les_coins_arrondis():
             for coin in coins:
                 assert image.getpixel(coin)[3] == 0, coin
             assert image.getpixel((largeur // 2, hauteur // 2))[3] == 255
+
+
+# ----------------------------------------------------------------------------
+# Fichier abime, cles hors forme
+# ----------------------------------------------------------------------------
+def test_un_fichier_abime_ne_fait_pas_perdre_le_jeton(tmp_path):
+    """Regression : un document illisible etait remplace par un document neuf.
+
+    Styles perdus, et surtout jeton regenere : tous les liens deja colles
+    dans OBS cessaient de repondre. Le jeton est recupere tant qu il reste
+    lisible, et le fichier abime est garde de cote.
+    """
+    chemin = tmp_path / "music_widget.json"
+    chemin.write_text('{"overlay_token": "JETON-DEJA-DANS-OBS-123", "styles": {"spo',
+                      encoding="utf-8")
+    store = StyleStore(chemin, backgrounds=tmp_path / "fonds")
+
+    jeton = store.ensure_token(lambda: pytest.fail("jeton regenere"))
+    store.save("spotify", Style(bg="#123456"))
+
+    assert jeton == "JETON-DEJA-DANS-OBS-123"
+    relu = json.loads(chemin.read_text(encoding="utf-8"))
+    assert relu["overlay_token"] == "JETON-DEJA-DANS-OBS-123"
+    assert relu["styles"]["spotify"]["bg"] == "#123456"
+    assert (tmp_path / "music_widget.json.corrompu").is_file()
+
+
+def test_creer_le_jeton_garde_les_styles_deja_enregistres(tmp_path):
+    chemin = tmp_path / "music_widget.json"
+    chemin.write_text(json.dumps({"styles": {"deezer": {"bg": "#ABCDEF"}}}),
+                      encoding="utf-8")
+    store = StyleStore(chemin, backgrounds=tmp_path / "fonds")
+
+    store.ensure_token(lambda: "NEUF-NEUF-NEUF-NEUF")
+
+    relu = json.loads(chemin.read_text(encoding="utf-8"))
+    assert relu["overlay_token"] == "NEUF-NEUF-NEUF-NEUF"
+    assert relu["styles"]["deezer"]["bg"] == "#ABCDEF"
+
+
+def test_une_ecriture_interrompue_laisse_lancien_fichier_intact(tmp_path, monkeypatch):
+    # Le remplacement n a lieu qu une fois le nouveau contenu entierement ecrit.
+    chemin = tmp_path / "music_widget.json"
+    store = StyleStore(chemin, backgrounds=tmp_path / "fonds")
+    store.ensure_token(lambda: "JETON-D-ORIGINE-1234")
+    avant = chemin.read_text(encoding="utf-8")
+
+    def coupure(self, *args, **kwargs):
+        raise OSError("disque plein")
+    monkeypatch.setattr(pathlib.Path, "replace", coupure)
+    store.save("spotify", Style(bg="#FF0000"))
+    monkeypatch.undo()
+
+    assert chemin.read_text(encoding="utf-8") == avant
+
+
+def test_un_fichier_illisible_nest_jamais_ecrase(tmp_path, monkeypatch):
+    # Refus de lecture (droits, verrou) : ne rien reecrire a l aveugle.
+    chemin = tmp_path / "music_widget.json"
+    chemin.write_text(json.dumps({"overlay_token": "JETON-PROTEGE-12345"}),
+                      encoding="utf-8")
+    store = StyleStore(chemin, backgrounds=tmp_path / "fonds")
+    lire = pathlib.Path.read_text
+
+    def refus(self, *args, **kwargs):
+        if self == chemin:
+            raise PermissionError("verrouille")
+        return lire(self, *args, **kwargs)
+    monkeypatch.setattr(pathlib.Path, "read_text", refus)
+    store.save("spotify", Style(bg="#FF0000"))
+    monkeypatch.undo()
+
+    assert json.loads(chemin.read_text(encoding="utf-8")) == {
+        "overlay_token": "JETON-PROTEGE-12345"}
+
+
+def test_une_cle_hors_forme_ne_designe_aucun_fond(tmp_path):
+    # Le fichier vise EXISTE : avant le correctif, ces cles le designaient,
+    # et `set_background` ecrivait hors du dossier des fonds.
+    store = StyleStore(tmp_path / "w.json", backgrounds=tmp_path / "fonds")
+    (tmp_path / "fonds").mkdir()
+    image = tmp_path / "dessin.png"
+    Image.new("RGB", (8, 8)).save(image)
+
+    for cle in ("../dessin", (tmp_path / "dessin").as_posix(), ""):
+        assert store.background_path(cle) is None, cle
+        assert store.background_bytes(cle) is None, cle
+        assert store.set_background(cle, image) is False, cle

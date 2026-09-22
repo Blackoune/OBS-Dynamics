@@ -42,3 +42,9 @@ graphify-out/
 
 # Journal du rebuild automatique du .exe (hook post-commit).
 build_auto.log
+
+# Journaux et anciens dossiers de donnees : un message d erreur `requests`
+# recopie l URL appelee, cle comprise (fuite d une cle de stream en 833d1df).
+data.old/
+*.log
+*.log.[0-9]

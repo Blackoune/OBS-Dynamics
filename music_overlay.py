@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 from app_paths import DATA_DIR, logger
 from music_audio import AppLevels
-from music_catalog import identify, logo_path
+from music_catalog import identify, is_valid_key, logo_path
 from music_smtc import Session
 from music_style import Style, StyleStore, css_variables, overlay_size
 
@@ -108,23 +108,26 @@ class MusicHub:
         """
         if self._token:
             return self._token
+        # Par le magasin de styles, et non en réécrivant le fichier ici : il
+        # porte aussi les styles, sous SON verrou. Écrire `{"overlay_token":
+        # …}` à la place du document effaçait tous les réglages dès que le
+        # fichier était illisible, puis changeait le lien au démarrage suivant.
+        neuf = secrets.token_urlsafe(24)
         try:
-            token = json.loads(self._path.read_text(encoding="utf-8")).get(
-                "overlay_token", "")
-        except (OSError, json.JSONDecodeError, AttributeError):
-            token = ""
-        if not token:
-            token = secrets.token_urlsafe(24)
-            try:
-                self._path.write_text(
-                    json.dumps({"overlay_token": token}, indent=2) + "\n",
-                    encoding="utf-8")
+            token = self.styles.ensure_token(lambda: neuf)
+            if token == neuf:
                 logger.info("Jeton overlay du widget musique créé et persisté.")
-            except OSError:
-                logger.warning("Jeton overlay musique non persisté (%s) : le lien "
-                               "changera au prochain démarrage.", self._path)
+        except OSError:
+            token = neuf
+            logger.warning("Jeton overlay musique non persisté (%s) : le lien "
+                           "changera au prochain démarrage.", self._path)
         self._token = token
         return token
+
+    #: Une `?source=` d'URL a-t-elle la forme d'une clé de lecteur ? Exposée
+    #: par le hub pour que le serveur HTTP n'importe rien du widget musique :
+    #: l'onglet doit rester supprimable d'un bloc.
+    accepts_source = staticmethod(is_valid_key)
 
     def token_matches(self, candidate: str) -> bool:
         """Comparaison à temps constant : le jeton est le seul contrôle d'accès
