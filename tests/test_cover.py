@@ -98,7 +98,7 @@ def test_appdetails_returns_the_real_urls(service):
               "apps/4704690/163e2a742e5f/header.jpg?t=1785908480")
 
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             assert "appdetails" in url
             return _FakeResponse(payload={"4704690": {"success": True, "data": {
                 "header_image": hashed, "capsule_image": hashed.replace("header", "capsule")}}})
@@ -110,14 +110,14 @@ def test_appdetails_returns_the_real_urls(service):
 
 def test_appdetails_failure_is_not_fatal(service):
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             raise OSError("réseau coupé")
     assert service._appdetails_urls(Session(), "4704690") == []
 
 
 def test_appdetails_handles_an_unknown_appid(service):
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             return _FakeResponse(payload={"999": {"success": False}})
     assert service._appdetails_urls(Session(), "999") == []
 
@@ -128,7 +128,7 @@ def test_appdetails_is_only_queried_when_the_guessable_paths_fail(service, tmp_p
     appels = {"appdetails": 0}
 
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             if "appdetails" in url:
                 appels["appdetails"] += 1
                 return _FakeResponse(payload={"620": {"success": False}})
@@ -147,10 +147,10 @@ def test_an_oversized_download_is_dropped():
     """Un hôte tiers ne doit pas pouvoir faire grossir la mémoire sans fin :
     au-delà du plafond, la lecture s'arrête et l'image est abandonnée."""
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             return _FakeBody(b"x" * (_MAX_IMAGE_BYTES + 1))
 
-    assert _fetch_bounded(Session(), "http://exemple/enorme.jpg") is None
+    assert _fetch_bounded(Session(), "https://cdn.cloudflare.steamstatic.com/enorme.jpg") is None
 
 
 def test_a_normal_download_passes_through():
@@ -159,7 +159,93 @@ def test_a_normal_download_passes_through():
     assert len(image) < _MAX_IMAGE_BYTES
 
     class Session:
-        def get(self, url, timeout=None, stream=False):
+        def get(self, url, timeout=None, stream=False, **_kw):
             return _FakeBody(image)
 
-    assert _fetch_bounded(Session(), "http://exemple/ok.jpg") == image
+    assert _fetch_bounded(Session(), "https://cdn.cloudflare.steamstatic.com/ok.jpg") == image
+
+
+# -- Hôtes autorisés, redirections, délai total ---------------------------- #
+
+class _Redirection:
+    def __init__(self, location, status=302):
+        self.status_code = status
+        self.headers = {"Location": location}
+
+    def close(self):
+        pass
+
+
+class _SessionScriptee:
+    """Rend, dans l'ordre, les réponses prévues, et note chaque URL demandée."""
+
+    def __init__(self, *reponses):
+        self._reponses = list(reponses)
+        self.demandees = []
+
+    def get(self, url, timeout=None, stream=False, allow_redirects=True):
+        # Suivre les redirections tout seul, c'est justement ce qu'on refuse.
+        assert allow_redirects is False
+        self.demandees.append(url)
+        return self._reponses.pop(0)
+
+
+STEAM = "https://shared.akamai.steamstatic.com/store_item_assets/x/header.jpg"
+
+
+@pytest.mark.parametrize("url", [
+    "http://cdn.cloudflare.steamstatic.com/a.jpg",        # pas HTTPS
+    "https://192.168.1.1/admin.jpg",                      # réseau local
+    "https://127.0.0.1:4466/media/x",                     # nos propres routes
+    "https://steamstatic.com.attaquant.example/a.jpg",    # faux suffixe
+    "https://evilsteamstatic.com/a.jpg",                  # suffixe sans point
+    "file:///C:/Windows/win.ini",
+])
+def test_une_url_hors_des_hotes_autorises_nest_jamais_demandee(url):
+    """Régression : RAWG et appdetails RENVOIENT des URL d'images, que l'on
+    appelait sans rien vérifier — y compris vers le réseau local."""
+    session = _SessionScriptee()
+
+    assert _fetch_bounded(session, url) is None
+    assert session.demandees == []
+
+
+def test_une_redirection_vers_un_hote_interdit_est_abandonnee():
+    session = _SessionScriptee(_Redirection("http://192.168.1.1/admin"))
+
+    assert _fetch_bounded(session, STEAM) is None
+    assert session.demandees == [STEAM]
+
+
+def test_une_redirection_entre_cdn_steam_est_suivie():
+    image = _png(600, 900)
+    ailleurs = "https://cdn.akamai.steamstatic.com/steam/apps/1/header.jpg"
+    session = _SessionScriptee(_Redirection(ailleurs), _FakeBody(image))
+
+    assert _fetch_bounded(session, STEAM) == image
+    assert session.demandees == [STEAM, ailleurs]
+
+
+def test_une_boucle_de_redirections_est_coupee():
+    session = _SessionScriptee(*[_Redirection(STEAM) for _ in range(10)])
+
+    assert _fetch_bounded(session, STEAM) is None
+    assert len(session.demandees) == 4          # 1 + 3 redirections
+
+
+def test_un_telechargement_au_goutte_a_goutte_est_abandonne(monkeypatch):
+    """`timeout` ne borne que l'attente ENTRE deux paquets : un hôte qui
+    envoie un octet toutes les sept secondes tenait un worker sans fin."""
+    import cover_service
+
+    horloge = iter(range(0, 1000, 7))            # sept secondes par paquet
+    monkeypatch.setattr(cover_service.time, "monotonic", lambda: next(horloge))
+
+    class _GoutteAGoutte(_FakeBody):
+        def iter_content(self, taille):
+            while True:
+                yield b"x"
+
+    session = _SessionScriptee(_GoutteAGoutte())
+
+    assert _fetch_bounded(session, STEAM) is None

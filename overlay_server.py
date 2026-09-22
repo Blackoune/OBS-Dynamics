@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import json
 import logging
-import mimetypes
 import os
 import queue
 import secrets
+import select
+import socket
 import threading
 import time
 
@@ -95,6 +96,26 @@ def _bare_hostname(authority: str) -> str:
 # Laps au-delà duquel une source navigateur inactive reçoit un commentaire
 # SSE de maintien : sans trafic, OBS/Chromium finit par couper la connexion.
 _KEEPALIVE_SECONDS = 15.0
+
+#: Flux SSE ouverts en même temps, toutes routes confondues. Chaque flux tient
+#: un thread : sans plafond, un processus local muni d'un jeton pouvait en
+#: ouvrir des milliers et saturer l'application. Une scène OBS chargée en
+#: compte une poignée — overlays de déclencheurs, chat, un par lecteur.
+_MAX_SSE = 64
+
+#: Type servi pour chaque extension de média. Une table FERMÉE : le type n'est
+#: plus deviné depuis l'extension par `mimetypes`, qui aurait servi un
+#: `.html` ou un `.svg` choisi comme média avec un type exécutable, sur
+#: l'origine même des overlays. Toute autre extension part en
+#: `application/octet-stream`, que Chromium ne rend jamais comme une page.
+_MEDIA_CONTENT_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+}
 
 #: Pas de reveil d un flux SSE en attente. Ne change RIEN a la cadence
 #: du commentaire de maintien : borne seulement le temps qu un flux met
@@ -446,6 +467,8 @@ class _OverlayHTTPServer(ThreadingHTTPServer):
         # drapeau, ils ne s apercoivent de l arret du serveur qu a leur
         # prochaine ecriture, et leurs threads lui survivent.
         self.arret = threading.Event()
+        self.flux_actifs = 0
+        self.flux_verrou = threading.Lock()
         super().__init__(address, handler_cls)
 
 
@@ -492,8 +515,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
-        # /media renvoie un fichier choisi par l'utilisateur, avec un type
-        # deviné par mimetypes. Sans nosniff, un fichier mal typé pourrait
+        # /media renvoie un fichier choisi par l'utilisateur, typé par la
+        # table fermée `_MEDIA_CONTENT_TYPES`. Sans nosniff, un fichier mal typé pourrait
         # être interprété comme du HTML par Chromium — donc exécuté dans
         # l'origine de l'overlay, aux côtés du chat et des déclencheurs.
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -590,7 +613,7 @@ class _Handler(BaseHTTPRequestHandler):
             if section == "chat":
                 self._serve_chat_page()
             else:
-                self._serve_chat_events()
+                self._serve_chat_events(identifier)
             return
 
         if section in ("music", "musicevents", "musiccover", "musiclogo",
@@ -609,7 +632,7 @@ class _Handler(BaseHTTPRequestHandler):
             if section == "music":
                 self._serve_music_page(identifier, source)
             elif section == "musicevents":
-                self._serve_music_events(source)
+                self._serve_music_events(identifier, source)
             elif section == "musiccover":
                 self._serve_music_cover(source)
             elif section == "musiclogo":
@@ -670,9 +693,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(500, b"media unreadable", "text/plain; charset=utf-8")
             return
 
-        ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        ctype = _MEDIA_CONTENT_TYPES.get(path.suffix.lower(),
+                                         "application/octet-stream")
         with fichier:
-            self._send_headers(200, ctype, taille)
+            # `sandbox` en plus : même ouvert directement dans un onglet, le
+            # fichier ne peut ni exécuter de script, ni lire les autres routes.
+            self._send_headers(200, ctype, taille,
+                               {"Content-Security-Policy": "sandbox; default-src 'none'"})
             restant = taille
             try:
                 while restant > 0:
@@ -697,14 +724,32 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _stream_sse(self, event_name: str, sub: "queue.Queue[str]",
                     release: Callable[[], None],
-                    backlog: Sequence[str] = ()) -> None:
+                    backlog: Sequence[str] = (),
+                    still_valid: Optional[Callable[[], bool]] = None) -> None:
         """Boucle d'émission commune à toutes les routes SSE.
 
         `backlog` part avant la boucle : une source navigateur rouverte, ou
         l'application redémarrée sous elle, resterait sinon vide jusqu'au
         prochain événement, ce qui ressemble à une panne. Le commentaire de
         maintien évite que Chromium coupe une connexion sans trafic.
+
+        `still_valid` est relu à chaque réveil. Le jeton n'était contrôlé
+        qu'à la connexion : après « Régénérer le lien », un flux déjà ouvert
+        avec l'ANCIEN jeton continuait de recevoir chaque message, alors que
+        l'utilisateur venait justement de le révoquer.
         """
+        serveur = self.server
+        with serveur.flux_verrou:
+            plein = serveur.flux_actifs >= _MAX_SSE
+            if not plein:
+                serveur.flux_actifs += 1
+        if plein:
+            release()
+            logger.warning("Flux SSE refusé : %d déjà ouverts.", _MAX_SSE)
+            self._send(503, b"too many streams", "text/plain; charset=utf-8",
+                       {"Retry-After": "5"})
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -722,12 +767,16 @@ class _Handler(BaseHTTPRequestHandler):
             while True:
                 if arret is not None and arret.is_set():
                     return
+                if still_valid is not None and not still_valid():
+                    return
                 try:
                     # Par tranches, et non un seul sommeil de la duree
                     # du commentaire de maintien : c est ce qui permet
                     # de remarquer l arret sans attendre l echeance.
                     data = sub.get(timeout=_REVEIL_SECONDS)
                 except queue.Empty:
+                    if self._client_parti():
+                        return
                     if time.monotonic() - dernier < _KEEPALIVE_SECONDS:
                         continue
                     dernier = time.monotonic()
@@ -739,16 +788,43 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # la source OBS a été fermée : sortie normale
         finally:
+            with serveur.flux_verrou:
+                serveur.flux_actifs -= 1
+            # L'en-tête `Connection: keep-alive` envoyé plus haut a fait passer
+            # `close_connection` à faux : sans ceci, http.server garde la
+            # socket ouverte en attendant une requête suivante, et la page ne
+            # voit jamais la fin du flux — ni après une révocation, ni à
+            # l'arrêt. Son EventSource ne se reconnecte alors pas.
+            self.close_connection = True
             release()
 
-    def _serve_chat_events(self) -> None:
+    def _client_parti(self) -> bool:
+        """La source navigateur a-t-elle fermé la connexion ?
+
+        Sans ce contrôle, un flux dont OBS a fermé la source ne s'en
+        apercevait qu'à sa prochaine écriture, donc jusqu'à
+        `_KEEPALIVE_SECONDS` plus tard : son thread et sa place sous
+        `_MAX_SSE` restaient pris pendant tout ce temps. Un client SSE
+        n'envoie plus rien après sa requête ; une socket devenue lisible ne
+        peut donc annoncer que sa fermeture.
+        """
+        try:
+            lisible, _, _ = select.select([self.connection], [], [], 0)
+            if not lisible:
+                return False
+            return self.connection.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
+
+    def _serve_chat_events(self, token: str) -> None:
         hub = self.chat.hub
         if hub is None:
             self._not_found()
             return
         sub = hub.subscribe()
         self._stream_sse("chat", sub, lambda: hub.unsubscribe(sub),
-                         [json.dumps(message) for message in hub.history()])
+                         [json.dumps(message) for message in hub.history()],
+                         still_valid=lambda: self.chat.token_matches(token))
 
     def _serve_events(self, rule_id: str) -> None:
         q = self.broker.subscribe(rule_id)
@@ -775,13 +851,14 @@ class _Handler(BaseHTTPRequestHandler):
                                         self.text("MUSIC_OVERLAY_WAIT"))
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
-    def _serve_music_events(self, source: str) -> None:
+    def _serve_music_events(self, token: str, source: str) -> None:
         hub = self.music_hub
         sub = hub.subscribe(source)
         # Toujours un premier message : il porte le style, et le morceau en
         # cours s il y en a un.
         self._stream_sse("music", sub, lambda: hub.unsubscribe(source, sub),
-                         [json.dumps(hub.initial_payload(source))])
+                         [json.dumps(hub.initial_payload(source))],
+                         still_valid=lambda: hub.token_matches(token))
 
     def _serve_music_cover(self, source: str) -> None:
         data = self.music_hub.cover(source)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 
+from tkinter import messagebox
 from typing import Any, Callable, Optional
 
 from i18n import t
@@ -406,6 +407,17 @@ class MusicView(ctk.CTkFrame):
                                        hover_color=COL_CARD, text_color=COL_TEXT,
                                        font=font(12), command=self._copy_report)
         self._copy_btn.pack(side="left", padx=(10, 0))
+        # Même allure que celui du chat : discret, parce qu'il casse chaque
+        # source déjà collée dans OBS.
+        self._regen_btn = ctk.CTkButton(toolbar, text=t("MUSIC_BTN_REGENERATE"),
+                                        width=170, height=36, corner_radius=9,
+                                        fg_color="transparent", border_width=1,
+                                        border_color=COL_BORDER,
+                                        hover_color=COL_CARD,
+                                        text_color=COL_TEXT_MUTED, font=font(12),
+                                        command=self._regenerate,
+                                        state="normal" if hub else "disabled")
+        self._regen_btn.pack(side="left", padx=(10, 0))
         self._status_lbl = ctk.CTkLabel(toolbar, text="", font=font(11),
                                         text_color=COL_TEXT_MUTED)
         self._status_lbl.pack(side="left", padx=(16, 0))
@@ -466,6 +478,21 @@ class MusicView(ctk.CTkFrame):
         if self._overlay is None:
             return ""
         return self._overlay.music_url(app.key)
+
+    def _regenerate(self) -> None:
+        """Invalide les liens de toutes les sources musique, après accord."""
+        if self._hub is None:
+            return
+        if not messagebox.askyesno(t("CONFIRM_DIALOG_TITLE"),
+                                   t("MUSIC_CONFIRM_REGENERATE"), parent=self):
+            return
+        try:
+            self._hub.regenerate_token()
+        except OSError:
+            messagebox.showerror(t("MUSIC_ERROR"), t("MUSIC_REGENERATE_FAILED"),
+                                 parent=self)
+            return
+        self._render()                # les cartes affichent les nouveaux liens
 
     def _apply_error(self, message: str) -> None:
         """Affiche l'erreur, traduite quand la sonde en donne la raison.
@@ -584,4 +611,5 @@ class MusicView(ctk.CTkFrame):
         self._logo_lbl.configure(text=t("MUSIC_LOGO_HINT"))
         self._refresh_btn.configure(text=t("MUSIC_BTN_REFRESH"))
         self._copy_btn.configure(text=t("MUSIC_BTN_COPY"))
+        self._regen_btn.configure(text=t("MUSIC_BTN_REGENERATE"))
         self._render()

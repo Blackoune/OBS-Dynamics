@@ -563,3 +563,82 @@ def test_media_is_served_with_nosniff(served):
     srv, rule = served
     with urllib.request.urlopen(srv.base_url() + f"/media/{rule.id}", timeout=15) as r:
         assert r.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+
+# --- Types servis pour /media ---------------------------------------------- #
+
+@pytest.mark.parametrize("nom, attendu", [
+    ("piege.html", "application/octet-stream"),
+    ("piege.svg", "application/octet-stream"),
+    ("piege.htm", "application/octet-stream"),
+    ("piege.js", "application/octet-stream"),
+    ("image.png", "image/png"),
+    ("clip.webm", "video/webm"),
+    ("son.mp3", "audio/mpeg"),
+])
+def test_un_media_nest_jamais_servi_comme_une_page(tmp_path, nom, attendu):
+    """Régression : le type était deviné par `mimetypes`. Un `.html` ou un
+    `.svg` choisi comme média partait en `text/html` / `image/svg+xml`, sur
+    l'origine même des overlays, où la CSP autorise les scripts en ligne."""
+    media = tmp_path / nom
+    media.write_bytes(b"<script>alert(1)</script>")
+    rule = TriggerRule(id="rule1", hotkey="ctrl+a", media_type="image",
+                       media_path=str(media), duration_ms=1000)
+    srv = OverlayServer(lambda rid: rule if rid == rule.id else None, port=0)
+    assert srv.start()
+    try:
+        with urllib.request.urlopen(srv.base_url() + "/media/rule1", timeout=15) as r:
+            assert r.headers.get("Content-Type") == attendu
+            assert "sandbox" in (r.headers.get("Content-Security-Policy") or "")
+    finally:
+        srv.stop()
+
+
+def test_chaque_extension_proposee_a_un_type_servi():
+    # Sinon une extension du sélecteur partirait en octet-stream sans raison.
+    import overlay_server
+    from triggers import MEDIA_EXTENSIONS
+
+    for extensions in MEDIA_EXTENSIONS.values():
+        for ext in extensions:
+            assert ext in overlay_server._MEDIA_CONTENT_TYPES, ext
+
+
+# --- Plafond de flux SSE ----------------------------------------------------- #
+
+def test_au_dela_du_plafond_un_flux_recoit_un_503(served, monkeypatch):
+    """Chaque flux tient un thread : sans plafond, un processus local pouvait
+    en ouvrir des milliers."""
+    import overlay_server
+    monkeypatch.setattr(overlay_server, "_MAX_SSE", 2)
+    srv, rule = served
+    ouverts = [urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}",
+                                      timeout=15) for _ in range(2)]
+    try:
+        with pytest.raises(urllib.error.HTTPError) as erreur:
+            urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}", timeout=15)
+        assert erreur.value.code == 503
+    finally:
+        for flux in ouverts:
+            flux.close()
+
+
+def test_un_flux_ferme_libere_sa_place(served, monkeypatch):
+    import overlay_server
+    monkeypatch.setattr(overlay_server, "_MAX_SSE", 1)
+    srv, rule = served
+    premier = urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}", timeout=15)
+    premier.close()
+
+    # La place se libère au réveil suivant du flux (0,5 s), pas instantanément.
+    for _ in range(40):
+        try:
+            second = urllib.request.urlopen(srv.base_url() + f"/events/{rule.id}",
+                                            timeout=15)
+            second.close()
+            return
+        except urllib.error.HTTPError as erreur:
+            assert erreur.code == 503
+            time.sleep(0.1)
+    pytest.fail("la place du flux fermé n'a jamais été libérée")

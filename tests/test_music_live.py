@@ -324,3 +324,64 @@ def test_une_source_legitime_passe_toujours(monte):
 
     with urllib.request.urlopen(url, timeout=10) as reponse:
         assert reponse.status == 200
+
+
+
+# ----------------------------------------------------------------------------
+# Régénérer les liens
+# ----------------------------------------------------------------------------
+def test_regenerer_coupe_les_overlays_deja_ouverts(monte):
+    """Régression : le jeton n'était contrôlé qu'à la connexion. Après
+    « Régénérer », un overlay ouvert avec l'ancien lien continuait de
+    recevoir chaque morceau — alors que l'utilisateur venait de le révoquer."""
+    hub, serveur = monte
+    overlay = _Overlay(_url_evenements(serveur, hub, CLE))
+    try:
+        overlay.attendre(1)
+        hub.regenerate_token()
+        overlay._thread.join(timeout=6)        # le flux doit se fermer seul
+
+        assert not overlay._thread.is_alive(), "le flux révoqué est resté ouvert"
+    finally:
+        overlay.fermer()
+
+
+def test_lancien_lien_ne_repond_plus_et_le_nouveau_si(monte):
+    hub, serveur = monte
+    ancien = serveur.music_url(CLE)
+
+    hub.regenerate_token()
+    nouveau = serveur.music_url(CLE)
+
+    assert nouveau != ancien
+    with pytest.raises(urllib.error.HTTPError) as erreur:
+        urllib.request.urlopen(ancien, timeout=10)
+    assert erreur.value.code == 404
+    with urllib.request.urlopen(nouveau, timeout=10) as reponse:
+        assert reponse.status == 200
+
+
+def test_regenerer_garde_les_styles_et_survit_au_redemarrage(monte, tmp_path):
+    hub, _serveur = monte
+    hub.styles.save(CLE, Style(bg="#123456"))
+
+    neuf = hub.regenerate_token()
+    relu = MusicHub(path=tmp_path / "music_widget.json",
+                    backgrounds=tmp_path / "fonds")
+
+    assert relu.ensure_token() == neuf
+    assert relu.styles.get(CLE).bg == "#123456"
+
+
+def test_un_echec_decriture_laisse_lancien_lien_en_service(monte, monkeypatch):
+    # Rien n'est révoqué à moitié : ni l'ancien jeton perdu, ni le neuf actif.
+    hub, serveur = monte
+    avant = serveur.music_url(CLE)
+
+    def disque_plein(_jeton):
+        raise OSError("disque plein")
+    monkeypatch.setattr(hub.styles, "replace_token", disque_plein)
+
+    with pytest.raises(OSError):
+        hub.regenerate_token()
+    assert serveur.music_url(CLE) == avant

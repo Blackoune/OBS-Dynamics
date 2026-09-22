@@ -540,3 +540,55 @@ def test_trigger_routes_still_work_alongside_chat(chat_server):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         _get(srv, "/overlay/regle-inconnue")
     assert excinfo.value.code == 404
+
+
+
+def test_un_jeton_de_chat_regenere_coupe_le_flux_deja_ouvert():
+    """Même défaut que pour la musique : régénérer le lien du chat laissait
+    les sources déjà ouvertes recevoir chaque message."""
+    jeton = {"valeur": "jeton-avant"}
+    hub = _StubHub()
+    srv = OverlayServer(lambda _rid: None, port=0, chat_hub=hub,
+                        chat_token_getter=lambda: jeton["valeur"],
+                        text_getter=_TEXTS.get)
+    assert srv.start()
+    try:
+        flux = urllib.request.urlopen(srv.base_url() + "/chatevents/jeton-avant",
+                                      timeout=10)
+        fini = threading.Event()
+
+        def lire():
+            try:
+                while flux.readline():
+                    pass
+            except Exception:
+                pass
+            fini.set()
+
+        threading.Thread(target=lire, daemon=True).start()
+        jeton["valeur"] = "jeton-apres"
+
+        assert fini.wait(6), "le flux révoqué est resté ouvert"
+    finally:
+        srv.stop()
+
+
+# --- Nom de chaîne ------------------------------------------------------------ #
+
+@pytest.mark.parametrize("saisie, attendu", [
+    ("MaChaine", "machaine"), ("#machaine", "machaine"),
+    (" ma_chaine_2 ", "ma_chaine_2"),
+    ("foo\r\nPRIVMSG #bar :spam", ""), ("foo bar", ""), ("", ""),
+    ("a" * 26, ""), ("chaîne", ""),
+])
+def test_le_nom_de_chaine_est_normalise_ou_refuse(saisie, attendu):
+    """Le nom part tel quel dans `JOIN #<chaîne>` : un retour à la ligne y
+    ajoutait une commande IRC."""
+    from twitch_chat import normalise_channel
+    assert normalise_channel(saisie) == attendu
+
+
+def test_un_nom_mal_forme_nest_pas_une_configuration():
+    connecteur = TwitchConnector(PlatformConfig(channel="foo\r\nJOIN #x"),
+                                 lambda _m: None, lambda *_a: None)
+    assert connecteur.is_configured() is False

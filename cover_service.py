@@ -15,6 +15,7 @@ import io
 import logging
 import queue
 import threading
+import time
 import urllib.parse
 from collections import OrderedDict
 from pathlib import Path
@@ -61,6 +62,38 @@ WORKER_THREADS = 6
 
 
 
+#: Hôtes d'où une jaquette peut venir, eux et leurs sous-domaines.
+#:
+#: Toutes les URL d'images ne sont pas écrites dans ce module : RAWG et
+#: l'API appdetails de Steam en RENVOIENT. Une réponse compromise — ou une
+#: simple redirection — pouvait donc nous faire appeler n'importe quelle
+#: adresse, y compris sur le réseau local (une box, un NAS, une imprimante).
+_HOTES_IMAGES = ("steamstatic.com", "steampowered.com", "rawg.io",
+                 "steamcdn-a.akamaihd.net")
+
+#: Durée maximale d'un téléchargement COMPLET, redirections comprises.
+#: `timeout` ne borne que l'attente entre deux paquets : un hôte qui envoyait
+#: un octet toutes les sept secondes occupait un worker indéfiniment.
+_DOWNLOAD_DEADLINE_S = 20.0
+
+#: Redirections suivies, chacune revérifiée contre `_HOTES_IMAGES`.
+_MAX_REDIRECTS = 3
+
+_REDIRECTIONS = frozenset({301, 302, 303, 307, 308})
+
+
+def _image_url_allowed(url: str) -> bool:
+    """HTTPS, vers un hôte de `_HOTES_IMAGES` ou l'un de ses sous-domaines."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    hote = (parts.hostname or "").lower()
+    return parts.scheme == "https" and any(
+        hote == autorise or hote.endswith("." + autorise)
+        for autorise in _HOTES_IMAGES)
+
+
 def _fetch_bounded(session: requests.Session, url: str) -> Optional[bytes]:
     """Corps de la réponse, plafonné à `_MAX_IMAGE_BYTES`, ou None.
 
@@ -68,14 +101,36 @@ def _fetch_bounded(session: requests.Session, url: str) -> Optional[bytes]:
     ferme jamais, ou un `Content-Length` menteur, faisait grossir la mémoire
     sans limite. Ici la lecture se fait par morceaux et s'arrête au
     dépassement, avant d'avoir tout accumulé.
+
+    Les redirections sont suivies À LA MAIN : `requests` les suit toutes
+    seules, sans regarder où elles mènent.
     """
-    resp = session.get(url, timeout=_HTTP_TIMEOUT, stream=True)
+    debut = time.monotonic()
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not _image_url_allowed(url):
+            logger.debug("Image écartée : hôte non autorisé (%s).",
+                         urllib.parse.urlsplit(url).hostname)
+            return None
+        resp = session.get(url, timeout=_HTTP_TIMEOUT, stream=True,
+                           allow_redirects=False)
+        if resp.status_code not in _REDIRECTIONS:
+            break
+        suivante = resp.headers.get("Location", "")
+        resp.close()
+        url = urllib.parse.urljoin(url, suivante)
+    else:
+        logger.debug("Image écartée : plus de %d redirections.", _MAX_REDIRECTS)
+        return None
+
     try:
         if resp.status_code != 200:
             return None
         morceaux: list[bytes] = []
         total = 0
         for bloc in resp.iter_content(64 * 1024):
+            if time.monotonic() - debut > _DOWNLOAD_DEADLINE_S:
+                logger.debug("Image écartée : téléchargement trop lent.")
+                return None
             total += len(bloc)
             if total > _MAX_IMAGE_BYTES:
                 logger.debug("Image écartée : dépasse %d octets.", _MAX_IMAGE_BYTES)

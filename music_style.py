@@ -378,6 +378,14 @@ class StyleStore:
             self._write(data)
             return jeton
 
+    def replace_token(self, jeton: str) -> None:
+        """Remplace le jeton, en gardant les styles. Lève `OSError` si
+        l'écriture échoue : l'ancien lien reste alors valide."""
+        with self._lock:
+            data = self._read_for_update()
+            data["overlay_token"] = jeton
+            self._write(data)
+
     def get(self, key: str) -> Style:
         """Réglages d'un lecteur, ou le style par défaut s'il n'en a pas.
 

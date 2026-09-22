@@ -124,6 +124,24 @@ class MusicHub:
         self._token = token
         return token
 
+    def regenerate_token(self) -> str:
+        """Invalide le lien de TOUTES les sources musique.
+
+        À utiliser si l'URL a été vue : dans les propriétés d'une source OBS
+        montrée à l'écran, par exemple. Chaque source devra être recollée.
+        Les flux déjà ouverts avec l'ancien jeton se ferment d'eux-mêmes au
+        réveil suivant — le serveur relit le jeton à chaque tranche.
+
+        Lève `OSError` si le nouveau jeton ne peut pas être écrit : l'ancien
+        reste alors en service, rien n'est révoqué à moitié.
+        """
+        neuf = secrets.token_urlsafe(24)
+        self.styles.replace_token(neuf)
+        self._token = neuf
+        logger.warning("Jeton overlay musique régénéré : les anciennes URL "
+                       "ne répondent plus.")
+        return neuf
+
     #: Une `?source=` d'URL a-t-elle la forme d'une clé de lecteur ? Exposée
     #: par le hub pour que le serveur HTTP n'importe rien du widget musique :
     #: l'onglet doit rester supprimable d'un bloc.

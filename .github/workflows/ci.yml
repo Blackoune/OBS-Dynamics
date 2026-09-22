@@ -62,7 +62,10 @@ jobs:
         # Les versions sont épinglées, donc elles vieillissent : sans ce
         # contrôle, une faille publiée après l'épinglage resterait dans le
         # build sans que rien ne le signale. Échoue si une CVE touche une
-        # version listée dans requirements.txt.
+        # version listée dans requirements.txt OU requirements-dev.txt : les
+        # outils de build (PyInstaller) et de génération des logos tournent
+        # eux aussi sur la machine du développeur, avec ses droits.
+        # requirements-dev.txt inclut requirements.txt (-r).
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt

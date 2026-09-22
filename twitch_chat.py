@@ -322,7 +322,9 @@ class BaseConnector:
 
     def is_configured(self) -> bool:
         """Vrai si le connecteur a de quoi travailler."""
-        return bool(self._config.channel)
+        # Un nom mal formé n'est pas « configuré » : la carte affiche alors
+        # « à configurer » au lieu de tenter une connexion vouée à l'échec.
+        return bool(normalise_channel(self._config.channel))
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -396,6 +398,20 @@ class BaseConnector:
 
 # --- Twitch ---------------------------------------------------------------- #
 
+#: Forme d'un nom de chaîne Twitch : lettres, chiffres, souligné, 25 au plus.
+#:
+#: Le nom part tel quel dans `JOIN #<chaîne>` : un retour à la ligne collé
+#: avec lui y aurait ajouté une commande IRC de plus. Sans conséquence sur une
+#: session anonyme en lecture seule, mais rien ne justifie de l'envoyer.
+_CHAINE = re.compile(r"[a-z0-9_]{1,25}")
+
+
+def normalise_channel(saisie: str) -> str:
+    """Le nom de chaîne prêt pour `JOIN`, ou "" s'il n'en a pas la forme."""
+    chaine = (saisie or "").strip().lstrip("#").lower()
+    return chaine if _CHAINE.fullmatch(chaine) else ""
+
+
 _IRC_HOST = "irc.chat.twitch.tv"
 _IRC_TLS_PORT = 6697
 # Twitch envoie un PING toutes les ~5 min. Au-delà de ce silence la connexion
@@ -452,7 +468,9 @@ class TwitchConnector(BaseConnector):
     platform = "twitch"
 
     def _session(self) -> None:
-        channel = self._config.channel.lstrip("#").lower()
+        channel = normalise_channel(self._config.channel)
+        if not channel:
+            raise ValueError("nom de chaîne Twitch invalide")
         context = ssl.create_default_context()
         with socket.create_connection((_IRC_HOST, _IRC_TLS_PORT), timeout=15) as raw_sock:
             with context.wrap_socket(raw_sock, server_hostname=_IRC_HOST) as sock:
