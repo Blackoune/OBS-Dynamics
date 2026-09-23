@@ -28,6 +28,7 @@ l'utilisateur de lire ces routes par rebinding DNS.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -79,6 +80,12 @@ _CSP = ("default-src 'none'; "
         "connect-src 'self'; "
         "base-uri 'none'; "
         "form-action 'none'")
+
+#: Le chat a UNE exception : les images d'emotes, servies par le CDN de
+#: Twitch. Rien d'autre ne sort — pas de script, pas de requête (`connect-src`
+#: reste à `'self'`), donc aucun moyen d'y renvoyer le contenu du chat.
+_EMOTES_CDN = "https://static-cdn.jtvnw.net"
+_CSP_CHAT = _CSP.replace("img-src 'self'", f"img-src 'self' {_EMOTES_CDN}")
 
 
 def _bare_hostname(authority: str) -> str:
@@ -343,6 +350,8 @@ _CHAT_HTML = """<!doctype html>
     animation:pop .18s ease-out;word-wrap:break-word;overflow-wrap:anywhere}
   @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   .who{font-weight:700;margin-right:6px}
+  /* Emote a la hauteur d'une ligne, alignee sur le texte. */
+  .emote{height:1.75em;vertical-align:middle;margin:-.35em .08em}
   .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;
     text-transform:uppercase;padding:1px 7px;border-radius:999px;margin-right:7px;
     color:#0F0C1B;vertical-align:2px}
@@ -360,6 +369,13 @@ _CHAT_HTML = """<!doctype html>
 <script>
 const TOKEN = __CHAT_TOKEN__;
 const MAX_VISIBLE = __MAX_VISIBLE__;
+const EMOTES_CDN = "__EMOTES_CDN__";
+const EMOTE_ID = /^[A-Za-z0-9_]{1,64}$/;
+// Empreinte de CETTE page. OBS garde une source ouverte des jours : apres une
+// mise a jour, l'ancienne page restait affichee et ignorait les nouveautes
+// (les emotes, par exemple). Le serveur annonce la sienne a chaque connexion.
+const PAGE = "__PAGE__";
+let recharge = false;
 const wrap = document.getElementById("wrap");
 const wait = document.getElementById("wait");
 
@@ -376,9 +392,25 @@ function render(m) {
   who.style.color = m.color || "#A855F7";
   who.textContent = m.author;
   const txt = document.createElement("span");
-  // Affectation par textContent uniquement : un message de chat est du texte
+  // Texte par textContent uniquement : un message de chat est du texte
   // hostile, l'interpreter comme du balisage serait une injection directe.
-  txt.textContent = m.text;
+  // Les emotes sont des <img> construites ici, jamais du HTML recu.
+  const parts = Array.isArray(m.parts) ? m.parts : [{text: m.text}];
+  for (const p of parts) {
+    const nom = typeof p.text === "string" ? p.text : "";
+    if (typeof p.emote === "string" && EMOTE_ID.test(p.emote)) {
+      const img = document.createElement("img");
+      img.className = "emote";
+      img.alt = nom;
+      img.title = nom;
+      img.src = EMOTES_CDN + "/emoticons/v2/" + p.emote + "/default/dark/2.0";
+      // Image introuvable : le nom revient, plutot qu'un trou dans la phrase.
+      img.addEventListener("error", () => img.replaceWith(document.createTextNode(nom)));
+      txt.append(img);
+    } else {
+      txt.append(document.createTextNode(nom));
+    }
+  }
   el.append(tag, who, txt);
   wrap.appendChild(el);
   while (wrap.querySelectorAll(".msg").length > MAX_VISIBLE) {
@@ -388,6 +420,14 @@ function render(m) {
 
 function connect() {
   const es = new EventSource("/chatevents/" + TOKEN);
+  es.addEventListener("page", (ev) => {
+    let m = null;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m && m.page && m.page !== PAGE && !recharge) {
+      recharge = true;
+      location.reload();
+    }
+  });
   es.addEventListener("chat", (ev) => {
     wait.hidden = true;
     let m = null;
@@ -406,6 +446,11 @@ function connect() {
 connect();
 </script>
 """
+
+#: Empreinte du gabarit du chat. Elle change à chaque modification de la
+#: page, donc à chaque version qui touche au chat : c'est ce qui fait se
+#: recharger seule une source OBS restée ouverte sur l'ancienne.
+_CHAT_PAGE_VERSION = hashlib.sha256(_CHAT_HTML.encode("utf-8")).hexdigest()[:12]
 
 
 # Libellés de repli, utilisés quand aucun résolveur i18n n'est branché (tests,
@@ -550,10 +595,15 @@ class _Handler(BaseHTTPRequestHandler):
         # l'origine de l'overlay, aux côtés du chat et des déclencheurs.
         self.send_header("X-Content-Type-Options", "nosniff")
         # Uniquement sur les pages : un CSP sur /media n'aurait aucun sens, le
-        # fichier n'est pas un document et ne charge rien.
+        # fichier n'est pas un document et ne charge rien. Une page peut
+        # fournir le sien dans `extra` (le chat, pour ses emotes) : il
+        # REMPLACE alors celui par défaut — deux en-têtes CSP s'additionnent,
+        # et l'exception n'aurait aucun effet.
+        extra = dict(extra or {})
         if content_type.startswith("text/html"):
-            self.send_header("Content-Security-Policy", _CSP)
-        for k, v in (extra or {}).items():
+            self.send_header("Content-Security-Policy",
+                             extra.pop("Content-Security-Policy", _CSP))
+        for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
 
@@ -763,13 +813,17 @@ class _Handler(BaseHTTPRequestHandler):
         html = (_CHAT_HTML
                 .replace("__CHAT_TOKEN__", json.dumps(self.chat.token()))
                 .replace("__MAX_VISIBLE__", str(int(_ChatBinding.MAX_VISIBLE)))
+                .replace("__EMOTES_CDN__", _EMOTES_CDN)
+                .replace("__PAGE__", _CHAT_PAGE_VERSION)
                 .replace("__WAIT_TEXT__", _escape_html(self.text("TWITCH_CHAT_WAIT_TEXT"))))
-        self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
+                   {"Content-Security-Policy": _CSP_CHAT})
 
     def _stream_sse(self, event_name: str, sub: "queue.Queue[str]",
                     release: Callable[[], None],
                     backlog: Sequence[str] = (),
-                    still_valid: Optional[Callable[[], bool]] = None) -> None:
+                    still_valid: Optional[Callable[[], bool]] = None,
+                    prelude: Sequence[tuple[str, str]] = ()) -> None:
         """Boucle d'émission commune à toutes les routes SSE.
 
         `backlog` part avant la boucle : une source navigateur rouverte, ou
@@ -804,6 +858,10 @@ class _Handler(BaseHTTPRequestHandler):
         arret = getattr(self.server, "arret", None)
         try:
             self.wfile.write(b": connected\n\n")
+            # Évènements d'un autre nom, avant l'historique : une page
+            # ancienne ne les écoute pas, donc ne les affiche pas.
+            for nom, data in prelude:
+                self.wfile.write(f"event: {nom}\ndata: {data}\n\n".encode("utf-8"))
             for data in backlog:
                 self.wfile.write(prefix + data.encode("utf-8") + b"\n\n")
             self.wfile.flush()
@@ -868,7 +926,8 @@ class _Handler(BaseHTTPRequestHandler):
         sub = hub.subscribe()
         self._stream_sse("chat", sub, lambda: hub.unsubscribe(sub),
                          [json.dumps(message) for message in hub.history()],
-                         still_valid=lambda: self.chat.token_matches(token))
+                         still_valid=lambda: self.chat.token_matches(token),
+                         prelude=[("page", json.dumps({"page": _CHAT_PAGE_VERSION}))])
 
     def _serve_events(self, rule_id: str) -> None:
         q = self.broker.subscribe(rule_id)

@@ -58,8 +58,9 @@ CONDENSATS_INTERDITS = {
     "e934dd0dec1c18ad2b255889391b0ffa74451448529c675fe0e9391b99447264":
         "mot de passe OBS WebSocket publié dans le commit 752b027",
     # d85f4c... = clé de stream recopiée dans un journal versionné
-    # (`data.old/obs_dynamics.log`, commit 833d1df). Tant qu'elle n'est pas
-    # réinitialisée, elle permet de diffuser sur la chaîne.
+    # (`data.old/obs_dynamics.log`, commit 833d1df). Réinitialisée le
+    # 2026-09-24 : elle n'ouvre plus rien. Le condensat reste, pour la même
+    # raison que celui du mot de passe OBS.
     "d85f4c7a8012bbbf1c010944db5d6d56d1383accac8610c7c1a335d539d625f3":
         "clé de stream publiée dans le commit 833d1df",
 }

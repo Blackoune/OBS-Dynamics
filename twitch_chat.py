@@ -86,6 +86,25 @@ class ChatMessage:
     color: str = ""
     badges: tuple[str, ...] = ()
     timestamp: float = 0.0
+    #: Emotes Twitch du texte : (début, fin exclue, identifiant), triées.
+    emotes: tuple[tuple[int, int, str], ...] = ()
+
+    def parts(self) -> list[dict[str, str]]:
+        """Le texte en morceaux : du texte brut, ou une emote avec son nom.
+
+        Le nom reste dans le morceau : la page l'affiche si l'image ne
+        charge pas, plutôt qu'un trou dans la phrase.
+        """
+        morceaux: list[dict[str, str]] = []
+        curseur = 0
+        for debut, fin, emote_id in self.emotes:
+            if debut > curseur:
+                morceaux.append({"text": self.text[curseur:debut]})
+            morceaux.append({"text": self.text[debut:fin], "emote": emote_id})
+            curseur = fin
+        if curseur < len(self.text):
+            morceaux.append({"text": self.text[curseur:]})
+        return morceaux
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +112,7 @@ class ChatMessage:
             "platform": self.platform,
             "author": self.author,
             "text": self.text,
+            "parts": self.parts(),
             "color": self.color or PLATFORM_COLORS.get(self.platform, "#FFFFFF"),
             "badges": list(self.badges),
             "timestamp": self.timestamp,
@@ -383,12 +403,14 @@ class BaseConnector:
         raise NotImplementedError
 
     def _emit(self, author: str, text: str, color: str = "",
-              badges: Iterable[str] = ()) -> None:
+              badges: Iterable[str] = (),
+              emotes: tuple[tuple[int, int, str], ...] = ()) -> None:
         if not text:
             return
         self._on_message(ChatMessage(
             id=uuid.uuid4().hex, platform=self.platform, author=author or "?",
-            text=text, color=color, badges=tuple(badges), timestamp=time.time()))
+            text=text, color=color, badges=tuple(badges), timestamp=time.time(),
+            emotes=emotes))
 
 
 # --- Twitch ---------------------------------------------------------------- #
@@ -443,12 +465,47 @@ def parse_privmsg(line: str) -> Optional[dict[str, Any]]:
         return None
     tags = parse_irc_tags(match.group("tags") or "")
     badges = tuple(b.split("/")[0] for b in tags.get("badges", "").split(",") if b)
+    texte = match.group("text")
     return {
         "author": tags.get("display-name") or match.group("nick"),
-        "text": match.group("text"),
+        "text": texte,
         "color": tags.get("color", ""),
         "badges": badges,
+        "emotes": parse_emotes(tags.get("emotes", ""), texte),
     }
+
+
+#: Identifiant d'emote Twitch : `25`, ou `emotesv2_1b2c…` pour les récentes.
+#: Il finit dans une URL d'image : rien d'autre que ces caractères.
+_EMOTE_ID = re.compile(r"[A-Za-z0-9_]{1,64}")
+
+
+def parse_emotes(tag: str, texte: str) -> tuple[tuple[int, int, str], ...]:
+    """Emotes du tag IRC, en (début, fin exclue, identifiant), triées.
+
+    Le tag ressemble à `25:0-4,12-16/emotesv2_ab:6-10`. Les positions
+    comptent des caractères Unicode — ni des octets, ni des unités UTF-16 —
+    exactement comme une chaîne Python. Une position hors du texte, un
+    chevauchement ou un identifiant d'une autre forme sont ignorés : le mot
+    reste alors du texte, ce qui est l'ancien comportement.
+    """
+    trouvees = []
+    for bloc in (tag or "").split("/"):
+        emote_id, _, plages = bloc.partition(":")
+        if not _EMOTE_ID.fullmatch(emote_id):
+            continue
+        for plage in plages.split(","):
+            debut, _, fin = plage.partition("-")
+            if not (debut.isdigit() and fin.isdigit()):
+                continue
+            d, f = int(debut), int(fin) + 1
+            if d < f <= len(texte) and not any(c.isspace() for c in texte[d:f]):
+                trouvees.append((d, f, emote_id))
+    gardees: list[tuple[int, int, str]] = []
+    for emote in sorted(trouvees):
+        if not gardees or emote[0] >= gardees[-1][1]:
+            gardees.append(emote)
+    return tuple(gardees)
 
 
 class TwitchConnector(BaseConnector):
@@ -515,7 +572,8 @@ class TwitchConnector(BaseConnector):
                         joined = True
                         self._set_status(Status.CONNECTED, self._config.channel)
                     self._emit(parsed["author"], parsed["text"],
-                               parsed["color"], parsed["badges"])
+                               parsed["color"], parsed["badges"],
+                               parsed["emotes"])
 
 
 # ============================================================================

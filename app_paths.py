@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -155,18 +156,50 @@ LOG_PATH = DATA_DIR / "obs_dynamics.log"
 # boucle de scan écrit à chaque bascule de scène). 2 Mo x 3 fichiers = 6 Mo
 # au maximum sur disque. Le handler fichier est best-effort : si le dossier
 # est en lecture seule, on continue en console seule plutôt que de planter.
+#: Trois formes : un paramètre d'URL (`?key=…`), une affectation nommée
+#: (`OBS_WS_PASSWORD=…`, `"api_key": "…"`), le dernier segment d'une adresse
+#: d'ingestion RTMP (la clé de stream). Masquer trop ne coûte rien dans un
+#: journal ; masquer trop peu, c'est la fuite de la clé de stream.
+_SECRETS_DANS_UN_TEXTE = (
+    re.compile(r"(?i)([?&](?:key|token|code|sig|signature)=)[^&\s\"'#<>]+"),
+    re.compile(r"(?i)((?<![a-z0-9])(?:password|passwd|pwd|secret|client_secret|"
+               r"api_key|apikey|access_token|refresh_token|stream_key)"
+               r"(?![a-z0-9])[\"']?\s*[=:]\s*[\"']?)[^\s&\"',;}<>]+"),
+    re.compile(r"(?i)(rtmps?://[^\s\"'<>]+/)[^/\s\"'<>?]+"),
+)
+
+
+def mask_secrets(texte: str) -> str:
+    """Remplace par `***` les secrets recopiés dans un texte."""
+    for motif in _SECRETS_DANS_UN_TEXTE:
+        texte = motif.sub(r"\1***", texte)
+    return texte
+
+
+class _FormatMasque(logging.Formatter):
+    """Formateur qui masque les secrets APRÈS mise en forme.
+
+    Une exception `requests` recopie l'URL appelée, paramètres compris :
+    c'est ainsi qu'une clé de stream est arrivée dans un journal versionné.
+    Masquer le texte final couvre aussi la trace d'exception et les journaux
+    des bibliothèques (urllib3 écrit l'URL complète en DEBUG).
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return mask_secrets(super().format(record))
+
+
 _log_handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 try:
     _log_handlers.insert(0, logging.handlers.RotatingFileHandler(
         LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"))
 except OSError:
     print(f"[warn] Journalisation fichier désactivée ({LOG_PATH} inaccessible).", file=sys.stderr)
+for _handler in _log_handlers:
+    _handler.setFormatter(_FormatMasque(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=_log_handlers,
-)
+logging.basicConfig(level=logging.INFO, handlers=_log_handlers)
 logger = logging.getLogger("obs_dynamics")
 
 # Reprise d'une installation antérieure où .env vivait dans le dépôt.

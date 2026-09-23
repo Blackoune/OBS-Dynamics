@@ -519,9 +519,12 @@ def test_events_replay_history_then_stream_live(chat_server):
                                     timeout=8) as stream:
             ready.set()
             deadline = time.time() + 6
+            evenement = ""
             while time.time() < deadline and len(received) < 2:
                 line = stream.readline().decode("utf-8", "replace")
-                if line.startswith("data: "):
+                if line.startswith("event: "):
+                    evenement = line[7:].strip()
+                elif line.startswith("data: ") and evenement == "chat":
                     received.append(line[6:].strip())
 
     thread = threading.Thread(target=reader, daemon=True)
@@ -599,3 +602,92 @@ def test_un_nom_mal_forme_nest_pas_une_configuration():
     connecteur = TwitchConnector(PlatformConfig(channel="foo\r\nJOIN #x"),
                                  lambda _m: None, lambda *_a: None)
     assert connecteur.is_configured() is False
+
+
+# --- Emotes Twitch ---------------------------------------------------------- #
+
+from twitch_chat import parse_emotes  # noqa: E402
+
+
+def test_les_emotes_du_tag_sont_reperees_dans_le_texte():
+    # Sans elles, le chat affichait « Kappa » en toutes lettres.
+    texte = "Kappa salut Kappa PogChamp"
+    emotes = parse_emotes("25:0-4,12-16/305954156:18-25", texte)
+    assert emotes == ((0, 5, "25"), (12, 17, "25"), (18, 26, "305954156"))
+    assert [texte[d:f] for d, f, _ in emotes] == ["Kappa", "Kappa", "PogChamp"]
+
+
+def test_les_positions_comptent_des_caracteres_pas_des_octets():
+    texte = "🎉 café Kappa"
+    assert parse_emotes("25:7-11", texte) == ((7, 12, "25"),)
+
+
+@pytest.mark.parametrize("tag", [
+    "25:0-99",                   # hors du texte
+    "a.b:0-4",                   # identifiant d'une autre forme
+    "25:3-1",                    # plage à l'envers
+    "25:a-b",                    # pas des nombres
+    "25:0-7",                    # déborde sur l'espace
+])
+def test_un_tag_incoherent_laisse_le_texte_intact(tag):
+    assert parse_emotes(tag, "Kappa salut") == ()
+
+
+def test_deux_emotes_qui_se_chevauchent_ne_gardent_que_la_premiere():
+    assert parse_emotes("25:0-4/1902:2-6", "KappaKeepo") == ((0, 5, "25"),)
+
+
+def test_le_message_part_en_morceaux_texte_et_emotes():
+    message = ChatMessage(id="m", platform="twitch", author="a",
+                          text="gg Kappa !", emotes=((3, 8, "25"),))
+    assert message.to_dict()["parts"] == [
+        {"text": "gg "}, {"text": "Kappa", "emote": "25"}, {"text": " !"}]
+
+
+def test_une_ligne_irc_avec_emotes_les_transmet():
+    ligne = ("@display-name=Bob;emotes=25:4-8 "
+             ":bob!bob@bob.tmi.twitch.tv PRIVMSG #chaine :lol Kappa")
+    _conn, _sock, messages, _statuses = _drain_twitch([ligne.encode() + b"\r\n"])
+    assert messages[0].to_dict()["parts"] == [
+        {"text": "lol "}, {"text": "Kappa", "emote": "25"}]
+
+
+def test_seul_le_chat_peut_charger_les_images_demotes(chat_server):
+    srv, _hub = chat_server
+    with urllib.request.urlopen(srv.base_url() + "/chat/jeton-secret", timeout=5) as r:
+        csp_chat = r.headers.get("Content-Security-Policy", "")
+    assert "img-src 'self' https://static-cdn.jtvnw.net" in csp_chat
+    assert "connect-src 'self'" in csp_chat          # rien ne repart ailleurs
+    assert csp_chat.count("img-src") == 1
+
+
+def test_la_page_de_chat_construit_les_emotes_sans_html(chat_server):
+    srv, _hub = chat_server
+    _, _, body = _get(srv, "/chat/jeton-secret")
+    assert b"__EMOTES_CDN__" not in body
+    assert b"innerHTML" not in body
+    assert b'createElement("img")' in body
+
+
+def test_le_flux_annonce_la_version_de_la_page_avant_lhistorique(chat_server):
+    # OBS garde une source ouverte des jours : sans cette annonce, l'ancienne
+    # page restait affichée après une mise à jour et ignorait les emotes.
+    import overlay_server
+    srv, _hub = chat_server
+    with urllib.request.urlopen(srv.base_url() + "/chatevents/jeton-secret",
+                                timeout=8) as flux:
+        lignes = []
+        while len(lignes) < 2:
+            ligne = flux.readline().decode("utf-8").strip()
+            if ligne.startswith(("event:", "data:")):
+                lignes.append(ligne)
+    assert lignes[0] == "event: page"
+    assert json.loads(lignes[1][5:]) == {"page": overlay_server._CHAT_PAGE_VERSION}
+
+
+def test_la_page_porte_la_meme_empreinte_que_le_flux(chat_server):
+    import overlay_server
+    srv, _hub = chat_server
+    _, _, body = _get(srv, "/chat/jeton-secret")
+    assert f'const PAGE = "{overlay_server._CHAT_PAGE_VERSION}"'.encode() in body
+    assert b"location.reload()" in body
