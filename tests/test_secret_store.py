@@ -198,3 +198,32 @@ def test_startup_encryption_does_not_rewrite_an_already_encrypted_file(app_modul
 def test_startup_encryption_on_a_missing_file_does_nothing(app_module, tmp_env):
     assert app_module.EnvConfigManager(tmp_env).encrypt_secrets_at_rest() is False
     assert not tmp_env.exists()
+
+
+@windows_seulement
+def test_une_cle_youtube_restee_en_clair_est_retiree_au_demarrage(app_module, tmp_env):
+    """Le chat YouTube a été retiré, sa clé d'API restait en clair dans le
+    .env réel. Plus rien ne la lit : elle disparaît au premier démarrage."""
+    factice = "AIza" + "x" * 35
+    tmp_env.write_text(f"OBS_WS_HOST=localhost\nYOUTUBE_API_KEY={factice}\n"
+                       "YOUTUBE_CHANNEL_ID=UCfactice\n", encoding="utf-8")
+    mgr = app_module.EnvConfigManager(tmp_env)
+
+    assert mgr.encrypt_secrets_at_rest() is True
+    brut = tmp_env.read_text(encoding="utf-8")
+    assert "YOUTUBE_" not in brut and factice not in brut
+    assert "OBS_WS_HOST=localhost" in brut
+    assert mgr.encrypt_secrets_at_rest() is False      # une seule fois
+
+
+@windows_seulement
+def test_un_secret_inconnu_est_garde_mais_chiffre(app_module, tmp_env):
+    tmp_env.write_text("AUTRE_API_KEY=valeur-factice-123\nAUTRE_OPTION=claire\n",
+                       encoding="utf-8")
+    mgr = app_module.EnvConfigManager(tmp_env)
+
+    assert mgr.encrypt_secrets_at_rest() is True
+    brut = tmp_env.read_text(encoding="utf-8")
+    assert "valeur-factice-123" not in brut
+    assert f"AUTRE_API_KEY={secret_store.PREFIX}" in brut
+    assert "AUTRE_OPTION=claire" in brut                # un réglage reste lisible

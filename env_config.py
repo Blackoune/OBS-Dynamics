@@ -1,6 +1,7 @@
 """Lecture et écriture du .env utilisateur (%APPDATA%/OBS Dynamics/.env)."""
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -47,6 +48,35 @@ ENV_KEYS = {
 # des secrets, et les garder lisibles permet de dépanner le fichier à la main.
 _SECRET_ENV_FIELDS = ("password", "rawg_api_key")
 _SECRET_ENV_BY_KEY = {ENV_KEYS[field]: field for field in _SECRET_ENV_FIELDS}
+
+#: Réglages de fonctions retirées (chat YouTube, Kick, TikTok). Plus rien ne
+#: les lit : une clé d'API YouTube restait ainsi en clair dans le `.env`
+#: longtemps après la suppression de la fonction. Elles sont retirées.
+_OBSOLETE_PREFIXES = ("YOUTUBE_", "KICK_", "TIKTOK_")
+
+#: Nom d'une variable qui porte un secret. Une ligne inconnue de cette forme
+#: est conservée, mais chiffrée : aucun identifiant ne reste en clair, même
+#: ajouté à la main.
+_SECRET_NAME = re.compile(r"KEY|SECRET|TOKEN|PASSW|PWD")
+
+
+def _cle_valeur(ligne: str) -> Optional[tuple[str, str]]:
+    """(CLÉ, valeur) d'une ligne d'affectation, None pour le reste."""
+    stripped = ligne.strip()
+    if stripped.startswith("#") or "=" not in stripped:
+        return None
+    key, _, value = stripped.partition("=")
+    return key.strip().upper(), value.strip().strip('"').strip("'")
+
+
+def _a_nettoyer(key: str, value: str) -> bool:
+    """Ligne étrangère à réécrire : obsolète, ou secret inconnu en clair."""
+    if key in ENV_KEYS.values():
+        return False
+    if key.startswith(_OBSOLETE_PREFIXES):
+        return True
+    return (bool(_SECRET_NAME.search(key)) and bool(value)
+            and not secret_store.is_encrypted(value))
 
 
 class EnvConfigManager:
@@ -141,13 +171,12 @@ class EnvConfigManager:
             return False
 
         for ligne in lignes:
-            stripped = ligne.strip()
-            if stripped.startswith("#") or "=" not in stripped:
+            paire = _cle_valeur(ligne)
+            if paire is None:
                 continue
-            key, _, value = stripped.partition("=")
-            value = value.strip().strip('"').strip("'")
-            if (key.strip().upper() in _SECRET_ENV_BY_KEY
-                    and secret_store.needs_rewrite(value)):
+            key, value = paire
+            if ((key in _SECRET_ENV_BY_KEY and secret_store.needs_rewrite(value))
+                    or _a_nettoyer(key, value)):
                 break
         else:
             return False        # tout est au format courant, ou rien de saisi
@@ -174,12 +203,17 @@ class EnvConfigManager:
                 lines: list[str] = []
                 if self._path.exists():
                     for line in self._path.read_text(encoding="utf-8").splitlines():
-                        stripped = line.strip()
-                        if "=" in stripped and not stripped.startswith("#"):
-                            key = stripped.split("=", 1)[0].strip().upper()
+                        paire = _cle_valeur(line)
+                        if paire is not None:
+                            key, value = paire
                             if key in updates:
                                 lines.append(f"{key}={updates[key]}")
                                 seen[key] = True
+                                continue
+                            if key.startswith(_OBSOLETE_PREFIXES):
+                                continue                  # fonction retirée
+                            if _a_nettoyer(key, value):
+                                lines.append(f"{key}={secret_store.encrypt(value)}")
                                 continue
                         lines.append(line)
                 for key, present in seen.items():
