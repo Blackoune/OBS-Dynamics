@@ -23,6 +23,7 @@ import json
 import re
 import threading
 
+from functools import lru_cache
 from itertools import product
 
 from dataclasses import asdict, dataclass, replace
@@ -288,6 +289,49 @@ def is_light(style: Style) -> bool:
     return (r * 299 + g * 587 + b * 114) / 1000 > 140
 
 
+def _rvb(hexa: str) -> tuple[int, int, int]:
+    return tuple(int(hexa[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
+
+def _luminance(rvb: tuple[int, int, int]) -> float:
+    """Luminance relative, au sens des WCAG."""
+    def canal(valeur: int) -> float:
+        v = valeur / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = rvb
+    return 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b)
+
+
+def contrast_ratio(a: str, b: str) -> float:
+    """Rapport de contraste WCAG entre deux couleurs `#RRGGBB`."""
+    clair, sombre = sorted((_luminance(_rvb(a)), _luminance(_rvb(b))),
+                           reverse=True)
+    return (clair + 0.05) / (sombre + 0.05)
+
+
+def readable_on(couleur: str, fond: str, minimum: float = 4.5) -> str:
+    """La couleur de marque, assombrie ou éclaircie juste assez pour se lire.
+
+    Le cyan de Tidal sur le modèle Clair tombait à 1,35:1 : la pastille de
+    l'application était invisible. On garde la teinte de la marque, et on la
+    pousse vers le noir (fond clair) ou le blanc (fond sombre) par petits pas,
+    jusqu'au seuil de lisibilité des WCAG.
+    """
+    couleur = _clean_color(couleur, "#A855F7")
+    fond = _clean_color(fond, "#0F0C1B")
+    # 0,179 : la luminance où le noir et le blanc contrastent autant.
+    cible = (0, 0, 0) if _luminance(_rvb(fond)) > 0.179 else (255, 255, 255)
+    depart = _rvb(couleur)
+    for pas in range(21):
+        melange = pas / 20
+        essai = "#%02X%02X%02X" % tuple(
+            round(c + (c_cible - c) * melange)
+            for c, c_cible in zip(depart, cible))
+        if contrast_ratio(essai, fond) >= minimum:
+            return essai
+    return "#%02X%02X%02X" % cible
+
+
 class StyleStore:
     """Les réglages d'apparence, par clé de lecteur.
 
@@ -471,7 +515,7 @@ class StyleStore:
         try:
             self._backgrounds.mkdir(parents=True, exist_ok=True)
             with Image.open(source) as brut:
-                brut.convert("RGBA").save(self._backgrounds / f"{key}.png")
+                _enregistrer_fond(brut, self._backgrounds / f"{key}.png")
             return True
         except Exception:
             logger.exception("Image de fond refusée : %s", source)
@@ -489,10 +533,58 @@ class StyleStore:
         chemin = self.background_path(key)
         if chemin is None:
             return None
+        # Un fond importé par une version précédente était gardé en pleine
+        # taille — une photo pesait 50 Mo, renvoyés à OBS à chaque chargement
+        # de la source. Il est réduit une fois, à la première lecture.
+        with self._lock:
+            _alleger_fond(chemin)
         try:
             return chemin.read_bytes()
         except OSError:
             return None
+
+
+def _taille_fond(taille: tuple[int, int]) -> tuple[int, int]:
+    """Taille à laquelle garder un fond : de quoi COUVRIR la plus grande carte.
+
+    La page le pose en `background-size: cover` ; au-delà, chaque pixel en
+    trop part vers OBS pour rien. Le double laisse de la marge à une source
+    agrandie dans la scène.
+    """
+    largeur, hauteur = taille
+    cible_l, cible_h = (2 * cote for cote in max_overlay_size())
+    ratio = max(cible_l / largeur, cible_h / hauteur)
+    if ratio >= 1:
+        return taille
+    return max(1, round(largeur * ratio)), max(1, round(hauteur * ratio))
+
+
+def _enregistrer_fond(brut, destination: Path) -> None:
+    """Écrit le fond réduit, via un fichier temporaire."""
+    cible = _taille_fond(brut.size)
+    # JPEG : décode directement à une fraction de la taille, au lieu de
+    # décompresser 12 mégapixels pour en jeter les trois quarts.
+    brut.draft("RGB", cible)
+    image = brut.convert("RGBA")
+    if image.size != cible:
+        image = image.resize(cible, Image.LANCZOS)
+    temporaire = destination.with_suffix(".tmp")
+    image.save(temporaire, format="PNG")
+    temporaire.replace(destination)
+
+
+def _alleger_fond(chemin: Path) -> None:
+    """Réduit sur place un fond plus grand que nécessaire."""
+    try:
+        with Image.open(chemin) as brut:
+            if _taille_fond(brut.size) == brut.size:
+                return
+            brut.load()
+            image = brut.copy()
+        # Hors du `with` : Windows refuse de remplacer un fichier ouvert.
+        _enregistrer_fond(image, chemin)
+    except Exception:
+        logger.warning("Fond non réduit : %s", chemin)
 
 
 # ----------------------------------------------------------------------------
@@ -558,11 +650,15 @@ _SAMPLE_WAVE = (0.25, 0.5, 0.8, 0.45, 0.95, 0.6, 0.35, 0.75, 0.55, 0.9,
 _SS = 4
 
 
+@lru_cache(maxsize=32)
 def _police(taille: float):
     """Police d'écriture des vignettes, avec repli progressif.
 
     Le nom de fichier suffit sous Windows ; ailleurs — et si la police manque —
     on retombe sur celle de Pillow plutôt que de rendre une vignette muette.
+
+    En cache : une police absente fait parcourir tout le dossier des polices
+    à Pillow, et chaque vignette en demandait une dizaine.
     """
     for nom in ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"):
         try:
@@ -575,6 +671,7 @@ def _police(taille: float):
         return ImageFont.load_default()
 
 
+@lru_cache(maxsize=32)
 def _police_grasse(taille: float):
     for nom in ("segoeuisb.ttf", "segoeuib.ttf", "arialbd.ttf",
                 "DejaVuSans-Bold.ttf"):
@@ -808,7 +905,15 @@ def _texte(dessin, x: float, y: float, style: "Style", largeur: float,
     attenue = (92, 86, 122, 255) if is_light(style) else (168, 160, 194, 255)
     accent = style.accent or style.border
 
-    police_titre = _police_grasse((11 if petit else 13) * e)
+    corps = 11 if petit else 13
+    police_titre = _police_grasse(corps * e)
+    if petit:
+        # Petite vignette : le corps baisse avant qu'on coupe. Les modèles
+        # macOS, avec pochette et boutons, n'affichaient que « Nom de la m… ».
+        while corps > 8 and dessin.textlength(SAMPLE_TITLE,
+                                              font=police_titre) > largeur:
+            corps -= 1
+            police_titre = _police_grasse(corps * e)
     dessin.text((x, y), _tronque(dessin, SAMPLE_TITLE, police_titre, largeur),
                 font=police_titre, fill=encre)
     y += (14 if petit else 17) * e
@@ -907,6 +1012,18 @@ def _arrondir(plate, rayon: float):
     return plate
 
 
+@lru_cache(maxsize=4)
+def _fond_carte(chemin: str, version: int, taille: tuple[int, int]):
+    """Le fond perso à la taille de la carte.
+
+    En cache, avec la date du fichier dans la clé : le curseur d'opacité
+    redessine l'aperçu à chaque cran, et rouvrir l'image à chaque fois
+    coûtait 500 ms par cran. Un fond remplacé change de date, donc de clé.
+    """
+    with Image.open(chemin) as brut:
+        return brut.convert("RGBA").resize(taille)
+
+
 def preview_png(style: Style, width: int = 240, height: int = 78,
                 background: Optional[Path] = None,
                 echelle: int = 1) -> bytes:
@@ -941,8 +1058,9 @@ def preview_png(style: Style, width: int = 240, height: int = 78,
     pose = False
     if background is not None:
         try:
-            with Image.open(background) as brut:
-                carte.paste(brut.convert("RGBA").resize((CW, CH)), (0, 0))
+            carte.paste(_fond_carte(str(background),
+                                    background.stat().st_mtime_ns, (CW, CH)),
+                        (0, 0))
             pose = True
         except Exception:
             pose = False

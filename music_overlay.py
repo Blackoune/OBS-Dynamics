@@ -31,7 +31,8 @@ from app_paths import DATA_DIR, logger
 from music_audio import AppLevels
 from music_catalog import identify, is_valid_key, logo_path
 from music_smtc import Session
-from music_style import Style, StyleStore, css_variables, overlay_size
+from music_style import (Style, StyleStore, css_variables, overlay_size,
+                         readable_on)
 
 #: Jeton d'accès aux routes musique, persisté à côté des autres réglages.
 MUSIC_WIDGET_PATH = DATA_DIR / "music_widget.json"
@@ -189,17 +190,20 @@ class MusicHub:
 
     def _payload(self, session: Session) -> dict[str, Any]:
         app = identify(session.app_id)
+        style = self.styles.get(app.key)
         return {
-            "style": self.styles.get(app.key).as_dict(),
+            "style": style.as_dict(),
             "title": session.title,
             "artist": session.artist,
             "album": session.album,
             "app": app.label,
-            "color": app.color,
+            # La couleur de marque, ajustee au fond : le cyan de Tidal sur le
+            # modele Clair ne se lisait pas (1,35:1).
+            "color": readable_on(app.color, style.bg),
             # La taille annoncee a l utilisateur voyage avec le style : la
             # page s y contraint, donc le chiffre affiche est vrai PAR
             # CONSTRUCTION, et non parce qu un calcul serait juste.
-            "size": list(overlay_size(self.styles.get(app.key))),
+            "size": list(overlay_size(style)),
             "logo": bool(logo_path(app.key)),
             "playing": session.is_playing,
             "square": session.is_square_art,
@@ -568,7 +572,11 @@ _PAGE_HTML = """<!doctype html>
   #controls svg:first-child,#controls svg:last-child{width:22px;height:22px;
     opacity:.9}
 
-  #wait{color:#9B93B5;font-size:15px;padding:14px 20px}
+  /* Sur fond propre : sans lui, le gris tombait a 2,9:1 sur une scene
+     claire. backdrop-filter n'y changerait rien, OBS ne compose pas la
+     scene derriere la page. */
+  #wait{color:#DCD6EC;font-size:15px;padding:10px 20px;
+    background:rgba(15,12,27,.88);border-radius:999px}
   [hidden]{display:none !important}
 </style>
 <div id="wait">__WAIT_TEXT__</div>

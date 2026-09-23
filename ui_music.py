@@ -380,6 +380,9 @@ class MusicView(ctk.CTkFrame):
         self._error: str = ""
         self._hub = hub
         self._overlay = overlay
+        #: Carte affichée par clé de lecteur, avec ce qu'elle montre.
+        self._cartes: dict[str, tuple[Any, SessionCard]] = {}
+        self._bandeau: Optional[ctk.CTkFrame] = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -529,9 +532,21 @@ class MusicView(ctk.CTkFrame):
 
     # -- rendu ------------------------------------------------------------- #
 
-    def _render(self) -> None:
-        for child in self._list.winfo_children():
-            child.destroy()
+    def _render(self, tout: bool = False) -> None:
+        """Met la liste à jour, en ne refaisant QUE les cartes qui changent.
+
+        Chaque évènement SMTC reconstruisait les huit cartes et leurs aperçus :
+        ~200 ms de gel, et le défilement revenait en haut. Une carte dont la
+        session et le lien sont identiques est gardée telle quelle. `tout`
+        force la reconstruction, pour un changement de langue.
+        """
+        if tout or not available():
+            for _signature, carte in self._cartes.values():
+                carte.destroy()
+            self._cartes = {}
+        if self._bandeau is not None:
+            self._bandeau.destroy()
+            self._bandeau = None
 
         if not available():
             self._status_lbl.configure(text="")
@@ -547,13 +562,26 @@ class MusicView(ctk.CTkFrame):
             self._banner(t("MUSIC_ERROR"), COL_RED, self._error)
             rang = 1
 
+        gardees: dict[str, tuple[Any, SessionCard]] = {}
         for app, session in self._entries():
-            carte = SessionCard(self._list, app, session,
-                                overlay_url=self._overlay_url(app),
-                                store=self._hub.styles if self._hub else None,
-                                on_style_saved=self._style_saved)
+            url = self._overlay_url(app)
+            signature = (session, url)
+            ancienne = self._cartes.pop(app.key, None)
+            if ancienne is not None and ancienne[0] == signature:
+                carte = ancienne[1]
+            else:
+                if ancienne is not None:
+                    ancienne[1].destroy()
+                carte = SessionCard(self._list, app, session, overlay_url=url,
+                                    store=self._hub.styles if self._hub else None,
+                                    on_style_saved=self._style_saved)
             carte.grid(row=rang + 1, column=0, sticky="ew", padx=6, pady=6)
+            gardees[app.key] = (signature, carte)
             rang += 1
+        # Les sources hors catalogue qui ont cessé de jouer.
+        for _signature, carte in self._cartes.values():
+            carte.destroy()
+        self._cartes = gardees
 
     def _entries(self) -> list[tuple[MusicApp, Optional[Session]]]:
         """Les lecteurs à afficher : ceux du catalogue, plus ceux détectés.
@@ -597,6 +625,7 @@ class MusicView(ctk.CTkFrame):
         frame = ctk.CTkFrame(self._list, fg_color=COL_CARD, corner_radius=14,
                              border_width=1, border_color=COL_BORDER)
         frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        self._bandeau = frame
         frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(frame, text=title, font=font(14, "bold"), text_color=color,
                      anchor="w").grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 4))
@@ -612,4 +641,4 @@ class MusicView(ctk.CTkFrame):
         self._refresh_btn.configure(text=t("MUSIC_BTN_REFRESH"))
         self._copy_btn.configure(text=t("MUSIC_BTN_COPY"))
         self._regen_btn.configure(text=t("MUSIC_BTN_REGENERATE"))
-        self._render()
+        self._render(tout=True)

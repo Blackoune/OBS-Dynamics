@@ -16,13 +16,44 @@ jamais rien. Toutes les clés sont normalisées en minuscule ici.
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
+import sys
 import threading
 from pathlib import Path
 from typing import Callable, Optional
 
 logger = logging.getLogger("obs_dynamics.hotkeys")
+
+#: Codes de touche virtuels Windows des modificateurs.
+_VK_MODIFIERS: dict[str, tuple[int, ...]] = {
+    "ctrl": (0x11,), "shift": (0x10,), "alt": (0x12,), "cmd": (0x5B, 0x5C),
+}
+
+
+def _key_down(vk: int) -> Optional[bool]:
+    """État réel d'une touche selon Windows ; None hors Windows ou en échec."""
+    if sys.platform != "win32":
+        return None
+    try:
+        return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+    except Exception:
+        return None
+
+
+def _drop_released_modifiers(pressed: set[str]) -> None:
+    """Retire de `pressed` les modificateurs que Windows dit relâchés.
+
+    Win+L, une fenêtre UAC ou le bureau sécurisé avalent l'événement de
+    relâchement : Ctrl restait « enfoncé » pour pynput, et F5 seul
+    déclenchait ensuite Ctrl+F5. On ne fait que RETIRER — jamais ajouter —
+    pour ne pas inventer une combinaison que l'utilisateur n'a pas faite.
+    """
+    for mod in list(pressed):
+        codes = _VK_MODIFIERS.get(mod, ())
+        if codes and all(_key_down(code) is False for code in codes):
+            pressed.discard(mod)
 
 DEFAULT_BINDINGS: dict[str, str] = {
     "f1": "in_game",
@@ -175,6 +206,7 @@ class HotkeyManager:
                     self._pressed.add(canonical_modifier(name))
                 return
             with self._lock:
+                _drop_released_modifiers(self._pressed)
                 # Sans modificateur enfoncé, build_combo() renvoie la touche
                 # nue : un hotkeys.json historique {"f1": ...} marche tel quel.
                 state = self._bindings.get(build_combo(set(self._pressed), name))
@@ -308,6 +340,7 @@ class ComboListener:
                     # maintenue : sans ce garde, un maintien enverrait des
                     # dizaines de déclenchements par seconde.
                     return
+                _drop_released_modifiers(self._pressed)
                 mods = set(self._pressed)
                 combo = build_combo(mods, name)
                 self._active[name] = combo
@@ -393,6 +426,7 @@ class ComboRecorder:
                     self._pressed.add(canonical_modifier(name))
                 return
             with self._lock:
+                _drop_released_modifiers(self._pressed)
                 mods = set(self._pressed)
             combo = build_combo(mods, name)
             self._done.set()

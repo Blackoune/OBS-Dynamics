@@ -111,3 +111,36 @@ def test_stop_clears_stuck_modifiers():
     mgr.stop()
     mgr._on_press(FakeKey(name="f1"))
     assert fired == ["in_game"]
+
+
+def test_un_ctrl_relache_pendant_win_l_ne_reste_pas_enfonce(monkeypatch):
+    """Win+L avale le relâchement de Ctrl : pynput le croit encore enfoncé.
+    Windows, lui, sait qu'il est relâché — F1 doit redevenir F1."""
+    mgr, fired = _manager()
+    mgr._on_press(FakeKey(name="ctrl_l"))           # relâchement jamais reçu
+    monkeypatch.setattr(hk, "_key_down", lambda _vk: False)
+
+    mgr._on_press(FakeKey(name="f1"))
+
+    assert fired == ["in_game"]
+
+
+def test_un_ctrl_vraiment_tenu_est_garde(monkeypatch):
+    mgr, fired = _manager()
+    monkeypatch.setattr(hk, "_key_down", lambda vk: vk == 0x11)
+    mgr._on_press(FakeKey(name="ctrl_l"))
+
+    mgr._on_press(FakeKey(name="f2"))
+
+    assert fired == ["menu"]
+
+
+def test_les_combinaisons_de_declencheurs_se_recalent_aussi(monkeypatch):
+    combos: list[str] = []
+    ecoute = hk.ComboListener(on_combo=combos.append)
+    ecoute._on_press(FakeKey(name="shift_l"))
+    monkeypatch.setattr(hk, "_key_down", lambda _vk: False)
+
+    ecoute._on_press(FakeKey(char="a"))
+
+    assert combos == ["a"]

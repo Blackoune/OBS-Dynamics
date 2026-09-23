@@ -18,7 +18,8 @@ from i18n import t
 from obs_client import AsyncLoopThread, OBSClient
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT, COL_BG,
                        COL_BORDER, COL_CARD, COL_CARD_HOVER, COL_GREEN,
-                       COL_RED, COL_TEXT_MUTED, COL_YELLOW, ctk, font)
+                       COL_RED, COL_TEXT_MUTED, COL_YELLOW, ctk,
+                       fit_to_screen, font)
 
 
 # ============================================================================
@@ -583,7 +584,7 @@ class GameModal(ctk.CTkToplevel):
                  game: Optional[Game] = None) -> None:
         super().__init__(master)
         self.title(t("GAME_MODAL_TITLE_EDIT") if game else t("GAME_MODAL_TITLE_ADD"))
-        self.geometry("480x640")
+        fit_to_screen(self, 480, 640, 420, 360)
         self.configure(fg_color=COL_BG)
         self.transient(master)
         self.grab_set()

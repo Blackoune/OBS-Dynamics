@@ -259,3 +259,39 @@ def test_an_unknown_combo_is_ignored(app):
     la machine, dont l'immense majorité ne nous concerne pas."""
     app._on_combo("ctrl+shift+inconnu")
     app._on_combo_release("ctrl+shift+inconnu")     # aucune exception attendue
+
+
+class _FenetreFactice:
+    """Écran 1080p, en pixels physiques comme les rend Windows."""
+
+    def winfo_screenwidth(self) -> int:
+        return 1920
+
+    def winfo_screenheight(self) -> int:
+        return 1080
+
+    def minsize(self, largeur: int, hauteur: int) -> None:
+        self.mini = (largeur, hauteur)
+
+    def geometry(self, texte: str) -> None:
+        self.taille = tuple(int(v) for v in texte.split("x"))
+
+
+@pytest.mark.parametrize("echelle", [1.0, 1.25, 1.5])
+def test_la_fenetre_tient_dans_lecran_quelle_que_soit_lechelle(monkeypatch,
+                                                                echelle):
+    # CustomTkinter multiplie la taille demandée par l'échelle de Windows :
+    # 720 de haut à 150 % faisaient 1080 pixels, tout l'écran.
+    import ui_common
+    monkeypatch.setattr(ui_common.ctk.ScalingTracker, "get_window_scaling",
+                        staticmethod(lambda _f: echelle))
+    fenetre = _FenetreFactice()
+
+    ui_common.fit_to_screen(fenetre, 1180, 720, 960, 620)
+
+    largeur, hauteur = fenetre.taille
+    assert hauteur * echelle <= 1080 - 100          # barre des tâches comprise
+    assert largeur * echelle <= 1920
+    assert fenetre.mini[0] <= largeur and fenetre.mini[1] <= hauteur
+    if echelle == 1.0:
+        assert fenetre.taille == (1180, 720)        # rien ne change à 100 %

@@ -77,7 +77,8 @@ from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,  # noqa: E
                        COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_GREEN,
                        COL_RED, COL_SIDEBAR, COL_TEXT, COL_TEXT_MUTED,
                        COL_YELLOW, FONT_FAMILY, STATE_DOT, STATE_RING,
-                       _try_enable_dnd, badge_text, ctk, font, is_running,
+                       _try_enable_dnd, badge_text, ctk, fit_to_screen,
+                       font, is_running,
                        parse_dropped_files, state_label)
 from ui_dashboard import DashboardView, GameCard  # noqa: E402
 from ui_game_dialogs import GameModal, PatchReviewDialog  # noqa: E402
@@ -205,8 +206,7 @@ class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(t("APP_TITLE_WINDOW"))
-        self.geometry("1180x720")
-        self.minsize(960, 620)
+        fit_to_screen(self, 1180, 720, 960, 620)
         self.configure(fg_color=COL_BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._set_window_icon()

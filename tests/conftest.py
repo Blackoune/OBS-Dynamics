@@ -35,6 +35,17 @@ def _ramasser_sur_le_thread_principal():
     gc.collect()
 
 
+@pytest.fixture(autouse=True)
+def _clavier_simule(monkeypatch):
+    """Les tests simulent Ctrl enfoncé sans que Windows le voie.
+
+    `hotkeys` recoupe ses modificateurs avec l'état réel du clavier : sans
+    ce double, chaque « Ctrl+F5 » simulé redeviendrait « F5 ».
+    """
+    import hotkeys
+    monkeypatch.setattr(hotkeys, "_key_down", lambda _vk: None)
+
+
 @pytest.fixture(scope="session")
 def app_module():
     import obs_dynamics

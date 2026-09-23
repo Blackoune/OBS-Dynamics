@@ -273,3 +273,33 @@ def test_lempreinte_change_avec_la_page(monkeypatch):
 
     monkeypatch.undo()
     assert apres != page_version()
+
+
+def test_chaque_reglage_de_laperçu_est_lu_par_la_page():
+    # Deux moteurs dessinent le widget : Pillow pour l'aperçu de l'application,
+    # la page HTML pour OBS. Un réglage que l'aperçu montre et que la page
+    # ignore est un écart invisible jusqu'au direct — c'est arrivé deux fois.
+    from dataclasses import fields
+
+    from music_overlay import _PAGE_HTML
+    from music_style import COVER_KEYS, LAYOUT_KEYS, Style
+
+    # `template` n'est qu'un nom affiché dans l'application.
+    ignores = [f.name for f in fields(Style)
+               if f.name != "template" and f.name not in _PAGE_HTML]
+    assert ignores == []
+    assert [cle for cle in LAYOUT_KEYS if cle not in _PAGE_HTML] == []
+    # « carre » est la branche par défaut du cadre : pas de cas à part.
+    assert [cle for cle in COVER_KEYS - {"carre"}
+            if f'"{cle}"' not in _PAGE_HTML] == []
+
+
+def test_la_couleur_de_la_pastille_suit_le_fond(hub):
+    from dataclasses import replace
+
+    from music_style import Style, contrast_ratio
+    hub.styles.save("tidal", replace(Style(), bg="#F3F0FA"))
+
+    message = hub._payload(_session(app_id="TIDAL.exe"))
+
+    assert contrast_ratio(message["color"], "#F3F0FA") >= 4.5

@@ -249,6 +249,64 @@ def test_retirer_limage_revient_au_fond_uni(store, tmp_path):
     assert store.background_bytes("spotify") is None
 
 
+def test_la_pastille_de_lapplication_se_lit_sur_chaque_modele():
+    # Le cyan de Tidal sur le modèle Clair tombait à 1,35:1.
+    from music_catalog import BUILT_IN
+    from music_style import TEMPLATES, contrast_ratio, readable_on
+    for tpl in TEMPLATES:
+        for app in BUILT_IN:
+            couleur = readable_on(app.color, tpl.style.bg)
+            assert contrast_ratio(couleur, tpl.style.bg) >= 4.5, (tpl.key,
+                                                                   app.key)
+
+
+def test_une_couleur_deja_lisible_garde_sa_teinte():
+    from music_style import readable_on
+    assert readable_on("#1DB954", "#0F0C1B") == "#1DB954"
+
+
+def test_une_photo_geante_est_reduite_a_limport(store, tmp_path):
+    # Gardée en pleine taille, une photo pesait 50 Mo, renvoyés à OBS à
+    # chaque chargement de la source, et figeait l'aperçu 500 ms par cran.
+    from music_style import max_overlay_size
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (6000, 4000), (200, 30, 90)).save(source)
+
+    assert store.set_background("spotify", source) is True
+
+    largeur, hauteur = max_overlay_size()
+    with Image.open(store.background_path("spotify")) as image:
+        # Assez grande pour COUVRIR la plus grande carte au double, pas plus.
+        assert image.width >= 2 * largeur and image.height >= 2 * hauteur
+        assert image.width < 6000 and image.height < 4000
+        assert abs(image.width / image.height - 1.5) < 0.01
+
+
+def test_un_ancien_fond_trop_grand_est_reduit_a_la_lecture(store, tmp_path):
+    # Les fonds importés avant la réduction restent sur le disque tels quels.
+    dossier = tmp_path / "fonds"
+    dossier.mkdir()
+    Image.new("RGBA", (5000, 3000), (10, 200, 10, 255)).save(
+        dossier / "spotify.png")
+
+    donnees = store.background_bytes("spotify")
+
+    with Image.open(io.BytesIO(donnees)) as image:
+        assert image.width < 5000
+    with Image.open(dossier / "spotify.png") as image:
+        assert image.width < 5000                     # réécrit une fois
+
+
+def test_un_petit_fond_est_garde_tel_quel(store, tmp_path):
+    source = tmp_path / "petit.png"
+    Image.new("RGB", (300, 100), (0, 0, 0)).save(source)
+
+    store.set_background("spotify", source)
+
+    with Image.open(store.background_path("spotify")) as image:
+        assert image.size == (300, 100)
+
+
 def test_un_fichier_qui_nest_pas_une_image_est_refuse(store, tmp_path):
     faux = tmp_path / "document.png"
     faux.write_text("pas une image", encoding="utf-8")

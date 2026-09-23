@@ -557,6 +557,53 @@ def test_a_media_larger_than_one_chunk_arrives_whole(served, tmp_path):
     assert body == contenu
 
 
+def _get_range(srv, path, plage):
+    requete = urllib.request.Request(srv.base_url() + path,
+                                     headers={"Range": plage})
+    try:
+        with urllib.request.urlopen(requete, timeout=15) as r:
+            return r.status, dict(r.headers), r.read()
+    except urllib.error.HTTPError as erreur:
+        return erreur.code, dict(erreur.headers), b""
+
+
+def test_une_video_se_sert_par_plages(served, tmp_path):
+    # Chromium lit une vidéo par plages : sans 206, chaque saut retéléchargeait
+    # tout le fichier.
+    srv, rule = served
+    video = tmp_path / "boucle.mp4"
+    contenu = bytes(range(256)) * 400
+    video.write_bytes(contenu)
+    rule.media_path = str(video)
+
+    status, entetes, body = _get_range(srv, f"/media/{rule.id}",
+                                       "bytes=1000-1999")
+    assert status == 206
+    assert body == contenu[1000:2000]
+    assert entetes["Content-Range"] == f"bytes 1000-1999/{len(contenu)}"
+
+    status, _, body = _get_range(srv, f"/media/{rule.id}", "bytes=-10")
+    assert status == 206 and body == contenu[-10:]
+
+    status, _, body = _get_range(srv, f"/media/{rule.id}", "bytes=5000-")
+    assert status == 206 and body == contenu[5000:]
+
+
+def test_une_plage_hors_du_fichier_est_refusee(served):
+    srv, rule = served
+    status, entetes, _ = _get_range(srv, f"/media/{rule.id}", "bytes=999999-")
+    assert status == 416
+    assert entetes["Content-Range"] == "bytes */40"
+
+
+@pytest.mark.parametrize("plage", ["bytes=0-1,5-9", "octets=0-9", "bytes=a-b"])
+def test_une_plage_non_geree_sert_tout_le_fichier(served, plage):
+    srv, rule = served
+    status, entetes, body = _get_range(srv, f"/media/{rule.id}", plage)
+    assert status == 200 and len(body) == 40
+    assert entetes["Accept-Ranges"] == "bytes"
+
+
 def test_media_is_served_with_nosniff(served):
     """Un média mal typé ne doit pas pouvoir être interprété comme du HTML
     dans l'origine de l'overlay."""

@@ -22,6 +22,7 @@ Deux garanties structurelles :
 """
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 import queue
@@ -484,6 +485,9 @@ class TwitchConnector(BaseConnector):
 
     def _read_loop(self, sock: Any) -> None:
         buffer = ""
+        # Incrémental : TCP peut couper un « é » ou un emoji entre deux
+        # paquets. Décoder chaque paquet seul changeait chaque moitié en « � ».
+        decodeur = codecs.getincrementaldecoder("utf-8")(errors="replace")
         last_data = time.monotonic()
         joined = False
         while not self._stop.is_set():
@@ -496,7 +500,7 @@ class TwitchConnector(BaseConnector):
             if not chunk:
                 raise ConnectionError("connexion IRC fermée par le serveur")
             last_data = time.monotonic()
-            buffer += chunk.decode("utf-8", errors="replace")
+            buffer += decodeur.decode(chunk)
             *lines, buffer = buffer.split("\r\n")
             for line in lines:
                 if line.startswith("PING"):

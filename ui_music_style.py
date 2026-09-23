@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from tkinter import colorchooser, filedialog
 from typing import Callable, Optional
@@ -30,7 +31,7 @@ from music_style import (COVERS, LAYOUTS, TEMPLATES, Style, StyleStore,
                          overlay_size, preview_png, template)
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_BG, COL_BORDER,
                        COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_RED,
-                       COL_TEXT, COL_TEXT_MUTED, ctk, font)
+                       COL_TEXT, COL_TEXT_MUTED, ctk, fit_to_screen, font)
 
 try:
     from PIL import Image
@@ -60,8 +61,35 @@ _FINESSE = 2
 
 def _apercu(style, size: tuple[int, int], background=None) -> Optional[ctk.CTkImage]:
     """Vignette d un style, rendue plus fine que sa taille d affichage."""
+    if background is None:
+        return _photo(_png_vignette(_cle(style), size), size)
     return _photo(preview_png(style, width=size[0], height=size[1],
                               background=background, echelle=_FINESSE), size)
+
+
+def _cle(style: Style) -> Style:
+    """Le style sans ce qui ne change pas le dessin.
+
+    Le nom du template s efface a la premiere retouche : le garder dans la
+    cle du cache refaisait toutes les vignettes pour un rendu identique.
+    """
+    return replace(style, template="", background_image=False)
+
+
+@lru_cache(maxsize=256)
+def _png_vignette(style: Style, size: tuple[int, int]) -> bytes:
+    """Rendu d une vignette, garde d une ouverture de fenetre a l autre.
+
+    Les huit templates et les dix vignettes de forme coutaient ~360 ms a
+    chaque ouverture ; ils ne changent qu avec le style.
+    """
+    return preview_png(style, width=size[0], height=size[1], echelle=_FINESSE)
+
+
+@lru_cache(maxsize=128)
+def _png_pochette(style: Style, forme: str) -> bytes:
+    return cover_preview_png(style, forme, width=_OPT_PREVIEW[0],
+                             height=_OPT_PREVIEW[1], echelle=_FINESSE)
 
 
 def _photo(png: bytes, size: tuple[int, int]) -> Optional[ctk.CTkImage]:
@@ -188,6 +216,9 @@ class StyleDialog(ctk.CTkToplevel):
         self._style = store.get(key)
         self._preview_img: Optional[ctk.CTkImage] = None
         self._tpl_imgs: list[ctk.CTkImage] = []
+        # Rendus reportés pendant qu'on fait glisser le curseur d'opacité.
+        self._apercu_prevu: Optional[str] = None
+        self._vignettes_prevues: Optional[str] = None
 
         self.title(t("MUSIC_STYLE_TITLE", app=label))
         self.transient(master.winfo_toplevel())
@@ -195,10 +226,9 @@ class StyleDialog(ctk.CTkToplevel):
         # Corps defilant : la fenetre depasse 900 px de haut une fois les deux
         # grilles et les templates en place. Sur un ecran de portable, le
         # bouton Enregistrer serait sous le bord de l ecran, donc hors
-        # d atteinte. La hauteur suit l ecran, jamais le contenu.
-        hauteur = min(960, max(480, self.winfo_screenheight() - 140))
-        self.geometry(f"860x{hauteur}")
-        self.minsize(720, 420)
+        # d atteinte. La hauteur suit l ecran, jamais le contenu — mise a
+        # l echelle de Windows comprise.
+        fit_to_screen(self, 860, 960, 720, 420)
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self._corps = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -238,7 +268,12 @@ class StyleDialog(ctk.CTkToplevel):
         self._size_lbl.pack(padx=16, pady=(0, 14))
 
     def _refresh(self) -> None:
-        """Redessine l'aperçu à partir des réglages en cours d'édition."""
+        """Redessine l'aperçu et les vignettes à partir des réglages en cours."""
+        self._refresh_apercu()
+        self._marquer_selection()
+
+    def _refresh_apercu(self) -> None:
+        """L'aperçu du haut et les libellés, sans les grilles de vignettes."""
         fond = self._store.background_path(self._key)
         self._preview_img = _apercu(self._style, _PREVIEW, background=fond)
         self._preview_lbl.configure(image=self._preview_img)
@@ -252,7 +287,6 @@ class StyleDialog(ctk.CTkToplevel):
         largeur, hauteur = overlay_size(self._style)
         self._size_lbl.configure(text=t("MUSIC_SOURCE_SIZE", w=largeur,
                                         h=hauteur))
-        self._marquer_selection()
         for champ, var in getattr(self, "_part_vars", {}).items():
             var.set(getattr(self._style, champ))
 
@@ -280,20 +314,11 @@ class StyleDialog(ctk.CTkToplevel):
 
         boutons: dict[str, ctk.CTkButton] = {}
         for index, option in enumerate(options):
-            if champ == "cover":
-                # La grille des pochettes montre LA FORME, en grand. Sur une
-                # carte complete, la pochette n est qu un detail de coin :
-                # « Auto » et « Vinyle » y paraissaient identiques.
-                apercu = _photo(cover_preview_png(
-                    self._style, option.key, width=_OPT_PREVIEW[0],
-                    height=_OPT_PREVIEW[1], echelle=_FINESSE), _OPT_PREVIEW)
-            else:
-                apercu = _apercu(replace(self._style, **{champ: option.key}),
-                                 _OPT_PREVIEW)
-            if apercu is not None:
-                self._opt_imgs.append(apercu)
+            # Sans image ici : `_refresh`, appele juste apres la construction,
+            # dessine toutes les vignettes. Les rendre deux fois doublait le
+            # temps d ouverture de la fenetre.
             bouton = ctk.CTkButton(
-                grille, text=option.label, image=apercu, compound="top",
+                grille, text=option.label, compound="top",
                 width=_OPT_PREVIEW[0] + 10, height=_OPT_PREVIEW[1] + 32,
                 corner_radius=10, fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
                 border_width=2, border_color=COL_CARD, text_color=COL_TEXT,
@@ -320,9 +345,11 @@ class StyleDialog(ctk.CTkToplevel):
             actif = getattr(self._style, champ)
             for cle, bouton in boutons.items():
                 if champ == "cover":
-                    apercu = _photo(cover_preview_png(
-                        self._style, cle, width=_OPT_PREVIEW[0],
-                        height=_OPT_PREVIEW[1], echelle=_FINESSE), _OPT_PREVIEW)
+                    # La grille des pochettes montre LA FORME, en grand. Sur
+                    # une carte complete, la pochette n est qu un detail de
+                    # coin : « Auto » et « Vinyle » y paraissaient identiques.
+                    apercu = _photo(_png_pochette(_cle(self._style), cle),
+                                    _OPT_PREVIEW)
                 else:
                     apercu = _apercu(replace(self._style, **{champ: cle}),
                                      _OPT_PREVIEW)
@@ -444,8 +471,33 @@ class StyleDialog(ctk.CTkToplevel):
         curseur.grid(row=0, column=1, sticky="ew", padx=14)
 
     def _set_opacity(self, valeur: float) -> None:
-        self._set(opacity=int(round(valeur)))
-        self._refresh()
+        """Suit le curseur sans figer la fenêtre.
+
+        Le curseur envoie un évènement par cran. Tout redessiner à chaque fois
+        coûtait ~190 ms par cran : la fenêtre ne suivait plus la souris.
+        L'aperçu suit au plus toutes les 60 ms ; les vignettes attendent que
+        le curseur s'arrête.
+        """
+        opacite = int(round(valeur))
+        if opacite == self._style.opacity:
+            return
+        self._set(opacity=opacite)
+        self._opacity_lbl.configure(text=f"{opacite} %")
+        if self._apercu_prevu is None:
+            self._apercu_prevu = self.after(60, self._apercu_differe)
+        if self._vignettes_prevues is not None:
+            self.after_cancel(self._vignettes_prevues)
+        self._vignettes_prevues = self.after(250, self._vignettes_differees)
+
+    def _apercu_differe(self) -> None:
+        self._apercu_prevu = None
+        if self.winfo_exists():
+            self._refresh_apercu()
+
+    def _vignettes_differees(self) -> None:
+        self._vignettes_prevues = None
+        if self.winfo_exists():
+            self._marquer_selection()
 
     # -- templates --------------------------------------------------------- #
 

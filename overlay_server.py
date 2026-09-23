@@ -123,6 +123,33 @@ _MEDIA_CONTENT_TYPES = {
 _REVEIL_SECONDS = 0.5
 
 
+def _media_range(entete: Optional[str], taille: int):
+    """Plage demandée par `Range`, en (début, fin incluse).
+
+    None : servir tout le fichier — pas d'en-tête, ou une forme qu'on ne
+    gère pas (plusieurs plages) et que la RFC 9110 permet d'ignorer.
+    False : plage hors du fichier, à refuser en 416.
+    """
+    if not entete:
+        return None
+    morceaux = entete.strip().split("=", 1)
+    if len(morceaux) != 2 or morceaux[0].strip() != "bytes" or "," in morceaux[1]:
+        return None
+    debut, _, fin = morceaux[1].strip().partition("-")
+    if not (debut or fin) or not (debut + fin).isdigit():
+        return None
+    if taille <= 0:
+        return False
+    if not debut:                                # `bytes=-500` : les 500 derniers
+        n = int(fin)
+        return (taille - min(n, taille), taille - 1) if n > 0 else False
+    debut_i = int(debut)
+    fin_i = min(int(fin), taille - 1) if fin else taille - 1
+    if debut_i >= taille or fin_i < debut_i:
+        return False
+    return debut_i, fin_i
+
+
 class _Broker:
     """Distribue les événements de déclenchement aux pages connectées."""
 
@@ -321,10 +348,12 @@ _CHAT_HTML = """<!doctype html>
     color:#0F0C1B;vertical-align:2px}
   /* Banniere d'attente : c'est ce que voit l'utilisateur quand l'application
      est fermee ou redemarre, plutot qu'une page blanche muette. */
-  #wait{align-self:center;background:rgba(26,21,48,.6);
-    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  /* Fond presque opaque : OBS ne compose pas la scene derriere la page,
+     donc un flou d'arriere-plan ne floute rien, et le gris a 60 % tombait
+     a 2,9:1 sur une scene claire. */
+  #wait{align-self:center;background:rgba(15,12,27,.88);
     border:1px solid rgba(168,85,247,.3);border-radius:999px;
-    padding:8px 18px;color:#9B93B5;font-size:14px}
+    padding:8px 18px;color:#DCD6EC;font-size:14px}
   [hidden]{display:none !important}
 </style>
 <div id="wrap"><div id="wait">__WAIT_TEXT__</div></div>
@@ -695,12 +724,27 @@ class _Handler(BaseHTTPRequestHandler):
 
         ctype = _MEDIA_CONTENT_TYPES.get(path.suffix.lower(),
                                          "application/octet-stream")
+        # `sandbox` en plus : même ouvert directement dans un onglet, le
+        # fichier ne peut ni exécuter de script, ni lire les autres routes.
+        entetes = {"Content-Security-Policy": "sandbox; default-src 'none'",
+                   "Accept-Ranges": "bytes"}
+        plage = _media_range(self.headers.get("Range"), taille)
         with fichier:
-            # `sandbox` en plus : même ouvert directement dans un onglet, le
-            # fichier ne peut ni exécuter de script, ni lire les autres routes.
-            self._send_headers(200, ctype, taille,
-                               {"Content-Security-Policy": "sandbox; default-src 'none'"})
-            restant = taille
+            if plage is False:
+                entetes["Content-Range"] = f"bytes */{taille}"
+                self._send(416, b"", "text/plain; charset=utf-8", entetes)
+                return
+            if plage is None:
+                code, debut, longueur = 200, 0, taille
+            else:
+                # Chromium demande la vidéo par plages : sans 206, il la
+                # retélécharge en entier pour chaque saut, et une boucle
+                # longue démarrait en retard.
+                code, debut, longueur = 206, plage[0], plage[1] - plage[0] + 1
+                entetes["Content-Range"] = f"bytes {plage[0]}-{plage[1]}/{taille}"
+            self._send_headers(code, ctype, longueur, entetes)
+            fichier.seek(debut)
+            restant = longueur
             try:
                 while restant > 0:
                     morceau = fichier.read(min(self.MEDIA_CHUNK, restant))

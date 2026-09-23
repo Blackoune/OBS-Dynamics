@@ -204,6 +204,17 @@ def test_read_loop_reassembles_lines_split_across_packets():
     assert [m.text for m in messages] == ["debut et fin", "deux"]
 
 
+def test_read_loop_keeps_a_character_split_across_packets():
+    """« é » fait deux octets : TCP peut couper entre les deux. Décoder
+    chaque paquet seul donnait « � » dans le chat."""
+    ligne = ":a!a@a.tmi.twitch.tv PRIVMSG #chaine :café 🎉\r\n".encode()
+    coupe = ligne.index("é".encode()) + 1          # au milieu du « é »
+    fin = ligne.index("🎉".encode()) + 2           # au milieu de l'emoji
+    _conn, _sock, messages, _statuses = _drain_twitch(
+        [ligne[:coupe], ligne[coupe:fin], ligne[fin:]])
+    assert [m.text for m in messages] == ["café 🎉"]
+
+
 def test_read_loop_answers_ping_and_does_not_publish_it():
     _conn, sock, messages, _statuses = _drain_twitch([
         b"PING :tmi.twitch.tv\r\n:a!a@a.tmi.twitch.tv PRIVMSG #chaine :ok\r\n"])

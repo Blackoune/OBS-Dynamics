@@ -31,7 +31,9 @@ COL_CARD = "#1A1530"
 COL_CARD_HOVER = "#221B3D"
 COL_BORDER = "#2A2145"
 COL_BORDER_ACCENT = "#A855F7"
-COL_ACCENT = "#A855F7"
+# Un cran plus clair que le liseré : #A855F7 en texte sur une carte tombait à
+# 4,45:1, sous le seuil de lisibilité (4,5:1). #AF62F8 y fait 4,96:1.
+COL_ACCENT = "#AF62F8"
 COL_ACCENT_HOVER = "#9333EA"
 COL_ACCENT_SOFT = "#7C3AED"
 COL_TEXT = "#F3F0FA"
@@ -59,6 +61,26 @@ FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "Inter"
 
 def font(size: int, weight: str = "normal") -> ctk.CTkFont:
     return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
+
+
+def fit_to_screen(fenetre: Any, largeur: int, hauteur: int,
+                  min_largeur: int, min_hauteur: int) -> None:
+    """Taille de fenêtre en unités CustomTkinter, bornée à l'écran.
+
+    CustomTkinter multiplie `geometry()` et `minsize()` par la mise à
+    l'échelle de Windows, alors que `winfo_screen*()` rend des pixels
+    physiques. Sans cette division, 1180x720 à 150 % donnait 1770x1080 :
+    plus haut qu'un écran 1080p, et le bas de la fenêtre hors d'atteinte.
+    """
+    try:
+        echelle = ctk.ScalingTracker.get_window_scaling(fenetre) or 1.0
+    except Exception:
+        echelle = 1.0
+    # Marges : barre des tâches en bas, barre de titre de la fenêtre.
+    max_l = int(fenetre.winfo_screenwidth() / echelle) - 40
+    max_h = int(fenetre.winfo_screenheight() / echelle) - 110
+    fenetre.minsize(min(min_largeur, max_l), min(min_hauteur, max_h))
+    fenetre.geometry(f"{min(largeur, max_l)}x{min(hauteur, max_h)}")
 
 
 # ============================================================================
