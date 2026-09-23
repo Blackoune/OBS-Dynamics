@@ -31,9 +31,8 @@ CHEMINS_INTERDITS = (
     re.compile(r"(^|/)obs_config\.json$"),
     re.compile(r"(^|/)config\.json$"),
     re.compile(r"(^|/)data/"),
-    re.compile(r"(^|/)oauth_tokens\.dat$"),
     # Journaux : un message d'erreur `requests` recopie l'URL appelée, clé
-    # comprise. C'est ainsi qu'une clé de stream YouTube est arrivée dans
+    # comprise. C'est ainsi qu'une clé de stream est arrivée dans
     # `data.old/obs_dynamics.log`, puis dans le commit 833d1df.
     re.compile(r"(^|/)data\.old/"),
     re.compile(r"\.log(\.\d+)?$"),
@@ -58,12 +57,11 @@ EXEMPTIONS = frozenset({"data/hotkeys.json"})
 CONDENSATS_INTERDITS = {
     "e934dd0dec1c18ad2b255889391b0ffa74451448529c675fe0e9391b99447264":
         "mot de passe OBS WebSocket publié dans le commit 752b027",
-    # d85f4c... = clé de stream YouTube recopiée dans un journal versionné
-    # (`data.old/obs_dynamics.log`, commit 833d1df). À réinitialiser dans
-    # YouTube Studio : tant qu'elle ne l'est pas, elle permet de diffuser
-    # sur la chaîne.
+    # d85f4c... = clé de stream recopiée dans un journal versionné
+    # (`data.old/obs_dynamics.log`, commit 833d1df). Tant qu'elle n'est pas
+    # réinitialisée, elle permet de diffuser sur la chaîne.
     "d85f4c7a8012bbbf1c010944db5d6d56d1383accac8610c7c1a335d539d625f3":
-        "clé de stream YouTube publiée dans le commit 833d1df",
+        "clé de stream publiée dans le commit 833d1df",
 }
 
 # Ce qui ressemble à une valeur de secret dans un texte quelconque : on hache
@@ -84,13 +82,17 @@ AFFECTATIONS = (
 # --- 4. Secrets reconnaissables à leur FORME ------------------------------ #
 # Les règles précédentes cherchent une affectation (`CLE=valeur`). Un secret
 # recopié AILLEURS — dans l'URL d'un message d'erreur, par exemple — leur
-# échappait : c'est exactement comme ça que la clé de stream YouTube est
-# passée. Ces formes-là se reconnaissent seules, où qu'elles apparaissent.
+# échappait : c'est exactement comme ça que la clé de stream est passée.
+# Ces formes-là se reconnaissent seules, où qu'elles apparaissent.
 MOTIFS_DE_SECRETS = (
-    # Clé de stream YouTube : cinq groupes de quatre, en minuscules. Les
-    # bornes excluent un UUID (8-4-4-4-12), qui n'a jamais cette forme.
+    # Clé de stream en cinq groupes de quatre caractères, en minuscules,
+    # séparés par des tirets — la forme de celle qui a fuité. Les bornes
+    # excluent un UUID (8-4-4-4-12), qui n'a jamais cette forme.
     (re.compile(r"(?<![a-z0-9-])[a-z0-9]{4}(?:-[a-z0-9]{4}){4}(?![a-z0-9-])"),
-     "clé de stream YouTube"),
+     "clé de stream"),
+    # Clé de stream Twitch : `live_<identifiant>_<suite aléatoire>`. C'est la
+    # plateforme sur laquelle on diffuse : la sienne mérite la même garde.
+    (re.compile(r"live_[0-9]{5,}_[A-Za-z0-9]{20,}"), "clé de stream Twitch"),
     # Adresse d'ingestion RTMP, en clair ou encodée dans une URL : elle porte
     # la clé de stream en dernier segment.
     (re.compile(r"rtmps?(?::|%3A)(?://|%2F%2F)", re.I),

@@ -1,6 +1,6 @@
 """Le contrôle de commit reconnaît les secrets recopiés hors d'une affectation.
 
-La clé de stream YouTube du commit 833d1df n'était pas dans un `.env` : elle
+La clé de stream du commit 833d1df n'était pas dans un `.env` : elle
 était au milieu d'une URL, dans un message d'erreur, dans un journal. Aucune
 règle ne la voyait. Ces tests fixent ce qui doit désormais être refusé.
 
@@ -44,8 +44,9 @@ def test_les_fichiers_du_projet_restent_versionnables(chemin):
 # ----------------------------------------------------------------------------
 @pytest.mark.parametrize("texte", [
     f"400 Bad Request for url: https://x/videos?id=a&key={CLE_FACTICE}",
-    f"rtmp://a.rtmp.youtube.com/live2/{CLE_FACTICE}",
-    "key=rtmp%3A%2F%2Fa.rtmp.youtube.com%2Flive2%2Fautre",
+    f"rtmp://live.example/app/{CLE_FACTICE}",
+    "key=rtmp%3A%2F%2Flive.example%2Fapp%2Fautre",
+    "stream_key = live_123456789_" + "a" * 30,              # clé Twitch
     "cle = AIza" + "B" * 35,
 ])
 def test_un_secret_recopie_dans_du_texte_est_refuse(texte):

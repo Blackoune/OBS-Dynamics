@@ -88,10 +88,7 @@ nécessaire que pour écrire ou modérer, ce que cette version ne fait pas.
 L'interrupteur de la carte masque le chat dans l'overlay **sans couper la
 connexion** : le réafficher est instantané.
 
-> **Pourquoi seulement Twitch ?** L'onglet a porté un temps YouTube, Kick et
-> TikTok. Tout a été retiré le 2026-09-08 : Twitch était la seule plateforme à
-> fonctionner de façon fiable. Le détail des impasses est dans
-> [HANDOVER.md](HANDOVER.md) §6.
+> **Twitch uniquement.** C'est la seule plateforme de chat prise en charge.
 
 ### Le lien overlay
 

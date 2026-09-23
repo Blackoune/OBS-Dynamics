@@ -104,7 +104,6 @@ dans l'historique git si besoin d'archéologie.
 | Chat Twitch — lien overlay permanent | ✅ | jeton créé une fois puis relu ; URL identique après redémarrage, vérifié |
 | Chat Twitch — connecteur IRC anonyme | ✅ | sans identifiant ; connexion réelle vérifiée le 2026-09-06 |
 | Chat Twitch — réception de messages | 🟡 | boucle de lecture couverte par 4 tests à socket simulée, pas encore observée sur un vrai chat animé |
-| YouTube, Kick, TikTok | ⬜ | retirés le 2026-09-08 — voir §6 |
 | Purge de l'historique git | ⚠️ | voir §4 — décision du propriétaire du dépôt |
 
 ---
@@ -435,38 +434,11 @@ qui s'applique à elles comme aux autres. Douze tests verrouillent l'ensemble
 - **Le chat s'affiche par `textContent`, jamais par `innerHTML`.** Un message
   de chat est du texte hostile par nature ; un test verrouille l'absence
   d'`innerHTML` dans la page servie.
-- **Le retour d'autorisation arrive sur le serveur overlay existant**, route
-  `/auth/<fournisseur>/callback`. Un serveur éphémère marcherait, mais son
-  port changerait à chaque connexion : impossible à déclarer d'avance chez le
-  fournisseur.
-- **`_save_client_credentials` remonte l'échec d'écriture, ET relit le fichier
-  pour le prouver.** Se fier au booléen de `EnvConfigManager.save()` ne
-  suffisait pas : le 2026-09-06, un Client ID est parti chez Google alors que
-  `.env` n'en contenait aucune trace et qu'aucune erreur n'était journalisée.
-  `_credentials_are_on_disk()` relit donc par un gestionnaire NEUF — celui de
-  l'application garde un cache invalidé sur (date, taille), et c'est ce cache
-  qu'il faut court-circuiter pour observer le fichier réel. Le chemin de
-  `.env` est journalisé au démarrage : il dépend de `%APPDATA%`, donc du
-  compte et de l'environnement de lancement.
-- **Un `404` n'est pas une panne** (`LiveChatGone`). Un direct se termine et
-  son chat disparaît : la réponse correcte est de repartir en résolution, pas
-  d'escalader un backoff — qui montait à 75 s en affichant « Erreur » pour une
-  situation parfaitement normale.
 - **Une session revenue SANS exception ne compte pas comme un échec** :
   le backoff repart de zéro et l'état posé par la session est conservé. Avant,
   chaque cycle de 30 s repassait par « Non connecté » puis « Connexion en
   cours », et l'attente grimpait à plus d'une minute pour une chaîne
   simplement hors antenne.
-- **Les identifiants d'application sont validés avant d'ouvrir le
-  navigateur.** Le 2026-09-06, l'adresse de la page Google Cloud Console
-  (69 caractères finissant par `ing?theme=dark`) avait été collée dans le
-  champ Client ID : Google répondait `401 invalid_client`, et rien dans
-  l'application ne disait que la valeur envoyée était une URL. La journalisation
-  de la FORME du client_id — longueur et 14 derniers caractères, jamais la
-  valeur — est ce qui a permis de l'identifier ; garder cette trace.
-- **Le rafraîchissement des jetons est paresseux**, déclenché par l'appelant
-  qui en a besoin. Un thread par plateforme pour surveiller une date ferait le
-  travail que la prochaine requête fait déjà gratuitement.
 
 ---
 
@@ -481,19 +453,9 @@ qui s'applique à elles comme aux autres. Douze tests verrouillent l'ensemble
   lui la zone reste cliquable et ouvre le sélecteur de fichier.
 - Le serveur overlay n'écoute que sur `127.0.0.1` : une source navigateur sur
   une autre machine ne pourrait pas l'atteindre.
-- **YouTube, Kick et TikTok ont été retirés le 2026-09-08.** L'onglet les a
+- **Kick et TikTok ont été retirés le 2026-09-08.** L'onglet les a
   portés deux jours ; aucun n'a fonctionné de façon fiable, et le coût de les
   garder dépassait leur apport. Ce qui a été essayé, et pourquoi ça a échoué :
-  - **YouTube** — OAuth Google complet (PKCE, jetons chiffrés DPAPI,
-    rafraîchissement automatique), validé contre le vrai Google : le compte se
-    connectait, le jeton se rafraîchissait. Mais `liveChatMessages` répondait
-    `404` sur un identifiant pourtant obtenu de
-    `videos.liveStreamingDetails.activeLiveChatId`, y compris pendant un
-    direct dont le chat était ouvert. Deux corrections successives (ordre des
-    candidats, playlist des mises en ligne prioritaire sur `liveBroadcasts`)
-    n'ont pas suffi. S'ajoutait le coût d'entrée : chaque utilisateur devait
-    déclarer une application Google Cloud, la publier et la faire valider —
-    inacceptable pour un logiciel destiné à des streameurs.
   - **Kick** — lecture du chat public par WebSocket Pusher, sans compte. Le
     chemin fonctionnait en test mais n'est PAS documenté par Kick : rien ne
     garantissait qu'il tienne.
@@ -503,13 +465,6 @@ qui s'applique à elles comme aux autres. Douze tests verrouillent l'ensemble
   La structure du hub reste multi-plateforme (`PLATFORMS`, filtre et couleur
   par plateforme) : rebrancher une plateforme ne demanderait qu'un connecteur,
   pas un redécoupage.
-- **Les alternatives évaluées et écartées**, si la question revient :
-  extension Chrome lisant le DOM du chat (impose un navigateur ouvert, un
-  second produit à distribuer et à maintenir) ; lecture InnerTube dans
-  l'application, à la manière de `pytchat` (même fragilité qu'un scraping,
-  sans navigateur) ; API de chat de Restream (fonctionne parce que Restream
-  crée les diffusions et dispose de partenariats, mais rend le logiciel
-  dépendant d'un service tiers payant). Aucune n'a été retenue.
 - **Une source navigateur ouverte dans OBS avant le lancement de
   l'application** affiche l'erreur d'OBS jusqu'à un rafraîchissement : rien ne
   peut servir une page de repli quand aucun serveur n'écoute. Une fois la page

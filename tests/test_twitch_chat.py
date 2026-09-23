@@ -331,16 +331,16 @@ def test_disabled_platform_never_reaches_the_network(store):
     sub = hub.subscribe()
     hub.set_enabled("twitch", False)
     assert hub.publish(_msg("twitch")) == 0
-    assert hub.publish(_msg("youtube")) == 1
-    assert json.loads(sub.get_nowait())["platform"] == "youtube"
+    assert hub.publish(_msg("autre")) == 1
+    assert json.loads(sub.get_nowait())["platform"] == "autre"
 
 
 def test_disabled_platform_is_also_absent_from_history(store):
     hub = _hub(store)
     hub.publish(_msg("twitch"))
-    hub.publish(_msg("youtube"))
+    hub.publish(_msg("autre"))
     hub.set_enabled("twitch", False)
-    assert [m["platform"] for m in hub.history()] == ["youtube"]
+    assert [m["platform"] for m in hub.history()] == ["autre"]
 
 
 def test_history_is_capped_and_keeps_the_newest(store):
@@ -417,10 +417,6 @@ class _StubHub:
 # il le fera avec i18n.t en production.
 _TEXTS = {
     "TWITCH_CHAT_WAIT_TEXT": "En attente",
-    "OAUTH_PAGE_OK_TITLE": "Compte connecte",
-    "OAUTH_PAGE_OK_BODY": "Tu peux fermer cet onglet.",
-    "OAUTH_PAGE_FAIL_TITLE": "Connexion refusee",
-    "OAUTH_PAGE_FAIL_BODY": "Rien n'a ete enregistre.",
 }
 
 
@@ -521,8 +517,8 @@ def test_events_replay_history_then_stream_live(chat_server):
     thread.start()
     assert ready.wait(timeout=5)
     time.sleep(0.4)                      # laisse partir la salve d'historique
-    hub.queue.put(json.dumps({"id": "m2", "platform": "youtube", "author": "Bob",
-                              "text": "en direct", "color": "#FF0033",
+    hub.queue.put(json.dumps({"id": "m2", "platform": "twitch", "author": "Bob",
+                              "text": "en direct", "color": "#9146FF",
                               "badges": [], "timestamp": 1.0}))
     thread.join(timeout=8)
 

@@ -5,15 +5,9 @@ Le connecteur Twitch tourne dans son propre thread et normalise ses messages
 vers `ChatMessage`. Le `ChatHub` les distribue aux pages overlay connectées
 (voir `overlay_server.py`).
 
-> **Historique.** Ce module a porté un temps YouTube, Kick et TikTok. Tout a
-> été retiré le 2026-09-08 : seul Twitch fonctionnait de façon fiable.
-> YouTube demandait un projet Google Cloud, une application validée, et
-> refusait quand même la lecture du chat (`404` sur `liveChatMessages` avec un
-> identifiant pourtant obtenu de `videos.activeLiveChatId`). Kick et TikTok
-> n'exposent aucune voie de lecture officielle.
-> La structure reste multi-plateforme (`PLATFORMS`, filtre par plateforme,
-> couleur par plateforme) : elle ne coûte rien et évite de tout redécouper si
-> une plateforme redevient exploitable.
+> **Twitch uniquement.** La structure reste multi-plateforme (`PLATFORMS`,
+> filtre et couleur par plateforme) : elle ne coûte rien, mais Twitch est la
+> seule plateforme prise en charge.
 
 Deux garanties structurelles :
 
