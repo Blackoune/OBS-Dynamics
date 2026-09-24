@@ -49,14 +49,9 @@ ENV_KEYS = {
 _SECRET_ENV_FIELDS = ("password", "rawg_api_key")
 _SECRET_ENV_BY_KEY = {ENV_KEYS[field]: field for field in _SECRET_ENV_FIELDS}
 
-#: Réglages de fonctions retirées (chat YouTube, Kick, TikTok). Plus rien ne
-#: les lit : une clé d'API YouTube restait ainsi en clair dans le `.env`
-#: longtemps après la suppression de la fonction. Elles sont retirées.
-_OBSOLETE_PREFIXES = ("YOUTUBE_", "KICK_", "TIKTOK_")
-
 #: Nom d'une variable qui porte un secret. Une ligne inconnue de cette forme
 #: est conservée, mais chiffrée : aucun identifiant ne reste en clair, même
-#: ajouté à la main.
+#: ajouté à la main ou laissé par une fonction retirée.
 _SECRET_NAME = re.compile(r"KEY|SECRET|TOKEN|PASSW|PWD")
 
 
@@ -70,13 +65,9 @@ def _cle_valeur(ligne: str) -> Optional[tuple[str, str]]:
 
 
 def _a_nettoyer(key: str, value: str) -> bool:
-    """Ligne étrangère à réécrire : obsolète, ou secret inconnu en clair."""
-    if key in ENV_KEYS.values():
-        return False
-    if key.startswith(_OBSOLETE_PREFIXES):
-        return True
-    return (bool(_SECRET_NAME.search(key)) and bool(value)
-            and not secret_store.is_encrypted(value))
+    """Ligne étrangère qui porte un secret en clair, donc à chiffrer."""
+    return (key not in ENV_KEYS.values() and bool(_SECRET_NAME.search(key))
+            and bool(value) and not secret_store.is_encrypted(value))
 
 
 class EnvConfigManager:
@@ -210,8 +201,6 @@ class EnvConfigManager:
                                 lines.append(f"{key}={updates[key]}")
                                 seen[key] = True
                                 continue
-                            if key.startswith(_OBSOLETE_PREFIXES):
-                                continue                  # fonction retirée
                             if _a_nettoyer(key, value):
                                 lines.append(f"{key}={secret_store.encrypt(value)}")
                                 continue

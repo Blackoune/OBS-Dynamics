@@ -200,8 +200,10 @@ class Style:
             background_image=bool(self.background_image),
         )
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self, fond: Optional[str] = None) -> dict[str, Any]:
         """Le style, plus les couleurs de texte qu'il impose.
+
+        `fond` : teinte moyenne de l'image de fond, quand il y en a une.
 
         L'encre est DÉDUITE de la luminance du fond, jamais fixée en dur : la
         page écrivait son titre en blanc quoi qu'il arrive, donc un preset à
@@ -212,7 +214,10 @@ class Style:
         page.
         """
         donnees = asdict(self.sanitised())
-        clair = is_light(self)
+        # Avec une image de fond, c'est ELLE qui est sous le texte, pas la
+        # couleur du modèle : sur une image claire, l'encre blanche d'un
+        # modèle sombre rendait titre, artiste et progression invisibles.
+        clair = is_light(replace(self, bg=fond) if fond else self)
         donnees["ink"] = "#1C1C1E" if clair else "#F3F0FA"
         donnees["muted"] = "#5F5A66" if clair else "#A39BBD"
         return donnees
@@ -521,6 +526,23 @@ class StyleStore:
             logger.exception("Image de fond refusée : %s", source)
             return False
 
+    def background_tint(self, key: str) -> Optional[str]:
+        """Teinte moyenne de l'image de fond, `#RRGGBB` ; None sans image."""
+        chemin = self.background_path(key)
+        if chemin is None:
+            return None
+        try:
+            return _teinte_fichier(str(chemin), chemin.stat().st_mtime_ns)
+        except Exception:
+            return None
+
+    def page_style(self, key: str) -> dict[str, Any]:
+        """Le style tel que la page d'overlay le reçoit.
+
+        L'encre y est choisie sur l'image de fond quand il y en a une.
+        """
+        return self.get(key).as_dict(self.background_tint(key))
+
     def clear_background(self, key: str) -> None:
         chemin = self.background_path(key)
         if chemin is not None:
@@ -542,6 +564,19 @@ class StyleStore:
             return chemin.read_bytes()
         except OSError:
             return None
+
+
+def _teinte(image) -> str:
+    """Couleur moyenne d'une image, en `#RRGGBB`."""
+    r, g, b = image.convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
+    return "#%02X%02X%02X" % (r, g, b)
+
+
+@lru_cache(maxsize=16)
+def _teinte_fichier(chemin: str, version: int) -> str:
+    """Teinte d'un fond, en cache : la date du fichier est dans la clé."""
+    with Image.open(chemin) as brut:
+        return _teinte(brut)
 
 
 def _taille_fond(taille: tuple[int, int]) -> tuple[int, int]:
@@ -1056,11 +1091,12 @@ def preview_png(style: Style, width: int = 240, height: int = 78,
     rayon = 11 * e
 
     pose = False
+    teinte = None
     if background is not None:
         try:
-            carte.paste(_fond_carte(str(background),
-                                    background.stat().st_mtime_ns, (CW, CH)),
-                        (0, 0))
+            version = background.stat().st_mtime_ns
+            carte.paste(_fond_carte(str(background), version, (CW, CH)), (0, 0))
+            teinte = _teinte_fichier(str(background), version)
             pose = True
         except Exception:
             pose = False
@@ -1075,7 +1111,10 @@ def preview_png(style: Style, width: int = 240, height: int = 78,
             dessin.rounded_rectangle([0, 0, CW - 1, CH - 1], radius=rayon,
                                      outline=style.border, width=int(2 * e))
 
-    _disposer(dessin, style, CW, CH, 9 * e, e)
+    # Sur une image, l'encre se choisit d'après l'image : garder la couleur
+    # du modèle écrivait du blanc sur un dessin clair, donc rien de lisible.
+    _disposer(dessin, replace(style, bg=teinte) if teinte else style,
+              CW, CH, 9 * e, e)
 
     planche = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     planche.paste(carte, ((W - CW) // 2, 0))

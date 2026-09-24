@@ -86,8 +86,8 @@ import pytest  # noqa: E402
      "https://api.rawg.io/api/games?key=***&search=x"),
     ("url=https://x.test/cb?code=1&access_token=AbC.123-xyz done",
      "access_token=*** done"),
-    ("connexion rtmp://a.rtmp.youtube.com/live2/abcd-efgh-ijkl-mnop-qrst refusée",
-     "rtmp://a.rtmp.youtube.com/live2/*** refusée"),
+    ("connexion rtmp://ingest.example.com/live2/abcd-efgh-ijkl-mnop-qrst refusée",
+     "rtmp://ingest.example.com/live2/*** refusée"),
     ("OBS_WS_PASSWORD=hunter2hunter2", "OBS_WS_PASSWORD=***"),
     ('{"api_key": "cle-json-factice", "port": 4455}', '"api_key": "***", "port"'),
 ])

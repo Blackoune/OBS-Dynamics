@@ -192,14 +192,16 @@ class MusicHub:
         app = identify(session.app_id)
         style = self.styles.get(app.key)
         return {
-            "style": style.as_dict(),
+            "style": self.styles.page_style(app.key),
             "title": session.title,
             "artist": session.artist,
             "album": session.album,
             "app": app.label,
-            # La couleur de marque, ajustee au fond : le cyan de Tidal sur le
-            # modele Clair ne se lisait pas (1,35:1).
-            "color": readable_on(app.color, style.bg),
+            # La couleur de marque, ajustee au fond — l'image de fond s'il y
+            # en a une : le cyan de Tidal sur le modele Clair ne se lisait
+            # pas (1,35:1).
+            "color": readable_on(app.color,
+                                 self.styles.background_tint(app.key) or style.bg),
             # La taille annoncee a l utilisateur voyage avec le style : la
             # page s y contraint, donc le chiffre affiche est vrai PAR
             # CONSTRUCTION, et non parce qu un calcul serait juste.
@@ -254,7 +256,7 @@ class MusicHub:
         reglages perdus alors qu ils attendaient simplement une lecture.
         """
         reglages = self.styles.get(key)
-        style = reglages.as_dict()
+        style = self.styles.page_style(key)
         taille = list(overlay_size(reglages))
         with self._lock:
             etat = self._states.get(key)
@@ -275,7 +277,7 @@ class MusicHub:
         résultat pendant qu'il règle.
         """
         reglages = self.styles.get(key)
-        style = reglages.as_dict()
+        style = self.styles.page_style(key)
         taille = list(overlay_size(reglages))
         with self._lock:
             etat = self._states.get(key)

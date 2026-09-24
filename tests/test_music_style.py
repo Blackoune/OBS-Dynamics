@@ -191,6 +191,23 @@ def test_lapercu_montre_limage_de_fond_quand_il_y_en_a_une(store, tmp_path):
     assert rouge > 150 and rouge > bleu
 
 
+def test_le_texte_reste_lisible_sur_une_image_de_fond_claire(store, tmp_path):
+    # Le modèle macOS sombre écrit en blanc : sur un dessin clair, titre,
+    # artiste et progression disparaissaient, seules les pastilles restaient.
+    dessin = tmp_path / "clair.png"
+    Image.new("RGB", (1200, 400), (235, 230, 220)).save(dessin)
+    store.set_background("spotify", dessin)
+    store.save("spotify", template("macos_sombre").style)
+
+    assert store.page_style("spotify")["ink"] == "#1C1C1E"      # page OBS
+
+    png = preview_png(template("macos_sombre").style, width=300, height=96,
+                      background=store.background_path("spotify"), echelle=2)
+    with Image.open(io.BytesIO(png)) as image:
+        zone_du_titre = image.convert("L").crop((180, 50, 400, 80))
+        assert zone_du_titre.getextrema()[0] < 80                # encre sombre
+
+
 def test_un_fond_illisible_ne_fait_pas_tomber_lapercu(tmp_path):
     faux = tmp_path / "pas-une-image.png"
     faux.write_text("du texte", encoding="utf-8")
