@@ -14,7 +14,8 @@ import pytest
 
 ctk = pytest.importorskip("customtkinter")
 
-from ui_dashboard import _rgb    # noqa: E402  (après importorskip)
+from ui_common import WHEEL_PIXELS_PER_NOTCH   # noqa: E402  (après importorskip)
+from ui_dashboard import _rgb    # noqa: E402
 
 
 @pytest.fixture
@@ -74,24 +75,66 @@ def test_scrollbar_thumb_is_proportional_and_moves(dashboard):
     assert (first, last) != (0.0, 1.0), "curseur pleine barre : rien à faire défiler"
     assert last - first < 0.9, f"curseur trop grand ({last - first:.2f} de la barre)"
 
-    canvas.yview_scroll(view.WHEEL_PIXELS_PER_NOTCH, "units")  # positif = vers le bas
+    canvas.yview_scroll(WHEEL_PIXELS_PER_NOTCH, "units")  # positif = vers le bas
     root.update()
     moved_first, _ = canvas.yview()
     assert moved_first > first, "le curseur n'a pas bougé au défilement"
 
 
+def _settle(root, scroller, timeout=3.0):
+    """Laisse l'animation de défilement arriver à destination."""
+    deadline = time.monotonic() + timeout
+    while scroller.busy and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.005)
+    assert not scroller.busy, "le défilement ne s'arrête jamais"
+
+
 def test_one_wheel_notch_scrolls_the_configured_distance(dashboard):
-    """Un cran = WHEEL_PIXELS_PER_NOTCH pixels, en UN seul déplacement.
-    L'ancienne boucle faisait 3 px en 3 repaints : on n'avançait pas et les
-    cartes se déchiraient."""
+    """Un cran = WHEEL_PIXELS_PER_NOTCH pixels, ni plus ni moins, même
+    parcourus en plusieurs images."""
     view, root = dashboard
     canvas = _canvas(view)
     before = canvas.canvasy(0)
 
-    view._wheel_handler(type("Evt", (), {"delta": -120})())  # un cran vers le bas
-    root.update()
+    view._scroller.wheel(-120)  # un cran vers le bas
+    _settle(root, view._scroller)
 
-    assert canvas.canvasy(0) - before == pytest.approx(view.WHEEL_PIXELS_PER_NOTCH, abs=1)
+    assert canvas.canvasy(0) - before == pytest.approx(WHEEL_PIXELS_PER_NOTCH, abs=1)
+
+
+def test_a_notch_glides_in_small_steps_instead_of_jumping(dashboard):
+    """Le saut de 60 px d'un coup faisait se recoller les cartes une à une.
+    Chaque image n'avance que d'une fraction, en ralentissant."""
+    view, root = dashboard
+    canvas = _canvas(view)
+    positions = [canvas.canvasy(0)]
+    real = canvas.yview_scroll
+    canvas.yview_scroll = lambda *a: (real(*a), positions.append(canvas.canvasy(0)))[0]
+
+    view._scroller.wheel(-120)
+    _settle(root, view._scroller)
+
+    steps = [b - a for a, b in zip(positions, positions[1:])]
+    assert len(steps) >= 4, f"mouvement en {len(steps)} déplacement(s) seulement"
+    assert max(steps) < WHEEL_PIXELS_PER_NOTCH / 2
+    assert steps[0] >= steps[-1], "le mouvement doit ralentir en arrivant"
+
+
+def test_reversing_the_wheel_turns_around_at_once(dashboard):
+    """Un cran dans l'autre sens ne doit pas finir d'abord le mouvement en cours."""
+    view, root = dashboard
+    canvas = _canvas(view)
+    for _ in range(3):
+        view._scroller.wheel(-120)
+    _settle(root, view._scroller)
+    before = canvas.canvasy(0)
+
+    view._scroller.wheel(-120)
+    view._scroller.wheel(120)          # demi-tour aussitôt
+    _settle(root, view._scroller)
+    # Sans demi-tour franc, les deux crans s'annulaient : retour à `before`.
+    assert canvas.canvasy(0) < before - WHEEL_PIXELS_PER_NOTCH / 2
 
 
 def test_wheel_reaches_the_very_bottom_of_the_grid(dashboard):
@@ -99,8 +142,8 @@ def test_wheel_reaches_the_very_bottom_of_the_grid(dashboard):
     view, root = dashboard
     canvas = _canvas(view)
     for _ in range(200):
-        view._wheel_handler(type("Evt", (), {"delta": -120})())
-    root.update()
+        view._scroller.wheel(-120)
+    _settle(root, view._scroller)
     assert canvas.yview()[1] == pytest.approx(1.0, abs=1e-3)
 
 
@@ -196,7 +239,7 @@ def test_overlay_does_not_swallow_the_wheel(dashboard):
 
     before = canvas.canvasy(0)
     card._overlay._canvas.event_generate("<MouseWheel>", delta=-120, x=5, y=5)
-    root.update()
+    _settle(root, view._scroller)
     assert canvas.canvasy(0) > before, "l'overlay a avalé l'événement molette"
 
 
@@ -207,7 +250,7 @@ def test_hover_overlay_is_suppressed_while_scrolling(dashboard):
     card = view._cards["g0"]
 
     _pin_pointer(card)
-    view._wheel_handler(type("Evt", (), {"delta": -120})())
+    view._scroller.wheel(-120)
     card._show_overlay()
     assert not card._overlay_visible, "overlay ouvert pendant le défilement"
 

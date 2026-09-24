@@ -125,3 +125,69 @@ def test_le_curseur_ne_redessine_pas_les_vignettes_a_chaque_cran(racine,
         time.sleep(0.02)
     assert appels == [1]                   # une seule fois, à l'arrêt
     dialogue.destroy()
+
+
+def test_la_molette_sur_une_carte_fait_glisser_toute_la_liste(racine, monkeypatch):
+    """Les cartes arrivent après la création de la liste, au fil des
+    évènements SMTC : la molette doit quand même les faire défiler, en
+    douceur, via le binding posé sur la fenêtre."""
+    import time
+    monkeypatch.setattr(ui_music, "available", lambda: True)
+    monkeypatch.setattr(ui_music, "MusicWatcher", _SansSonde)
+    racine.deiconify()
+    racine.geometry("900x420")
+    view = ui_music.MusicView(racine, post_ui=lambda f: f())
+    view.pack(fill="both", expand=True)
+    view._apply_sessions([_spotify("A")])
+    racine.update()
+    canvas = view._list._parent_canvas
+    assert canvas.yview() != (0.0, 1.0), "liste trop courte pour défiler"
+
+    carte = next(iter(_cartes(view).values()))
+    carte.event_generate("<MouseWheel>", delta=-120, x=5, y=5)
+    deadline = time.monotonic() + 3
+    while view._scroller.busy and time.monotonic() < deadline:
+        racine.update()
+        time.sleep(0.005)
+    assert canvas.canvasy(0) > 0, "la molette sur une carte n'a rien fait défiler"
+
+
+class _Hub:
+    def __init__(self, styles):
+        self.styles = styles
+
+    def publish(self, *_a):
+        pass
+
+    def publish_style(self, *_a):
+        pass
+
+
+class _Overlay:
+    def music_url(self, cle):
+        return f"http://127.0.0.1:8765/music/{cle}?t=x"
+
+
+def test_une_carte_complete_tient_en_peu_de_fenetres_tk(racine, monkeypatch, tmp_path):
+    """Chaque fenêtre Tk se repeint seule pendant le défilement : une carte
+    en comptait jusqu'à 45, d'où les rayures. Elle est désormais peinte dans
+    un canvas, seul le champ du lien reste un vrai widget."""
+    monkeypatch.setattr(ui_music, "available", lambda: True)
+    monkeypatch.setattr(ui_music, "MusicWatcher", _SansSonde)
+    view = ui_music.MusicView(racine, post_ui=lambda f: f(),
+                              hub=_Hub(StyleStore(tmp_path / "w.json", tmp_path / "f")),
+                              overlay=_Overlay())
+    view.pack(fill="both", expand=True)
+    view._apply_sessions([_spotify("A")])
+    racine.update()
+
+    def compte(widget):
+        return 1 + sum(compte(enfant) for enfant in widget.winfo_children())
+
+    for carte in _cartes(view).values():
+        assert compte(carte) <= 3
+
+    carte = _cartes(view)["spotify"]
+    carte._copy_link()
+    assert racine.clipboard_get() == "http://127.0.0.1:8765/music/spotify?t=x"
+    assert carte.itemcget(carte._lien_txt, "text") == ui_music.t("MUSIC_BTN_LINK_COPIED")

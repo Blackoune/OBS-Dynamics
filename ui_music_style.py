@@ -31,7 +31,8 @@ from music_style import (COVERS, LAYOUTS, TEMPLATES, Style, StyleStore,
                          overlay_size, preview_png, template)
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_BG, COL_BORDER,
                        COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_RED,
-                       COL_TEXT, COL_TEXT_MUTED, ctk, fit_to_screen, font)
+                       COL_TEXT, COL_TEXT_MUTED, SmoothScroll, ctk,
+                       fit_to_screen, font)
 
 try:
     from PIL import Image
@@ -234,6 +235,7 @@ class StyleDialog(ctk.CTkToplevel):
         self._corps = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self._corps.grid(row=0, column=0, sticky="nsew")
         self._corps.grid_columnconfigure(0, weight=1)
+        self._scroller = SmoothScroll(self._corps)
 
         self._build_preview()
         self._build_shapes()

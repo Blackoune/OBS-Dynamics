@@ -15,6 +15,7 @@ fonctionnalité. Les retirer et défaire le câblage dans `obs_dynamics.py`
 from __future__ import annotations
 
 import io
+import tkinter as tk
 
 from tkinter import messagebox
 from typing import Any, Callable, Optional
@@ -27,11 +28,12 @@ from music_smtc import (IMPORT_ERROR, SMTC_TIMEOUT, MusicWatcher, Session,
 from music_style import Style, StyleStore, overlay_size, preview_png
 from ui_music_style import StyleDialog
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_BG, COL_BORDER,
-                       COL_BORDER_ACCENT, COL_CARD, COL_GREEN, COL_RED,
-                       COL_TEXT, COL_TEXT_MUTED, COL_YELLOW, ctk, font)
+                       COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_GREEN,
+                       COL_RED, COL_TEXT, COL_TEXT_MUTED, COL_YELLOW,
+                       FONT_FAMILY, SmoothScroll, ctk, font)
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageTk
 except Exception:                             # pragma: no cover
     Image = None                              # type: ignore[assignment]
 
@@ -67,9 +69,6 @@ _COVER_MIN_W = 44
 #: Aperçu du rendu de l'overlay, à gauche du bouton Widget.
 _STYLE_PREVIEW = (168, 54)
 
-#: Marge horizontale totale autour de la vignette, reprise par la colonne.
-_COVER_PAD_X = 30
-
 
 def fitted_cover_size(session: Session) -> tuple[int, int]:
     """Taille d'affichage d'une vignette, à rapport conservé.
@@ -93,90 +92,310 @@ def _mmss(ms: int) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-class SessionCard(ctk.CTkFrame):
-    """Une session SMTC : pochette à gauche, métadonnées à droite."""
+_SUR = 4          # suréchantillonnage des arrondis, pour des bords lisses
+
+
+def _boite(w: int, h: int, rayon: int, fond: str, contour: Optional[str] = None):
+    """Rectangle arrondi anticrénelé, transparent hors de l'arrondi."""
+    grand = Image.new("RGBA", (w * _SUR, h * _SUR), (0, 0, 0, 0))
+    ImageDraw.Draw(grand).rounded_rectangle(
+        (0, 0, w * _SUR - 1, h * _SUR - 1), radius=rayon * _SUR, fill=fond,
+        outline=contour, width=_SUR if contour else 0)
+    return grand.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def _arrondir(image, rayon: int):
+    """Même image, coins arrondis."""
+    w, h = image.size
+    masque = Image.new("L", (w * _SUR, h * _SUR), 0)
+    ImageDraw.Draw(masque).rounded_rectangle((0, 0, w * _SUR - 1, h * _SUR - 1),
+                                             radius=rayon * _SUR, fill=255)
+    sortie = image.convert("RGBA")
+    sortie.putalpha(masque.resize((w, h), Image.Resampling.LANCZOS))
+    return sortie
+
+
+class SessionCard(tk.Canvas):
+    """Une session SMTC : pochette à gauche, métadonnées à droite.
+
+    Toute la carte est peinte dans UN canvas — fond arrondi, textes,
+    pochette, aperçu et boutons — au lieu d'être assemblée en widgets CTk.
+    Elle en comptait 32 à 45 fenêtres Tk (270 pour la liste), chacune
+    repeinte à son rythme pendant le défilement : c'étaient les rayures. Il
+    n'en reste que deux, le canvas et le champ du lien, gardé réel pour
+    qu'on puisse sélectionner l'URL à la main.
+    """
 
     def __init__(self, master, app: MusicApp, session: Optional[Session] = None,
                  overlay_url: str = "", store: Optional[StyleStore] = None,
-                 on_style_saved: Optional[Callable[[str, Style], None]] = None,
-                 **kwargs) -> None:
-        actif = session is not None and session.is_current
-        super().__init__(master, fg_color=COL_CARD, corner_radius=14,
-                         border_width=1,
-                         border_color=COL_BORDER_ACCENT if actif else COL_BORDER,
-                         **kwargs)
+                 on_style_saved: Optional[Callable[[str, Style], None]] = None) -> None:
+        # Le fond de la liste, visible dans les coins arrondis. CTk refuse
+        # cget("bg") sur ses cadres : on le lit sur le canvas qu'il défile.
+        fond = getattr(master, "_parent_canvas", None)
+        super().__init__(master, highlightthickness=0, bd=0, height=1,
+                         bg=fond.cget("bg") if fond is not None else COL_BG)
+        try:
+            self._s = ctk.ScalingTracker.get_widget_scaling(master) or 1.0
+        except Exception:
+            self._s = 1.0
         self._app = app
-        self.grid_columnconfigure(1, weight=1)
-        # Largeur de colonne fixe, même pour une vignette étroite : sinon le
-        # texte démarre à une abscisse différente sur chaque carte, selon le
-        # rapport de son image, et la liste paraît de travers.
-        self.grid_columnconfigure(0, minsize=_COVER_MAX_W + _COVER_PAD_X)
-        # La CTkImage doit survivre à la fin du constructeur : Tk ne garde
-        # qu'un identifiant vers l'image, pas l'objet Python. Sans cet
-        # attribut, le ramasse-miettes la libère et la vignette reste vide.
-        self._cover: Optional[ctk.CTkImage] = None
-
+        self._session = session
         self._url = overlay_url
         self._store = store
         self._on_style_saved = on_style_saved
-        self._style_img: Optional[ctk.CTkImage] = None
-        if session is None:
-            self._build_offline()
-        else:
-            self._build_cover(session)
-            self._build_meta(session)
+        self._bord = (COL_BORDER_ACCENT if session is not None and session.is_current
+                      else COL_BORDER)
+        # Tk ne garde qu'un nom vers chaque image, pas l'objet Python : sans
+        # ces références le ramasse-miettes les libère et le canvas reste vide.
+        self._photos: dict[str, Any] = {}
+        self._note = False           # session sans pochette : on écrit ♪
+        self._vignette = self._photo_gauche()
+        self._apercu: Any = None
+        self._apercu_id: Optional[int] = None
+        self._taille_id: Optional[int] = None
+        self._lien_txt: Optional[int] = None
+        self._largeur = 0
+
+        self._champ: Optional[tk.Entry] = None
         if overlay_url:
+            # Lecture seule, mais sélectionnable : l'utilisateur doit pouvoir
+            # copier à la main si le presse-papiers lui échappe.
+            self._champ = tk.Entry(self, font=self._f(11), relief="flat", bd=0,
+                                   fg=COL_TEXT_MUTED, bg=COL_BG,
+                                   readonlybackground=COL_BG,
+                                   highlightthickness=1,
+                                   highlightbackground=COL_BORDER,
+                                   highlightcolor=COL_BORDER_ACCENT)
+            self._champ.insert(0, overlay_url)
+            self._champ.configure(state="readonly")
             if store is not None:
-                self._build_widget_row()
-            self._build_link()
+                self._refresh_style_preview(redessiner=False)
+        self.bind("<Configure>", self._on_configure)
 
-    def _build_widget_row(self) -> None:
-        """Apercu du rendu à gauche, bouton Widget à droite.
+    # -- mesures ----------------------------------------------------------- #
 
-        Placée au-dessus du lien : on règle l'apparence, puis on copie l'URL.
-        L'aperçu montre CE lecteur précisément, donc on voit d'un coup d'œil
-        ce qui a déjà été préparé pour chaque application.
-        """
-        rangee = ctk.CTkFrame(self, fg_color="transparent")
-        rangee.grid(row=5, column=0, columnspan=2, sticky="ew",
-                    padx=16, pady=(0, 8))
-        rangee.grid_columnconfigure(1, weight=1)
+    def _p(self, valeur: float) -> int:
+        """Unités CTk -> pixels, mise à l'échelle de Windows comprise."""
+        return round(valeur * self._s)
 
-        cadre = ctk.CTkFrame(rangee, fg_color=COL_BG, corner_radius=8,
-                             border_width=1, border_color=COL_BORDER,
-                             width=_STYLE_PREVIEW[0] + 4,
-                             height=_STYLE_PREVIEW[1] + 4)
-        cadre.grid(row=0, column=0, sticky="w")
-        cadre.grid_propagate(False)
-        self._style_lbl = ctk.CTkLabel(cadre, text="")
-        self._style_lbl.place(relx=0.5, rely=0.5, anchor="center")
-        self._refresh_style_preview()
+    def _f(self, taille: int, graisse: str = "normal") -> tuple:
+        return (FONT_FAMILY, -self._p(taille), graisse)
 
-        ctk.CTkButton(rangee, text=t("MUSIC_BTN_WIDGET"), width=150, height=34,
-                      corner_radius=8, fg_color=COL_ACCENT,
-                      hover_color=COL_ACCENT_HOVER, text_color=COL_BG,
-                      font=font(12, "bold"),
-                      command=self._open_style).grid(row=0, column=2, sticky="e")
+    def _photo(self, nom: str, image) -> Any:
+        self._photos[nom] = ImageTk.PhotoImage(image)
+        return self._photos[nom]
 
-    def _refresh_style_preview(self) -> None:
+    # -- images ------------------------------------------------------------ #
+
+    def _photo_gauche(self) -> Any:
+        """Pochette de la session, sinon logo du lecteur. Sans logo : None,
+        le monogramme est alors écrit en texte."""
+        if Image is None:
+            return None
+        if self._session is not None:
+            w, h = fitted_cover_size(self._session)
+            taille = (self._p(w), self._p(h))
+            image = self._decode(self._session, taille)
+            if image is not None:
+                return self._photo("gauche", _arrondir(image, self._p(10)))
+            self._note = True
+            return self._photo("gauche", _boite(*taille, self._p(10), COL_BG))
+        chemin = logo_path(self._app.key)
+        if chemin is None:
+            return None
+        cote = self._p(_COVER_H)
+        fond = _boite(cote, cote, self._p(12), COL_BG)
+        try:
+            with Image.open(chemin) as brut:
+                interieur = cote - self._p(18)
+                logo = brut.convert("RGBA").resize((interieur, interieur),
+                                                   Image.Resampling.LANCZOS)
+            fond.alpha_composite(logo, (self._p(9), self._p(9)))
+        except Exception:
+            return None
+        return self._photo("gauche", fond)
+
+    @staticmethod
+    def _decode(session: Session, size: tuple[int, int]):
+        if session.thumbnail is None or Image is None:
+            return None
+        try:
+            with Image.open(io.BytesIO(session.thumbnail)) as raw:
+                return raw.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+        except Exception:
+            return None
+
+    def _refresh_style_preview(self, redessiner: bool = True) -> None:
         if self._store is None or Image is None:
             return
         style = self._store.get(self._app.key)
-        # Rendu au double de la taille affichee : CTkImage reduit ensuite selon
-        # la mise a l echelle de Windows, ce qui reste net. Lui donner la taille
-        # exacte l obligeait a agrandir, d ou l aspect pixelise.
+        # Rendu au double puis réduit : net quelle que soit la mise à l'échelle.
         png = preview_png(style, width=_STYLE_PREVIEW[0],
                           height=_STYLE_PREVIEW[1], echelle=2,
                           background=self._store.background_path(self._app.key))
         try:
             with Image.open(io.BytesIO(png)) as brut:
-                # RGBA : les coins arrondis laissent voir la carte derriere.
-                image = brut.convert("RGBA")
-            self._style_img = ctk.CTkImage(light_image=image, dark_image=image,
-                                           size=_STYLE_PREVIEW)
-            self._style_lbl.configure(image=self._style_img)
+                # RGBA : les coins arrondis laissent voir la carte derrière.
+                image = brut.convert("RGBA").resize(
+                    (self._p(_STYLE_PREVIEW[0]), self._p(_STYLE_PREVIEW[1])),
+                    Image.Resampling.LANCZOS)
+            self._apercu = self._photo("apercu", image)
         except Exception:
-            pass
+            return
+        if redessiner and self._apercu_id is not None:
+            self.itemconfigure(self._apercu_id, image=self._apercu)
+
+    # -- dessin ------------------------------------------------------------ #
+
+    def _on_configure(self, event: Any) -> None:
+        # Changer la hauteur renvoie un <Configure> : on ne redessine que
+        # quand la LARGEUR change, sinon on bouclerait.
+        if event.width != self._largeur:
+            self._largeur = event.width
+            self._dessiner()
+
+    def _texte(self, x: int, y: int, texte: str, taille: int, couleur: str,
+               graisse: str = "normal", largeur: int = 0, ancre: str = "nw") -> tuple:
+        item = self.create_text(x, y, text=texte, anchor=ancre, fill=couleur,
+                                font=self._f(taille, graisse), width=largeur)
+        return item, self.bbox(item)
+
+    def _dessiner(self) -> None:
+        p = self._p
+        W = self._largeur
+        self.delete("all")
+        x0 = p(16 + _COVER_MAX_W + 14)
+        largeur_texte = max(p(120), W - x0 - p(16))
+
+        if self._vignette is not None:
+            self.create_image(p(16), p(16), image=self._vignette, anchor="nw")
+            bas_gauche = p(16) + self._vignette.height()
+            if self._note:
+                self._texte(p(16) + self._vignette.width() // 2,
+                            p(16) + self._vignette.height() // 2, "♪", 26,
+                            COL_TEXT_MUTED, ancre="center")
+        else:
+            self._texte(p(16 + _COVER_H / 2), p(16 + _COVER_H / 2), self._app.monogram,
+                        24, self._app.color, "bold", ancre="center")
+            bas_gauche = p(16 + _COVER_H)
+
+        session = self._session
+        if session is None:
+            _i, bb = self._texte(x0, p(18), self._app.label, 15, COL_TEXT_MUTED, "bold")
+            _i, bb = self._texte(x0, bb[3] + p(2), t("MUSIC_OFFLINE"), 11, COL_TEXT_MUTED)
+        else:
+            x, milieu = x0, p(16 + 9)
+            tete = [("●", 12, "normal", _STATUS_COLORS.get(session.status, COL_TEXT_MUTED), 2),
+                    (t(f"MUSIC_STATUS_{session.status}"), 11, "bold", COL_TEXT_MUTED, 10),
+                    (self._app.label, 11, "bold", self._app.color, 10)]
+            if session.is_current:
+                tete.append((t("MUSIC_BADGE_CURRENT"), 10, "bold", COL_ACCENT, 0))
+            for texte, taille, graisse, couleur, ecart in tete:
+                _i, bb = self._texte(x, milieu, texte, taille, couleur, graisse, ancre="w")
+                x = bb[2] + p(ecart)
+            _i, bb = self._texte(x0, p(16 + 22), session.title or t("MUSIC_NO_TITLE"),
+                                 15, COL_TEXT, "bold", largeur_texte)
+            sous_titre = session.artist or t("MUSIC_NO_ARTIST")
+            if session.album:
+                sous_titre = f"{sous_titre} — {session.album}"
+            _i, bb = self._texte(x0, bb[3] + p(2), sous_titre, 12, COL_TEXT_MUTED,
+                                 largeur=largeur_texte)
+            _i, bb = self._texte(x0, bb[3] + p(8), self._facts(session), 10,
+                                 COL_TEXT_MUTED, largeur=largeur_texte)
+
+        y = max(bas_gauche, bb[3]) + p(16)
+        if session is not None and session.errors:
+            _i, bb = self._texte(p(16), y, " · ".join(session.errors), 10, COL_RED,
+                                 largeur=W - p(32))
+            y = bb[3] + p(14)
+
+        if self._champ is not None:
+            y = self._dessiner_lien(y)
+
+        self._fond(W, y)
+        self.configure(height=y)
+
+    def _dessiner_lien(self, y: int) -> int:
+        p = self._p
+        W = self._largeur
+        if self._store is not None:
+            cadre = (p(_STYLE_PREVIEW[0] + 4), p(_STYLE_PREVIEW[1] + 4))
+            self.create_image(p(16), y, anchor="nw", image=self._photo(
+                "cadre", _boite(*cadre, p(8), COL_BG, COL_BORDER)))
+            if self._apercu is not None:
+                self._apercu_id = self.create_image(p(16) + cadre[0] // 2,
+                                                    y + cadre[1] // 2, image=self._apercu)
+            self._bouton("widget", W - p(16 + 150), y + (cadre[1] - p(34)) // 2,
+                         150, 34, 12, t("MUSIC_BTN_WIDGET"), COL_ACCENT,
+                         COL_ACCENT_HOVER, None, COL_BG, self._open_style)
+            y += cadre[1] + p(8)
+
+        bouton_x = W - p(16 + 160)
+        self.create_window(p(16), y, anchor="nw", window=self._champ,
+                           width=max(p(80), bouton_x - p(10 + 16)), height=p(32))
+        self._lien_txt = self._bouton("lien", bouton_x, y, 160, 32, 11,
+                                      t("MUSIC_BTN_COPY_LINK"), COL_CARD, COL_CARD_HOVER,
+                                      COL_BORDER_ACCENT, COL_ACCENT, self._copy_link)
+        _i, bb = self._texte(p(16), y + p(32 + 6), t("MUSIC_OVERLAY_HINT"), 10,
+                             COL_TEXT_MUTED, largeur=W - p(32))
+        # La taille à saisir dans OBS, à côté du lien qu'on y colle.
+        self._taille_id, bb = self._texte(p(16), bb[3] + p(2), " ", 10, COL_ACCENT, "bold")
+        self._refresh_size()
+        return self.bbox(self._taille_id)[3] + p(16)
+
+    def _bouton(self, nom: str, x: int, y: int, w: int, h: int, taille: int,
+                texte: str, fond: str, survol: str, contour: Optional[str],
+                couleur: str, action: Callable[[], None]) -> int:
+        """Bouton peint : deux images (repos, survol) et un texte, même tag."""
+        p = self._p
+        if f"{nom}-repos" not in self._photos:
+            self._photo(f"{nom}-repos", _boite(p(w), p(h), p(8), fond, contour))
+            self._photo(f"{nom}-survol", _boite(p(w), p(h), p(8), survol, contour))
+        repos, dessus = self._photos[f"{nom}-repos"], self._photos[f"{nom}-survol"]
+        tag = f"btn-{nom}"
+        image = self.create_image(x, y, anchor="nw", image=repos, tags=tag)
+        texte_id = self.create_text(x + p(w) // 2, y + p(h) // 2, text=texte,
+                                    fill=couleur, font=self._f(taille, "bold"), tags=tag)
+
+        def entrer(_e: Any) -> None:
+            self.itemconfigure(image, image=dessus)
+            self.configure(cursor="hand2")
+
+        def sortir(_e: Any) -> None:
+            self.itemconfigure(image, image=repos)
+            self.configure(cursor="")
+
+        self.tag_bind(tag, "<Enter>", entrer)
+        self.tag_bind(tag, "<Leave>", sortir)
+        self.tag_bind(tag, "<ButtonRelease-1>", lambda _e: action())
+        return texte_id
+
+    def _fond(self, W: int, H: int) -> None:
+        """Fond arrondi de la carte : quatre coins en image, le reste en
+        rectangles Tk — rien de lourd à refaire quand la largeur change."""
+        r = self._p(14)
+        if "coin0" not in self._photos:
+            rond = _boite(2 * r, 2 * r, r, COL_CARD, self._bord)
+            for i, zone in enumerate(((0, 0, r, r), (r, 0, 2 * r, r),
+                                      (0, r, r, 2 * r), (r, r, 2 * r, 2 * r))):
+                self._photo(f"coin{i}", rond.crop(zone))
+        coins = [self._photos[f"coin{i}"] for i in range(4)]
+        items = [
+            self.create_rectangle(r, 0, W - r, H, fill=COL_CARD, width=0),
+            self.create_rectangle(0, r, W, H - r, fill=COL_CARD, width=0),
+            self.create_line(r, 0, W - r, 0, fill=self._bord),
+            self.create_line(r, H - 1, W - r, H - 1, fill=self._bord),
+            self.create_line(0, r, 0, H - r, fill=self._bord),
+            self.create_line(W - 1, r, W - 1, H - r, fill=self._bord),
+            self.create_image(0, 0, image=coins[0], anchor="nw"),
+            self.create_image(W, 0, image=coins[1], anchor="ne"),
+            self.create_image(0, H, image=coins[2], anchor="sw"),
+            self.create_image(W, H, image=coins[3], anchor="se"),
+        ]
+        for item in reversed(items):
+            self.tag_lower(item)
+
+    # -- actions ----------------------------------------------------------- #
 
     def _open_style(self) -> None:
         if self._store is None:
@@ -190,166 +409,26 @@ class SessionCard(ctk.CTkFrame):
         if self._on_style_saved is not None:
             self._on_style_saved(key, style)
 
-    def _build_offline(self) -> None:
-        """Carte d'un lecteur connu mais qui ne joue rien.
-
-        Elle existe pour que le lien reste visible et copiable avant même
-        d'avoir lancé le lecteur : on prépare la source dans OBS une fois, et
-        elle s'allume toute seule le jour où la musique part.
-        """
-        self._build_badge(self._app, COL_BG)
-        ctk.CTkLabel(self, text=self._app.label, font=font(15, "bold"),
-                     text_color=COL_TEXT_MUTED, anchor="w").grid(
-                         row=1, column=1, sticky="ew", padx=(0, 16), pady=(18, 0))
-        ctk.CTkLabel(self, text=t("MUSIC_OFFLINE"), font=font(11),
-                     text_color=COL_TEXT_MUTED, anchor="w").grid(
-                         row=2, column=1, sticky="ew", padx=(0, 16), pady=(2, 18))
-
-    def _build_badge(self, app: MusicApp, fond: str) -> None:
-        """Pastille de gauche : le logo du lecteur, sinon le monogramme.
-
-        Les huit lecteurs livrés ont leur logo dans `assets/music/<clé>.png`.
-        Le monogramme sert aux sources hors catalogue, qui n'en ont aucun.
-        """
-        holder = ctk.CTkFrame(self, fg_color=fond, corner_radius=12,
-                              width=_COVER_H, height=_COVER_H)
-        holder.grid(row=0, column=0, rowspan=4, sticky="nw", padx=(16, 14), pady=16)
-        holder.grid_propagate(False)
-
-        chemin = logo_path(app.key)
-        image = None
-        if chemin is not None and Image is not None:
-            try:
-                with Image.open(chemin) as brut:
-                    image = brut.convert("RGBA").resize((_COVER_H - 18, _COVER_H - 18))
-            except Exception:
-                image = None
-        if image is not None:
-            self._cover = ctk.CTkImage(light_image=image, dark_image=image,
-                                       size=(_COVER_H - 18, _COVER_H - 18))
-            ctk.CTkLabel(holder, text="", image=self._cover).place(
-                relx=0.5, rely=0.5, anchor="center")
-            return
-        ctk.CTkLabel(holder, text=app.monogram, font=font(24, "bold"),
-                     text_color=app.color).place(relx=0.5, rely=0.5, anchor="center")
-
-    def _build_cover(self, session: Session) -> None:
-        width, height = fitted_cover_size(session)
-        holder = ctk.CTkFrame(self, fg_color=COL_BG, corner_radius=10,
-                              width=width, height=height)
-        holder.grid(row=0, column=0, rowspan=4, sticky="nw", padx=(16, 14), pady=16)
-        holder.grid_propagate(False)
-
-        image = self._decode(session, (width, height))
-        if image is None:
-            ctk.CTkLabel(holder, text="♪", font=font(26),
-                         text_color=COL_TEXT_MUTED).place(relx=0.5, rely=0.5,
-                                                          anchor="center")
-            return
-        self._cover = ctk.CTkImage(light_image=image, dark_image=image,
-                                   size=(width, height))
-        ctk.CTkLabel(holder, text="", image=self._cover).place(relx=0.5, rely=0.5,
-                                                               anchor="center")
-
-    @staticmethod
-    def _decode(session: Session, size: tuple[int, int]):
-        if session.thumbnail is None or Image is None:
-            return None
-        try:
-            with Image.open(io.BytesIO(session.thumbnail)) as raw:
-                return raw.convert("RGB").resize(size)
-        except Exception:
-            return None
-
-    def _build_meta(self, session: Session) -> None:
-        head = ctk.CTkFrame(self, fg_color="transparent")
-        head.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(16, 0))
-        ctk.CTkLabel(head, text="●", font=font(12),
-                     text_color=_STATUS_COLORS.get(session.status, COL_TEXT_MUTED),
-                     width=14).pack(side="left")
-        ctk.CTkLabel(head, text=t(f"MUSIC_STATUS_{session.status}"), font=font(11, "bold"),
-                     text_color=COL_TEXT_MUTED).pack(side="left", padx=(2, 10))
-        ctk.CTkLabel(head, text=self._app.label, font=font(11, "bold"),
-                     text_color=self._app.color).pack(side="left", padx=(0, 10))
-        if session.is_current:
-            ctk.CTkLabel(head, text=t("MUSIC_BADGE_CURRENT"), font=font(10, "bold"),
-                         text_color=COL_ACCENT).pack(side="left")
-
-        ctk.CTkLabel(self, text=session.title or t("MUSIC_NO_TITLE"),
-                     font=font(15, "bold"), text_color=COL_TEXT, anchor="w",
-                     justify="left", wraplength=560).grid(row=1, column=1, sticky="ew",
-                                                          padx=(0, 16), pady=(4, 0))
-        subtitle = session.artist or t("MUSIC_NO_ARTIST")
-        if session.album:
-            subtitle = f"{subtitle} — {session.album}"
-        ctk.CTkLabel(self, text=subtitle, font=font(12), text_color=COL_TEXT_MUTED,
-                     anchor="w", justify="left",
-                     wraplength=560).grid(row=2, column=1, sticky="ew",
-                                          padx=(0, 16), pady=(2, 0))
-
-        ctk.CTkLabel(self, text=self._facts(session), font=font(10),
-                     text_color=COL_TEXT_MUTED, anchor="w", justify="left",
-                     wraplength=560).grid(row=3, column=1, sticky="ew",
-                                          padx=(0, 16), pady=(8, 16))
-
-        if session.errors:
-            ctk.CTkLabel(self, text=" · ".join(session.errors), font=font(10),
-                         text_color=COL_RED, anchor="w", justify="left",
-                         wraplength=700).grid(row=4, column=0, columnspan=2, sticky="ew",
-                                              padx=16, pady=(0, 14))
-
-    def _build_link(self) -> None:
-        """Le lien de l'overlay, en bas de la carte.
-
-        Une URL par source plutôt qu'une seule pour « la musique » : deux
-        lecteurs ouverts donnent deux liens indépendants, et c'est
-        l'utilisateur qui choisit lequel mettre à l'écran.
-        """
-        rangee = ctk.CTkFrame(self, fg_color="transparent")
-        rangee.grid(row=6, column=0, columnspan=2, sticky="ew",
-                    padx=16, pady=(0, 16))
-        rangee.grid_columnconfigure(0, weight=1)
-
-        champ = ctk.CTkEntry(rangee, height=32, font=font(11),
-                             fg_color=COL_BG, border_color=COL_BORDER,
-                             text_color=COL_TEXT_MUTED)
-        champ.insert(0, self._url)
-        # Lecture seule, mais sélectionnable : l'utilisateur doit pouvoir
-        # copier à la main si le presse-papiers lui échappe.
-        champ.configure(state="readonly")
-        champ.grid(row=0, column=0, sticky="ew")
-
-        self._link_btn = ctk.CTkButton(rangee, text=t("MUSIC_BTN_COPY_LINK"),
-                                       width=160, height=32, corner_radius=8,
-                                       fg_color="transparent", border_width=1,
-                                       border_color=COL_BORDER_ACCENT,
-                                       hover_color=COL_CARD, text_color=COL_ACCENT,
-                                       font=font(11, "bold"), command=self._copy_link)
-        self._link_btn.grid(row=0, column=1, padx=(10, 0))
-
-        ctk.CTkLabel(rangee, text=t("MUSIC_OVERLAY_HINT"), font=font(10),
-                     text_color=COL_TEXT_MUTED, anchor="w").grid(
-                         row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        # La taille a saisir dans OBS, a cote du lien qu'on y colle.
-        self._size_lbl = ctk.CTkLabel(rangee, text="", font=font(10, "bold"),
-                                      text_color=COL_ACCENT, anchor="w")
-        self._size_lbl.grid(row=2, column=0, columnspan=2, sticky="ew",
-                            pady=(2, 0))
-        self._refresh_size()
-
     def _refresh_size(self) -> None:
-        if self._store is None:
+        if self._store is None or self._taille_id is None:
             return
         largeur, hauteur = overlay_size(self._store.get(self._app.key))
-        self._size_lbl.configure(text=t("MUSIC_SOURCE_SIZE", w=largeur,
-                                        h=hauteur))
+        self.itemconfigure(self._taille_id, text=t("MUSIC_SOURCE_SIZE", w=largeur,
+                                                   h=hauteur))
 
     def _copy_link(self) -> None:
         self.clipboard_clear()
         self.clipboard_append(self._url)
-        self._link_btn.configure(text=t("MUSIC_BTN_LINK_COPIED"))
-        self.after(1500,
-                   lambda: self._link_btn.configure(text=t("MUSIC_BTN_COPY_LINK")))
+        self._libelle_lien(t("MUSIC_BTN_LINK_COPIED"))
+        self.after(1500, lambda: self._libelle_lien(t("MUSIC_BTN_COPY_LINK")))
+
+    def _libelle_lien(self, texte: str) -> None:
+        try:
+            if self._lien_txt is not None:
+                self.itemconfigure(self._lien_txt, text=texte)
+        except tk.TclError:
+            pass        # carte remplacée entre-temps
+
 
     @staticmethod
     def _facts(session: Session) -> str:
@@ -433,6 +512,7 @@ class MusicView(ctk.CTkFrame):
         self._list = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self._list.grid(row=3, column=0, sticky="nsew", padx=22, pady=(0, 22))
         self._list.grid_columnconfigure(0, weight=1)
+        self._scroller = SmoothScroll(self._list)
 
         self._watcher: Optional[MusicWatcher] = None
         if available():

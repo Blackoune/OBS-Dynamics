@@ -84,6 +84,141 @@ def fit_to_screen(fenetre: Any, largeur: int, hauteur: int,
 
 
 # ============================================================================
+# DÉFILEMENT FLUIDE DES LISTES
+# ============================================================================
+WHEEL_PIXELS_PER_NOTCH = 60
+_FRAME_MS = 16             # ~60 images/s
+_EASE_PER_FRAME = 0.35     # part de la distance restante parcourue à chaque image
+
+
+def _timer_resolution(fine: bool) -> None:
+    """Minuterie Windows à 1 ms le temps d'une animation.
+
+    Par défaut elle tourne à 15,6 ms : un `after(16)` tombait tantôt à 16,
+    tantôt à 31 ms (mesuré), et le défilement avançait par à-coups. On ne la
+    garde fine que pendant le mouvement, elle coûte de la batterie.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        winmm = ctypes.windll.winmm
+        (winmm.timeBeginPeriod if fine else winmm.timeEndPeriod)(1)
+    except Exception:
+        logger.debug("Résolution de minuterie inchangée.", exc_info=True)
+
+
+class SmoothScroll:
+    """Molette et ascenseur d'un CTkScrollableFrame, en mouvement continu.
+
+    CTk déplace la liste d'un bloc à chaque cran : un saut de 60 px, puis
+    chaque carte se repeint à son rythme, d'où des bandes déchirées. Ici un
+    cran fixe une CIBLE, qu'on rejoint en quelques images avec un
+    ralentissement : un seul déplacement par image, suivi d'un repeint de
+    toute la liste dans la même trame (`update_idletasks`), si bien que les
+    cartes glissent ensemble au lieu de se recoller une à une.
+
+    La molette est interceptée sur la fenêtre, pas carte par carte : les
+    cartes créées plus tard défilent aussi, sans rien rebrancher.
+    """
+
+    def __init__(self, scrollable: Any, on_scroll: Callable[[], None] | None = None) -> None:
+        self._frame = scrollable
+        self._canvas = getattr(scrollable, "_parent_canvas", None)
+        self._on_scroll = on_scroll or (lambda: None)
+        self._reste = 0.0            # pixels encore à parcourir, signés
+        self._job: Any = None
+        self._drag: Any = None       # dernière position demandée par l'ascenseur
+        self._drag_job: Any = None
+        if self._canvas is None:
+            return  # version de customtkinter sans canvas exposé — no-op sûr
+        self._canvas.configure(yscrollincrement=1)  # unité = 1 pixel
+        # Sur la fenêtre, et non sur « all » : le binding meurt avec elle
+        # (une boîte de dialogue ouverte cent fois n'en laisse aucun), et
+        # "break" y court-circuite la molette par défaut de CTk.
+        scrollable.winfo_toplevel().bind("<MouseWheel>", self._on_wheel, add="+")
+        scrollbar = getattr(scrollable, "_scrollbar", None)
+        if scrollbar is not None:
+            scrollbar.configure(command=self._on_drag)
+
+    @property
+    def busy(self) -> bool:
+        return self._job is not None or self._drag_job is not None
+
+    # -- molette ----------------------------------------------------------- #
+
+    def _contains(self, widget: Any) -> bool:
+        while widget is not None and not isinstance(widget, str):
+            if widget is self._frame or widget is self._canvas:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _on_wheel(self, event: Any) -> str | None:
+        try:
+            if not self._frame.winfo_ismapped() or not self._contains(event.widget):
+                return None
+        except Exception:
+            return None      # liste détruite, fenêtre toujours là
+        self.wheel(event.delta)
+        return "break"
+
+    def wheel(self, delta: float) -> None:
+        """`delta` au format Windows : 120 par cran, positif vers le haut."""
+        if self._canvas is None or self._canvas.yview() == (0.0, 1.0):
+            return  # rien à faire défiler
+        notches = delta / 120 or (1 if delta > 0 else -1)
+        nouveau = -notches * WHEEL_PIXELS_PER_NOTCH
+        # Changement de sens : on repart de zéro au lieu de freiner d'abord.
+        self._reste = nouveau if nouveau * self._reste < 0 else self._reste + nouveau
+        if self._job is None:
+            _timer_resolution(True)
+            self._step()
+
+    def _step(self) -> None:
+        self._job = None
+        try:
+            self._advance()
+        except Exception:            # liste détruite en plein mouvement
+            self._reste = 0.0
+            _timer_resolution(False)
+
+    def _advance(self) -> None:
+        pas = round(self._reste * _EASE_PER_FRAME) or (1 if self._reste > 0 else -1)
+        if abs(pas) > abs(self._reste):
+            pas = round(self._reste)
+        avant = self._canvas.yview()
+        if pas:
+            self._on_scroll()
+            self._canvas.yview_scroll(pas, "units")
+            self._canvas.update_idletasks()   # toute la liste dans la même trame
+        self._reste -= pas
+        if abs(self._reste) < 1 or self._canvas.yview() == avant:  # arrivé, ou bord
+            self._reste = 0.0
+            _timer_resolution(False)
+            return
+        self._job = self._canvas.after(_FRAME_MS, self._step)
+
+    # -- ascenseur --------------------------------------------------------- #
+
+    def _on_drag(self, *args: Any) -> None:
+        """Glisser l'ascenseur envoie une commande à chaque pixel de souris :
+        on n'applique que la dernière, une fois par image."""
+        self._drag = args
+        if self._drag_job is None:
+            self._drag_job = self._canvas.after(_FRAME_MS, self._flush_drag)
+
+    def _flush_drag(self) -> None:
+        self._drag_job = None
+        args, self._drag = self._drag, None
+        if args:
+            self._reste = 0.0        # l'ascenseur reprend la main sur la molette
+            self._on_scroll()
+            self._canvas.yview(*args)
+            self._canvas.update_idletasks()
+
+
+# ============================================================================
 # LIBELLÉS ET COULEURS D'ÉTAT DES CARTES DE JEU
 # ============================================================================
 def state_label(state: str) -> str:

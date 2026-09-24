@@ -19,7 +19,7 @@ from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,
                        COL_BADGE_FG, COL_BG, COL_BORDER, COL_CARD,
                        COL_CARD_HOVER, COL_GREEN, COL_RED, COL_TEXT,
                        COL_TEXT_MUTED, STATE_DOT, STATE_RING, badge_text, ctk,
-                       font, is_running)
+                       SmoothScroll, font, is_running)
 from ui_game_dialogs import GameModal
 
 
@@ -148,8 +148,7 @@ class GameCard(ctk.CTkFrame):
 
     def __init__(self, master, game: Game, state: str,
                  on_edit: Callable[[Game], None], on_delete: Callable[[Game], None],
-                 cover_service: Optional[GameCoverService] = None,
-                 bind_wheel: Optional[Callable[[Any], None]] = None, **kwargs) -> None:
+                 cover_service: Optional[GameCoverService] = None, **kwargs) -> None:
         # Ni bordure ni coins arrondis CTk : liseré d'état, arrondis et jaquette
         # sont peints ensemble dans UNE image (voir _card_image). Le cadre ne
         # sert plus qu'à réserver la place ; les angles arrondis de l'image
@@ -169,7 +168,6 @@ class GameCard(ctk.CTkFrame):
         self._on_edit = on_edit
         self._on_delete = on_delete
         self._cover_service = cover_service
-        self._bind_wheel = bind_wheel
         self._ctk_image: Optional[ctk.CTkImage] = None
         self._base_cover = None   # jaquette prête (PIL), sans pastille
         self._overlay: Optional[ctk.CTkFrame] = None
@@ -397,10 +395,6 @@ class GameCard(ctk.CTkFrame):
         for widget in (self._overlay, self._overlay_title, self._overlay_source,
                        btn_row, self._edit_btn, self._delete_btn):
             widget.bind("<Leave>", self._on_poster_leave)
-        # Créés après le binding récursif de la grille : sans ça l'overlay
-        # avalerait la molette et bloquerait le défilement sous le curseur.
-        if self._bind_wheel is not None:
-            self._bind_wheel(self._overlay)
 
     _hover_blocked_until = 0.0
 
@@ -597,7 +591,8 @@ class DashboardView(ctk.CTkFrame):
         self.scroll.grid(row=2, column=0, sticky="nsew", padx=22, pady=10)
         for c in range(self.MAX_COLUMNS):
             self.scroll.grid_columnconfigure(c, weight=1)
-        self._enable_smooth_scroll(self.scroll)
+        self._scroller = SmoothScroll(self.scroll,
+                                      on_scroll=lambda: GameCard.suppress_hover(0.25))
         # add="+" IMPÉRATIF : CTkScrollableFrame installe son propre
         # <Configure> sur ce frame pour recalculer la scrollregion du canvas.
         # Un bind() nu l'écrasait, la scrollregion restait figée sur la grille
@@ -646,86 +641,6 @@ class DashboardView(ctk.CTkFrame):
             card = self._cards.get(game_id)
             if card is not None:
                 card.grid(row=i // cols, column=i % cols, sticky="n", padx=10, pady=10)
-
-    WHEEL_PIXELS_PER_NOTCH = 60
-
-    def _enable_smooth_scroll(self, scrollable: ctk.CTkScrollableFrame) -> None:
-        """Molette : UN SEUL déplacement du canvas par cran.
-
-        L'ancienne version bouclait sur `yview_scroll(±1, "units")` : avec
-        yscrollincrement=1 (ce que CTk configure sous Windows) ça faisait
-        3 pixels par cran — d'où l'impression de ne pas avancer — répartis en
-        3 repaints successifs des cartes, ce qui les déchirait visuellement.
-        Un seul déplacement par événement = un seul repaint, net."""
-        self._wheel_handler: Optional[Callable[[Any], str]] = None
-        canvas = getattr(scrollable, "_parent_canvas", None)
-        if canvas is None:
-            return  # version de customtkinter sans canvas exposé — no-op sûr
-
-        canvas.configure(yscrollincrement=1)  # unité = 1 pixel, quelle que soit la plateforme
-
-        def _on_wheel(event: Any) -> str:
-            if canvas.yview() == (0.0, 1.0):
-                return "break"  # rien à faire défiler
-            notches = event.delta / 120 or (1 if event.delta > 0 else -1)
-            GameCard.suppress_hover(0.25)
-            canvas.yview_scroll(-round(notches * self.WHEEL_PIXELS_PER_NOTCH), "units")
-            return "break"
-
-        self._wheel_handler = _on_wheel
-        canvas.bind("<MouseWheel>", _on_wheel)
-        for child in scrollable.winfo_children():
-            child.bind("<MouseWheel>", _on_wheel)
-        self._throttle_scrollbar(scrollable, canvas)
-
-    def _throttle_scrollbar(self, scrollable: ctk.CTkScrollableFrame, canvas: Any) -> None:
-        """Limite la barre de défilement à un déplacement par image.
-
-        Faire glisser le curseur de la barre envoie une commande à CHAQUE
-        pixel de souris : des dizaines de repositionnements par seconde, donc
-        autant de repeints complets de la grille, et des cartes qui se
-        déchirent pendant le glissement. On mémorise la dernière position
-        demandée et on ne l'applique qu'une fois par trame (~60 Hz) : le
-        déplacement reste fidèle au geste, mais la grille n'est redessinée
-        qu'une fois au lieu de trente.
-        """
-        scrollbar = getattr(scrollable, "_scrollbar", None)
-        if scrollbar is None:
-            return  # version de customtkinter sans barre exposée — no-op sûr
-
-        pending: dict[str, Any] = {"args": None, "job": None}
-
-        def _flush() -> None:
-            pending["job"] = None
-            args = pending.pop("args", None)
-            pending["args"] = None
-            if args:
-                GameCard.suppress_hover(0.25)
-                canvas.yview(*args)
-
-        def _on_drag(*args: Any) -> None:
-            pending["args"] = args
-            if pending["job"] is None:
-                pending["job"] = self.after(16, _flush)
-
-        scrollbar.configure(command=_on_drag)
-
-    def _bind_wheel_recursive(self, widget: Any) -> None:
-        """Applique le handler molette à une carte ET à toute sa descendance.
-
-        L'ancien code ne bindait que les enfants existant au moment de
-        l'appel : les GameCard créées ensuite avalaient l'événement molette,
-        et la grille restait bloquée dès que le curseur passait sur une carte.
-        """
-        handler = getattr(self, "_wheel_handler", None)
-        if handler is None:
-            return
-        try:
-            widget.bind("<MouseWheel>", handler)
-            for child in widget.winfo_children():
-                self._bind_wheel_recursive(child)
-        except Exception:
-            logger.debug("Binding molette impossible sur %r.", widget, exc_info=True)
 
     def _clear(self) -> None:
         for widget in self.scroll.winfo_children():
@@ -777,10 +692,8 @@ class DashboardView(ctk.CTkFrame):
             card = GameCard(self.scroll, game=game,
                              state=self._latest_states.get(game.id, "inactive"),
                              on_edit=self._open_edit_modal, on_delete=self._delete_game,
-                             cover_service=self._cover_service,
-                             bind_wheel=self._bind_wheel_recursive)
+                             cover_service=self._cover_service)
             self._cards[game.id] = card
-            self._bind_wheel_recursive(card)
 
         self._show_empty_state(not games)
         self._layout_cards()
