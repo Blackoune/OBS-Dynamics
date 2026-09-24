@@ -41,6 +41,10 @@ def dashboard(app_module, tmp_path):
     view.pack(fill="both", expand=True)
     root.update()
     root.update_idletasks()
+    # Le recalcul des colonnes est différé de 120 ms. Sur un runner lent, il
+    # tombait APRÈS les crans de molette d'un test : la grille grandissait
+    # sous le curseur, arrêté à 0,8 au lieu de 1,0 (échec intermittent en CI).
+    _pump(root, view)
     yield view, root
     root.destroy()
 
