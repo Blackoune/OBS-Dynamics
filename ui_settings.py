@@ -1,15 +1,24 @@
 """Vue Paramètres : connexion OBS, seuils de détection, langue."""
 from __future__ import annotations
 
+import time
+import unicodedata
 from dataclasses import replace
 from typing import Callable
 
 import i18n
 from env_config import EnvConfigManager
 from i18n import t
-from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_BG, COL_BORDER,
-                       COL_CARD, COL_GREEN, COL_RED, COL_TEXT, COL_TEXT_MUTED,
-                       ctk, font)
+from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT, COL_BG,
+                       COL_BORDER, COL_CARD, COL_GREEN, COL_RED, COL_TEXT,
+                       COL_TEXT_MUTED, SmoothScroll, ctk, font)
+
+
+def alpha_key(name: str) -> str:
+    """Tri alphabétique qui ignore accents et casse : « Čeština » se range
+    au C, pas après le Z. Les autres écritures suivent l'alphabet latin."""
+    decomposed = unicodedata.normalize("NFD", name)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
 
 
 # ============================================================================
@@ -69,6 +78,21 @@ class SettingsView(ctk.CTkFrame):
         self._lang_seg = LanguageSegmentedControl(lang_card, on_select=self._on_lang_selected)
         self._lang_seg.grid(row=1, column=0, sticky="w", padx=20, pady=(0, 18))
 
+        # Les autres langues du catalogue, trop nombreuses pour des boutons,
+        # dans un menu à droite, par ordre alphabétique. Chacune y porte son
+        # nom natif : qui la parle la reconnaît, quelle que soit la langue
+        # affichée au moment du choix.
+        names = {i18n.lang_name(code): code for code in i18n.available_langs()
+                 if code not in LanguageSegmentedControl.LANGS}
+        self._more_langs = dict(sorted(names.items(), key=lambda item: alpha_key(item[0])))
+        self._lang_menu = ScrollableOptionMenu(
+            lang_card, values=list(self._more_langs), width=190, dynamic_resizing=False,
+            height=LanguageSegmentedControl.LANG_BTN_HEIGHT + 8, corner_radius=10,
+            font=font(12, "bold"),
+            command=lambda name: self._on_lang_selected(self._more_langs[name]),
+        )
+        self._lang_menu.grid(row=1, column=1, sticky="w", pady=(0, 18))
+
         self._load_into_form()
 
     def _field(self, parent, row: int, label: str, var: ctk.StringVar) -> ctk.CTkLabel:
@@ -108,7 +132,21 @@ class SettingsView(ctk.CTkFrame):
         self.pwd_var.set(cfg.password)
         self.interval_var.set(str(cfg.scan_interval_seconds))
         self.threshold_var.set(str(cfg.match_threshold))
-        self._lang_seg.set_active(cfg.lang, notify=False)
+        self._show_lang(cfg.lang)
+
+    def _show_lang(self, lang: str) -> None:
+        """Un seul des deux contrôles porte la langue active : son bouton pour
+        FR/EN/ES, sinon le menu, qui affiche alors son nom en surbrillance."""
+        self._lang_seg.set_active(lang, notify=False)
+        seg = LanguageSegmentedControl
+        in_menu = lang not in seg.LANGS
+        self._lang_menu.set(i18n.lang_name(lang) if in_menu else t("SETTINGS_LANG_MORE"))
+        self._lang_menu.configure(
+            fg_color=seg.COL_ACTIVE if in_menu else seg.COL_INACTIVE,
+            button_color=seg.COL_ACTIVE if in_menu else seg.COL_INACTIVE,
+            button_hover_color=seg.COL_ACTIVE_HOVER if in_menu else seg.COL_INACTIVE_HOVER,
+            text_color="#FFFFFF" if in_menu else COL_TEXT_MUTED,
+        )
 
     def _on_lang_selected(self, lang: str) -> None:
         """Applique le changement de langue à chaud (i18n.set_lang notifie
@@ -116,6 +154,7 @@ class SettingsView(ctk.CTkFrame):
         redémarrer l'application ni casser les libellés déjà affichés."""
         if not i18n.set_lang(lang):
             return
+        self._show_lang(lang)
         cfg = self.config_mgr.load()
         cfg.lang = lang
         self.config_mgr.save(cfg)
@@ -132,6 +171,7 @@ class SettingsView(ctk.CTkFrame):
         self._field_labels["threshold"].configure(text=t("SETTINGS_LABEL_MATCH_THRESHOLD"))
         self._save_btn.configure(text=t("SETTINGS_BTN_SAVE"))
         self._lang_seg.refresh_labels()
+        self._show_lang(i18n.current_lang())
 
     def _save(self) -> None:
         try:
@@ -169,6 +209,7 @@ class LanguageSegmentedControl(ctk.CTkFrame):
     et ne pousse jamais les widgets voisins, quelle que soit la langue active
     (corrige le bug de décalage du sélecteur mentionné dans les specs)."""
 
+    LANGS = ("fr", "en", "es")
     LANG_BTN_WIDTH = 64
     LANG_BTN_HEIGHT = 34
     COL_ACTIVE = "#3B82F6"
@@ -183,7 +224,7 @@ class LanguageSegmentedControl(ctk.CTkFrame):
         self._buttons: dict[str, ctk.CTkButton] = {}
         self._active_lang = i18n.current_lang()
 
-        for i, lang in enumerate(("fr", "en", "es")):
+        for i, lang in enumerate(self.LANGS):
             btn = ctk.CTkButton(
                 self, text=t(f"LANG_{lang.upper()}"), width=self.LANG_BTN_WIDTH, height=self.LANG_BTN_HEIGHT,
                 corner_radius=8, font=font(12, "bold"),
@@ -204,8 +245,8 @@ class LanguageSegmentedControl(ctk.CTkFrame):
         self._on_select(lang)
 
     def set_active(self, lang: str, notify: bool = True) -> None:
-        if lang not in self._buttons:
-            return
+        # Une langue sans bouton (choisie dans le menu voisin) est acceptée :
+        # aucun bouton ne reste alors allumé.
         self._active_lang = lang
         self._apply_active_style()
         if notify:
@@ -226,3 +267,97 @@ class LanguageSegmentedControl(ctk.CTkFrame):
     def refresh_labels(self) -> None:
         for lang, btn in self._buttons.items():
             btn.configure(text=t(f"LANG_{lang.upper()}"))
+
+
+class ScrollableOptionMenu(ctk.CTkOptionMenu):
+    """CTkOptionMenu dont la liste s'ouvre sur VISIBLE_ROWS lignes qui
+    défilent, au lieu du menu natif de Windows qui étale toutes les valeurs
+    sur la hauteur de l'écran.
+
+    Remplace `_open_dropdown_menu`, interne à customtkinter : la version est
+    épinglée dans requirements.txt, à revérifier si on la change.
+    """
+
+    VISIBLE_ROWS = 10
+    ROW_HEIGHT = 30
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._popup: ctk.CTkToplevel | None = None
+        self._list: ctk.CTkScrollableFrame | None = None
+        self._closed_at = 0.0
+        self._anchor: tuple[int, int, int, int] | None = None
+        # La liste est une fenêtre à part, posée à l'écran : elle ne suit pas
+        # la fenêtre principale. Celle-ci bouge ou change de taille -> on
+        # ferme, l'utilisateur rouvre une fois la fenêtre en place.
+        self.winfo_toplevel().bind("<Configure>", self._on_window_configure, add="+")
+
+    def _window_box(self) -> tuple[int, int, int, int]:
+        top = self.winfo_toplevel()
+        return top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height()
+
+    def _on_window_configure(self, event) -> None:
+        # Le binding de la fenêtre reçoit aussi le <Configure> de chacun de
+        # ses widgets : seul celui de la fenêtre elle-même compte, et
+        # seulement s'il l'a vraiment déplacée ou redimensionnée.
+        if (self._popup is not None and event.widget is self.winfo_toplevel()
+                and self._window_box() != self._anchor):
+            self.close_dropdown()
+
+    def _open_dropdown_menu(self) -> None:
+        # Cliquer sur ce bouton liste ouverte la ferme d'abord (perte de
+        # focus), puis arrive ici : sans ce délai, elle se rouvrirait aussitôt.
+        if self._popup is not None or time.monotonic() - self._closed_at < 0.3:
+            return
+        popup = self._popup = ctk.CTkToplevel(self, fg_color=COL_BORDER)
+        popup.overrideredirect(True)
+        rows = min(len(self._values), self.VISIBLE_ROWS)
+        self._list = ctk.CTkScrollableFrame(popup, width=self._current_width - 19,
+                                            height=rows * self.ROW_HEIGHT,
+                                            fg_color=COL_CARD, corner_radius=0)
+        self._list.pack(padx=1, pady=1)
+        for value in self._values:
+            ctk.CTkButton(self._list, text=value, anchor="w", height=self.ROW_HEIGHT,
+                          corner_radius=6, font=font(12), text_color=COL_TEXT,
+                          fg_color=COL_ACCENT_SOFT if value == self._current_value else "transparent",
+                          hover_color=COL_BORDER,
+                          command=lambda v=value: self._pick(v)).pack(fill="x")
+        SmoothScroll(self._list)
+
+        popup.update_idletasks()
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height() + 2
+        if y + popup.winfo_reqheight() > self.winfo_screenheight():   # pas la place dessous
+            y = self.winfo_rooty() - popup.winfo_reqheight() - 2
+        popup.geometry(f"+{x}+{y}")
+        if self._current_value in self._values:   # la langue active, en vue
+            first = max(0, self._values.index(self._current_value) - rows // 2)
+            self._list._parent_canvas.yview_moveto(first / len(self._values))
+        self._anchor = self._window_box()
+        popup.bind("<Escape>", lambda _e: self.close_dropdown())
+        popup.bind("<FocusOut>", lambda _e: self.after(10, self._close_if_focus_left))
+        popup.focus_force()
+
+    def _close_if_focus_left(self) -> None:
+        # FocusOut remonte aussi d'un widget à l'autre DANS la liste : on ne
+        # ferme que si le focus est parti ailleurs (fenêtre principale, autre
+        # application).
+        if self._popup is None:
+            return
+        try:
+            focus = self._popup.focus_get()
+        except KeyError:          # focus sur un widget que Tk ne connaît pas
+            focus = None
+        if focus is None or not str(focus).startswith(str(self._popup)):
+            self.close_dropdown()
+
+    def _pick(self, value: str) -> None:
+        self.close_dropdown()
+        self._dropdown_callback(value)
+
+    def close_dropdown(self) -> None:
+        if self._popup is None:
+            return
+        popup, self._popup, self._list = self._popup, None, None
+        self._closed_at = time.monotonic()
+        popup.destroy()

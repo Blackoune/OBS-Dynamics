@@ -47,6 +47,14 @@ def test_threshold_and_interval_are_clamped(app_module, tmp_env):
     assert cfg.scan_interval_seconds == 0.5  # plancher
 
 
+def test_every_catalog_lang_survives_a_restart(app_module, tmp_env):
+    """Une langue du menu refusée à la relecture reviendrait au français au
+    redémarrage suivant, sans rien dire."""
+    for lang in app_module.i18n.available_langs():
+        tmp_env.write_text(f"OBS_APP_LANG={lang}\n", encoding="utf-8")
+        assert app_module.EnvConfigManager(tmp_env).load().lang == lang
+
+
 def test_unknown_lang_falls_back(app_module, tmp_env):
     tmp_env.write_text("OBS_APP_LANG=klingon\n", encoding="utf-8")
     assert app_module.EnvConfigManager(tmp_env).load().lang == app_module.i18n.DEFAULT_LANG

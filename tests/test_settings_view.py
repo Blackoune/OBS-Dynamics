@@ -159,6 +159,119 @@ def test_an_unknown_language_changes_nothing(vue, app_module):
     assert mgr.load() == avant_cfg
 
 
+def test_the_menu_holds_every_other_catalog_language_by_native_name(vue, app_module):
+    """FR/EN/ES restent des boutons ; toute autre langue du catalogue doit
+    être atteignable par le menu, sinon sa traduction ne sert à rien."""
+    view, _, _ = vue
+    i18n = app_module.i18n
+    attendu = set(i18n.available_langs()) - {"fr", "en", "es"}
+    assert attendu, "aucune langue en plus de FR/EN/ES dans i18n.json"
+    assert set(view._more_langs.values()) == attendu
+    for nom, code in view._more_langs.items():
+        assert nom == i18n.lang_name(code) != code
+
+
+def test_picking_from_the_menu_switches_persists_and_lights_only_the_menu(vue, app_module):
+    view, mgr, root = vue
+    seg = app_module.LanguageSegmentedControl
+    nom, code = next(iter(view._more_langs.items()))
+
+    view._lang_menu._dropdown_callback(nom)          # ce que fait un clic
+    root.update()
+
+    assert app_module.i18n.current_lang() == code
+    assert mgr.load().lang == code
+    assert view._lang_menu.get() == nom
+    assert view._lang_menu.cget("fg_color") == seg.COL_ACTIVE
+    assert all(b.cget("fg_color") != seg.COL_ACTIVE for b in view._lang_seg._buttons.values())
+
+    view._on_lang_selected("fr")                     # retour sur un bouton
+    root.update()
+    assert view._lang_menu.get() == app_module.t("SETTINGS_LANG_MORE")
+    assert view._lang_menu.cget("fg_color") != seg.COL_ACTIVE
+    assert view._lang_seg._buttons["fr"].cget("fg_color") == seg.COL_ACTIVE
+
+
+def test_the_menu_is_in_alphabetical_order_ignoring_accents(vue):
+    view, _, _ = vue
+    noms = list(view._lang_menu._values)
+    assert noms == list(view._more_langs)
+    for avant, apres in [("Bahasa Melayu", "Čeština"), ("Čeština", "Dansk"),
+                         ("Deutsch", "Italiano"), ("Polski", "Português"), ("Svenska", "Türkçe")]:
+        assert noms.index(avant) < noms.index(apres), f"{avant} devrait précéder {apres}"
+
+
+def test_the_list_opens_on_ten_rows_that_scroll(vue, app_module):
+    """Le menu natif de Windows étalait toutes les langues sur la hauteur de
+    l'écran : la liste n'en montre plus que dix, le reste défile."""
+    view, _, root = vue
+    menu = view._lang_menu
+    menu._open_dropdown_menu()
+    root.update()
+    try:
+        lo, hi = menu._list._parent_canvas.yview()
+        assert round((hi - lo) * len(menu._values)) == menu.VISIBLE_ROWS
+        assert len(menu._list.winfo_children()) == len(menu._values)
+    finally:
+        menu.close_dropdown()
+
+
+def test_clicking_a_row_picks_the_language_and_closes_the_list(vue, app_module):
+    view, mgr, root = vue
+    menu = view._lang_menu
+    menu._open_dropdown_menu()
+    root.update()
+    ligne = menu._list.winfo_children()[0]
+    nom = ligne.cget("text")
+
+    ligne.invoke()
+    root.update()
+
+    assert menu._popup is None
+    assert app_module.i18n.current_lang() == view._more_langs[nom]
+    assert mgr.load().lang == view._more_langs[nom]
+
+
+def test_the_list_closes_only_when_focus_leaves_it(vue, monkeypatch):
+    """Clic ailleurs : la liste se ferme. Clic sur une de ses lignes ou son
+    ascenseur : elle doit rester ouverte, sinon la molette ne sert à rien.
+    (La racine de test est masquée et ne peut pas prendre le focus pour de
+    vrai : on fixe ce que Tk répondrait.)"""
+    view, _, root = vue
+    menu = view._lang_menu
+    menu._open_dropdown_menu()
+    root.update()
+    popup = menu._popup
+
+    monkeypatch.setattr(popup, "focus_get", lambda: menu._list.winfo_children()[3])
+    menu._close_if_focus_left()
+    assert menu._popup is popup, "fermée alors que le focus est resté dans la liste"
+
+    monkeypatch.setattr(popup, "focus_get", lambda: view._pwd_entry)
+    menu._close_if_focus_left()
+    assert menu._popup is None
+
+
+def test_the_list_closes_when_the_window_moves(vue):
+    """La liste est une fenêtre à part : si la fenêtre principale bouge sans
+    elle, elle resterait à flotter à l'ancienne place. Fenêtre affichée : Tk
+    n'émet aucun <Configure> quand on déplace une fenêtre masquée."""
+    view, _, root = vue
+    root.deiconify()
+    root.update()
+    menu = view._lang_menu
+    menu._open_dropdown_menu()
+    root.update()
+
+    view._title_lbl.configure(text="Un titre bien plus long qu'avant")   # un widget interne
+    root.update()
+    assert menu._popup is not None, "fermée par le redimensionnement d'un simple widget"
+
+    root.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 60}")
+    root.update()
+    assert menu._popup is None
+
+
 def test_labels_follow_the_language(vue, app_module):
     """refresh_labels() doit refaire les libellés sans recréer les widgets,
     donc sans vider ce que l'utilisateur vient de taper."""

@@ -126,7 +126,7 @@ class EnvConfigManager:
                         except ValueError:
                             pass
                     elif key == ENV_KEYS["lang"]:
-                        if value in i18n.SUPPORTED_LANGS:
+                        if value in i18n.available_langs():
                             cfg.lang = value
                     elif key == ENV_KEYS["overlay_port"]:
                         try:

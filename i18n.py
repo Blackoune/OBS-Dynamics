@@ -18,7 +18,7 @@ from app_paths import I18N_PATH
 logger = logging.getLogger("obs_dynamics.i18n")
 
 DEFAULT_LANG = "fr"
-SUPPORTED_LANGS = ("fr", "en", "es")
+# Les langues disponibles sont les blocs de i18n.json : ajouter un bloc suffit.
 
 
 class I18n:
@@ -74,6 +74,11 @@ class I18n:
     def available_langs(self) -> list[str]:
         return list(self._data.keys())
 
+    def lang_name(self, lang: str) -> str:
+        """Nom natif de la langue (« Deutsch », « 日本語 »), lu dans son propre
+        bloc : il reste le même quelle que soit la langue active."""
+        return self._data.get(lang, {}).get("LANG_NAME", lang)
+
     def t(self, key: str, **kwargs: Any) -> str:
         table = self._data.get(self._lang) or self._data.get(DEFAULT_LANG, {})
         template = table.get(key)
@@ -114,6 +119,18 @@ def current_lang() -> str:
     if _instance is None:
         init()
     return _instance.current_lang  # type: ignore[union-attr]
+
+
+def available_langs() -> list[str]:
+    if _instance is None:
+        init()
+    return _instance.available_langs()  # type: ignore[union-attr]
+
+
+def lang_name(lang: str) -> str:
+    if _instance is None:
+        init()
+    return _instance.lang_name(lang)  # type: ignore[union-attr]
 
 
 def on_change(callback: Callable[[str], None]) -> None:
