@@ -63,6 +63,12 @@ def test_le_code_ordinaire_passe(texte):
     assert analyser("module.py", texte) == []
 
 
+def test_une_cle_vide_ne_prend_pas_la_ligne_suivante_pour_valeur():
+    # Faux positif trouvé par l'audit de l'historique (env.example de bcefa5c).
+    assert analyser("env.example", "OBS_WS_PASSWORD=\nOBS_SCAN_INTERVAL_SECONDS=2.0\n") == []
+    assert analyser("env.example", "OBS_WS_PASSWORD=motdepasse_reel_123\n")
+
+
 def test_le_message_ne_repete_jamais_la_valeur():
     # Il s'affiche dans un terminal et dans un rapport de CI.
     trouvailles = analyser("journal.txt", f"url?key={CLE_FACTICE}")

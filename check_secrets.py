@@ -12,6 +12,7 @@ réellement dans le commit.
 Utilisation :
     python check_secrets.py --staged   # ce qui est indexé (le hook)
     python check_secrets.py --all      # tout le HEAD, pour un audit
+    python check_secrets.py --history  # chaque blob de tout l'historique
 
 Sort avec 1 dès qu'une trouvaille bloque le commit.
 """
@@ -76,7 +77,9 @@ CANDIDATS = re.compile(r"[A-Za-z0-9+/=_\-]{8,128}")
 GABARITS = {"changeme", "votre_mot_de_passe", "xxx", "your_password_here",
             "secret", "motdepasse", "password"}
 AFFECTATIONS = (
-    re.compile(r"^\s*(OBS_WS_PASSWORD|RAWG_API_KEY)\s*=\s*(?P<valeur>\S+)", re.M),
+    # `[ \t]`, pas `\s` : `\s` avale le saut de ligne, et une clé laissée vide
+    # (`OBS_WS_PASSWORD=`) prenait la ligne SUIVANTE pour sa valeur.
+    re.compile(r"^[ \t]*(OBS_WS_PASSWORD|RAWG_API_KEY)[ \t]*=[ \t]*(?P<valeur>\S+)", re.M),
     re.compile(r'"(?:password|client_secret|api_key|token)"\s*:\s*"(?P<valeur>[^"]+)"'),
 )
 
@@ -206,7 +209,46 @@ def analyser(chemin: str, texte: str) -> list[str]:
     return trouvailles
 
 
+def auditer_historique() -> int:
+    """Chaque blob de chaque commit, pas seulement le HEAD.
+
+    Avant de rendre le dépôt public : un secret retiré du HEAD reste lisible
+    dans l'historique. Les fuites déjà connues (condensats ci-dessus) sortent
+    aussi — le rapport sert à vérifier qu'il n'y en a PAS d'autres.
+    """
+    objets = [ligne.split(" ", 1) for ligne in _git("rev-list", "--all", "--objects").splitlines()
+              if " " in ligne]
+    types = dict(ligne.split() for ligne in subprocess.run(
+        ("git", "cat-file", "--batch-check=%(objectname) %(objecttype)"),
+        input="\n".join(sha for sha, _ in objets), capture_output=True, text=True,
+    ).stdout.splitlines())
+
+    trouvailles: dict[str, list[str]] = {}
+    for sha, chemin in objets:
+        if types.get(sha) != "blob" or chemin in EXEMPTIONS:
+            continue
+        if any(motif.search(chemin) for motif in CHEMINS_INTERDITS):
+            trouvailles.setdefault(sha, []).append(f"{chemin} : ce fichier ne se versionne jamais")
+            # Pas de `continue` : on veut savoir ce que le fichier contenait.
+        brut = subprocess.run(("git", "cat-file", "blob", sha), capture_output=True).stdout
+        if b"\0" in brut[:8000]:
+            continue  # binaire (images, .ico) : pas de texte à lire
+        resultats = analyser(chemin, brut.decode("utf-8", errors="replace"))
+        if resultats:
+            trouvailles.setdefault(sha, []).extend(resultats)
+
+    for sha, lignes in trouvailles.items():
+        commits = _git("log", "--all", "--format=%h", f"--find-object={sha}").split()
+        for ligne in lignes:
+            print(f"  - [{', '.join(commits) or '?'}] {ligne}")
+    print(f"[check-secrets] historique : {len(objets)} objet(s), "
+          f"{len(trouvailles)} blob(s) signalé(s).")
+    return 1 if trouvailles else 0
+
+
 def main() -> int:
+    if "--history" in sys.argv:
+        return auditer_historique()
     mode_complet = "--all" in sys.argv
     chemins = fichiers_du_head() if mode_complet else fichiers_indexes()
     lire = contenu_disque if mode_complet else contenu_indexe
