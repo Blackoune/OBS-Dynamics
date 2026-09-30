@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read           # CodeQL lit l'état de son propre run (sans ça : « Resource not accessible by integration »)
       security-events: write  # publier les résultats dans l'onglet Security
     strategy:
       fail-fast: false
