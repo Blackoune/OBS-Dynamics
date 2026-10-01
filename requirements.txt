@@ -42,5 +42,5 @@ winrt-runtime==3.2.1
 # qu'au son de Spotify. Windows uniquement ; `music_audio.available()` est faux
 # ailleurs et l'overlay fonctionne sans forme d'onde.
 pycaw==20251023
-comtypes==1.4.16
+comtypes==1.4.17
 tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
