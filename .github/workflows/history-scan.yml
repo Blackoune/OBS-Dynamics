@@ -33,4 +33,4 @@ jobs:
       - name: Analyser chaque commit
         # --redact : le journal de CI est public, il ne doit jamais afficher
         # la valeur d'un secret trouvé, seulement sa position.
-        run: ./gitleaks git --redact --verbose --log-opts="--all" .
+        run: ./gitleaks git --config .gitleaks.toml --redact --verbose --log-opts="--all" .

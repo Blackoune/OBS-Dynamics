@@ -1,0 +1,13 @@
+# Configuration de gitleaks (.github/workflows/history-scan.yml).
+# Toutes les règles par défaut, plus une exception : tests/.
+
+[extend]
+useDefault = true
+
+# Les tests écrivent de FAUSSES valeurs (`rawg_api_key="..."`, `overlay_token`)
+# justement pour vérifier qu'elles sont refusées, chiffrées ou effacées. La
+# règle generic-api-key les prend pour des secrets. Le dossier reste couvert
+# par check_secrets.py, qui y cherche les vrais secrets connus (condensats).
+[[allowlists]]
+description = "Valeurs factices des tests"
+paths = ['''^tests/''']
