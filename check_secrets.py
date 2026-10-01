@@ -31,7 +31,9 @@ CHEMINS_INTERDITS = (
     re.compile(r"(^|/)\.env\.(old|backup|bak|local)$"),
     re.compile(r"(^|/)obs_config\.json$"),
     re.compile(r"(^|/)config\.json$"),
-    re.compile(r"(^|/)data/"),
+    # Sauf `site/src/data/` : code source du site (FAQ, lecture des releases),
+    # aucune donnée d'utilisateur. Son contenu reste analysé comme le reste.
+    re.compile(r"(^|/)(?<!site/src/)data/"),
     # Journaux : un message d'erreur `requests` recopie l'URL appelée, clé
     # comprise. C'est ainsi qu'une clé de stream est arrivée dans
     # `data.old/obs_dynamics.log`, puis dans le commit 833d1df.

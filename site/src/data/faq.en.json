@@ -1,0 +1,250 @@
+{
+  "categories": [
+    {
+      "id": "installation",
+      "title": "Installation",
+      "symptoms": [
+        {
+          "id": "smartscreen",
+          "title": "Windows shows “Windows protected your PC”",
+          "steps": [
+            "This is the SmartScreen warning: it appears for any executable that is not signed yet or not yet known to Microsoft.",
+            "First check the file is genuine (see “Check the file is genuine”).",
+            "Click **More info**, then **Run anyway**."
+          ]
+        },
+        {
+          "id": "antivirus",
+          "title": "My antivirus blocks or deletes Dynamics.exe",
+          "steps": [
+            "Executables built with PyInstaller are often flagged by mistake: this is a common false positive.",
+            "Check the file is genuine: same SHA-256 checksum as on the Install page, and a valid GitHub attestation.",
+            "If both checks pass, restore the file from quarantine and add an exclusion.",
+            "Report the false positive to your antivirus vendor: it helps every other user."
+          ]
+        },
+        {
+          "id": "verifier-fichier",
+          "title": "Check the file is genuine",
+          "steps": [
+            "In PowerShell, in the download folder: `Get-FileHash .\\Dynamics.exe -Algorithm SHA256`.",
+            "Compare the result with the SHA-256 shown on the Install page: they must be identical.",
+            "With the GitHub CLI, `gh attestation verify .\\Dynamics.exe --repo Blackoune/OBS-Dynamics` confirms the file was built by GitHub from the public code.",
+            "If a check fails, delete the file and download it only from the Install page."
+          ]
+        },
+        {
+          "id": "mac",
+          "title": "I use a Mac",
+          "steps": [
+            "OBS Dynamics only runs on Windows 10 and 11 for now: it relies on Windows-only features.",
+            "There is no Mac version and no Mac file. Be wary of any file claiming to be one."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "connexion-obs",
+      "title": "Connecting to OBS",
+      "symptoms": [
+        {
+          "id": "statut-obs-erreur",
+          "title": "The status shows “Monitoring active (OBS: …)” or the app never connects",
+          "steps": [
+            "Check that OBS Studio is running.",
+            "In OBS: **Tools → WebSocket Server Settings**, the server must be enabled.",
+            "Compare the port with the one in the **Settings** tab (4455 by default).",
+            "Copy the password again from **Show Connect Info** and save it again in **Settings**.",
+            "A third-party firewall may block `localhost:4455`: allow OBS."
+          ]
+        },
+        {
+          "id": "mot-de-passe-perdu",
+          "title": "The password seems lost after copying .env from another PC",
+          "steps": [
+            "This is expected: the encryption is tied to the original Windows account.",
+            "Enter the password again in **Settings**."
+          ]
+        },
+        {
+          "id": "scenes-non-connecte",
+          "title": "Scene menus show “(not connected to OBS)”",
+          "steps": [
+            "Start monitoring.",
+            "Wait for the “OBS connected” status.",
+            "Reopen the game’s settings."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "detection-jeux",
+      "title": "Game detection",
+      "symptoms": [
+        {
+          "id": "steam-introuvable",
+          "title": "A Steam game is not found by the scan",
+          "steps": [
+            "Check that it is actually installed, not just in your Steam library.",
+            "Otherwise, add it as **Manual (exe)**."
+          ]
+        },
+        {
+          "id": "carte-inactive",
+          "title": "The game is running but its card stays “Idle”",
+          "steps": [
+            "For a manual game, the executable name must exactly match the one in **Task Manager → Details**, extension included.",
+            "Some games start through a launcher: enter the game’s own executable, not the launcher’s."
+          ]
+        },
+        {
+          "id": "scene-ne-change-pas",
+          "title": "The scene does not switch between menu and gameplay",
+          "steps": [
+            "Monitoring must be started and OBS connected.",
+            "The game must have a scene for each state.",
+            "Open **Check framing** then **Test on current screen** with the game displayed. A score below the threshold (0.8 by default) explains the issue.",
+            "If the lead is reported as too small, take more distinct screenshots: a full-screen menu versus an in-game HUD, for example."
+          ]
+        },
+        {
+          "id": "mauvais-moment",
+          "title": "The scene switches at the wrong time",
+          "steps": [
+            "Some fragments probably land on the background.",
+            "In **Check framing**, tick the badly placed frames then **Recompute without ticked**, or place manual zones on the interface.",
+            "As a last resort, raise the threshold slightly in **Settings**."
+          ]
+        },
+        {
+          "id": "plusieurs-ecrans",
+          "title": "I have several screens and nothing is detected",
+          "steps": [
+            "Capture uses Windows’ **main display**.",
+            "Show the game on that display."
+          ]
+        },
+        {
+          "id": "pas-de-jaquette",
+          "title": "No cover art for a non-Steam game",
+          "steps": [
+            "Add a free `RAWG_API_KEY` to the `.env` file."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "raccourcis-overlays",
+      "title": "Shortcuts and overlays",
+      "symptoms": [
+        {
+          "id": "combinaison-inactive",
+          "title": "The key combination does nothing",
+          "steps": [
+            "The browser source must be open in OBS: without it, the log says “no browser source open”.",
+            "Another program may capture the same combination: pick a different one.",
+            "If the combination field shows “pynput missing”, reinstall the dependencies: `pip install -r requirements.txt`."
+          ]
+        },
+        {
+          "id": "source-vide",
+          "title": "The browser source stays empty or shows an error",
+          "steps": [
+            "The app must be running: it serves the page.",
+            "Check that the pasted URL is exactly the one shown, with `127.0.0.1` and the right port.",
+            "A yellow banner in the tab means the port changed: copy the URLs again.",
+            "A source opened before the app started shows an error until it is refreshed. Tick **Refresh browser when scene becomes active** in the source properties."
+          ]
+        },
+        {
+          "id": "pas-de-son",
+          "title": "A shortcut’s sound cannot be heard",
+          "steps": [
+            "In the browser source properties, tick **Control audio via OBS**.",
+            "Check the source level in the OBS audio mixer."
+          ]
+        },
+        {
+          "id": "glisser-deposer",
+          "title": "Drag and drop does not work",
+          "steps": [
+            "It needs the `tkinterdnd2` package, included in the executable.",
+            "Without it, the drop zone stays clickable and opens the file picker."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "chat-twitch",
+      "title": "Twitch chat",
+      "symptoms": [
+        {
+          "id": "reconnexion",
+          "title": "The status stays “Error — reconnecting…”",
+          "steps": [
+            "Check the channel spelling: the name only, not the URL.",
+            "Check your internet connection. The app reconnects on its own, waiting a little longer each time."
+          ]
+        },
+        {
+          "id": "lien-chat",
+          "title": "The chat link no longer works",
+          "steps": [
+            "It was probably regenerated.",
+            "Copy the link shown in the app and paste it into OBS again."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "widget-musique",
+      "title": "Music widget",
+      "symptoms": [
+        {
+          "id": "interface-indisponible",
+          "title": "“Windows media interface unavailable”",
+          "steps": [
+            "The `winrt-*` packages are missing (install from source): `pip install -r requirements.txt`."
+          ]
+        },
+        {
+          "id": "windows-ne-repond-pas",
+          "title": "“Windows is not answering”",
+          "steps": [
+            "Windows’ media session service is stuck.",
+            "Close and reopen the app. If the problem persists, restart Windows."
+          ]
+        },
+        {
+          "id": "aucune-session",
+          "title": "No session detected while music is playing",
+          "steps": [
+            "Pause then resume playback.",
+            "Click **Refresh**."
+          ]
+        },
+        {
+          "id": "forme-onde-plate",
+          "title": "The waveform stays flat",
+          "steps": [
+            "The player must output sound: volume not muted in the Windows mixer.",
+            "In a browser, the waveform follows all of the browser’s sound."
+          ]
+        },
+        {
+          "id": "carte-rognee",
+          "title": "The card is cropped in OBS",
+          "steps": [
+            "Enlarge the browser source to the size shown by the app.",
+            "Or use 1132 × 383, which covers every case."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "autre",
+      "title": "Something else",
+      "symptoms": []
+    }
+  ]
+}

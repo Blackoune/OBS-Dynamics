@@ -1,0 +1,250 @@
+{
+  "categories": [
+    {
+      "id": "installation",
+      "title": "Installation",
+      "symptoms": [
+        {
+          "id": "smartscreen",
+          "title": "Windows affiche « Windows a protégé votre ordinateur »",
+          "steps": [
+            "C'est l'avertissement SmartScreen : il apparaît pour tout exécutable qui n'est pas encore signé ou pas encore connu de Microsoft.",
+            "Vérifiez d'abord que le fichier est authentique (voir « Vérifier que le fichier est authentique »).",
+            "Cliquez sur **Informations complémentaires**, puis sur **Exécuter quand même**."
+          ]
+        },
+        {
+          "id": "antivirus",
+          "title": "Mon antivirus bloque ou supprime Dynamics.exe",
+          "steps": [
+            "Les exécutables construits avec PyInstaller sont souvent signalés à tort : c'est un faux positif fréquent.",
+            "Vérifiez que le fichier est authentique : même empreinte SHA-256 que sur la page Installation, et attestation GitHub valide.",
+            "Si les deux vérifications sont bonnes, restaurez le fichier depuis la quarantaine et ajoutez une exclusion.",
+            "Signalez le faux positif à l'éditeur de votre antivirus : cela aide tous les autres utilisateurs."
+          ]
+        },
+        {
+          "id": "verifier-fichier",
+          "title": "Vérifier que le fichier est authentique",
+          "steps": [
+            "Dans PowerShell, dans le dossier du téléchargement : `Get-FileHash .\\Dynamics.exe -Algorithm SHA256`.",
+            "Comparez le résultat avec le SHA-256 affiché sur la page Installation : ils doivent être identiques.",
+            "Avec la CLI GitHub, `gh attestation verify .\\Dynamics.exe --repo Blackoune/OBS-Dynamics` confirme que le fichier a été construit par GitHub à partir du code public.",
+            "Si une vérification échoue, supprimez le fichier et téléchargez-le uniquement depuis la page Installation."
+          ]
+        },
+        {
+          "id": "mac",
+          "title": "J'utilise un Mac",
+          "steps": [
+            "OBS Dynamics fonctionne uniquement sous Windows 10 et 11 pour l'instant : il utilise des fonctions propres à Windows.",
+            "Aucune version Mac n'est disponible, et aucun fichier Mac n'est proposé. Méfiez-vous de tout fichier qui prétendrait l'être."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "connexion-obs",
+      "title": "Connexion à OBS",
+      "symptoms": [
+        {
+          "id": "statut-obs-erreur",
+          "title": "Le statut affiche « Surveillance active (OBS: …) » ou l'application ne se connecte jamais",
+          "steps": [
+            "Vérifiez qu'OBS Studio est lancé.",
+            "Dans OBS : **Outils → Paramètres du serveur WebSocket**, le serveur doit être activé.",
+            "Comparez le port avec celui de l'onglet **Paramètres** (4455 par défaut).",
+            "Recopiez le mot de passe depuis **Afficher les informations de connexion** et enregistrez-le à nouveau dans **Paramètres**.",
+            "Un pare-feu tiers peut bloquer `localhost:4455` : autorisez OBS."
+          ]
+        },
+        {
+          "id": "mot-de-passe-perdu",
+          "title": "Le mot de passe semble perdu après avoir copié .env depuis un autre PC",
+          "steps": [
+            "C'est normal : le chiffrement est lié au compte Windows d'origine.",
+            "Saisissez à nouveau le mot de passe dans **Paramètres**."
+          ]
+        },
+        {
+          "id": "scenes-non-connecte",
+          "title": "Les menus de scène affichent « (non connecté à OBS) »",
+          "steps": [
+            "Démarrez la surveillance.",
+            "Attendez le statut « OBS connecté ».",
+            "Rouvrez la fiche du jeu."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "detection-jeux",
+      "title": "Détection des jeux",
+      "symptoms": [
+        {
+          "id": "steam-introuvable",
+          "title": "Un jeu Steam n'est pas trouvé par le scan",
+          "steps": [
+            "Vérifiez qu'il est bien installé, et pas seulement présent dans votre bibliothèque Steam.",
+            "Sinon, ajoutez-le en **Manuel (exe)**."
+          ]
+        },
+        {
+          "id": "carte-inactive",
+          "title": "Le jeu tourne mais sa carte reste « Inactif »",
+          "steps": [
+            "Pour un jeu manuel, le nom d'exécutable doit correspondre exactement à celui du **Gestionnaire des tâches → Détails**, extension comprise.",
+            "Certains jeux passent par un lanceur : indiquez l'exécutable du jeu lui-même, pas celui du lanceur."
+          ]
+        },
+        {
+          "id": "scene-ne-change-pas",
+          "title": "La scène ne change pas entre menu et en jeu",
+          "steps": [
+            "La surveillance doit être démarrée et OBS connecté.",
+            "La fiche du jeu doit avoir une scène pour chaque état.",
+            "Ouvrez **Vérifier le cadrage** puis **Tester sur l'écran actuel** avec le jeu affiché. Un score sous le seuil (0,8 par défaut) explique le problème.",
+            "Si la marge de séparation est jugée insuffisante, reprenez des captures plus différentes : un menu plein écran contre un HUD de jeu, par exemple."
+          ]
+        },
+        {
+          "id": "mauvais-moment",
+          "title": "La scène bascule au mauvais moment",
+          "steps": [
+            "Des fragments tombent probablement sur le décor.",
+            "Dans **Vérifier le cadrage**, cochez les cadres mal placés puis **Recalculer sans les cochés**, ou placez des zones manuelles sur l'interface.",
+            "En dernier recours, remontez légèrement le seuil dans **Paramètres**."
+          ]
+        },
+        {
+          "id": "plusieurs-ecrans",
+          "title": "J'ai plusieurs écrans et rien n'est détecté",
+          "steps": [
+            "La capture porte sur l'**écran principal** de Windows.",
+            "Affichez le jeu sur cet écran."
+          ]
+        },
+        {
+          "id": "pas-de-jaquette",
+          "title": "Pas de jaquette pour un jeu hors Steam",
+          "steps": [
+            "Renseignez une clé `RAWG_API_KEY` gratuite dans le fichier `.env`."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "raccourcis-overlays",
+      "title": "Raccourcis et overlays",
+      "symptoms": [
+        {
+          "id": "combinaison-inactive",
+          "title": "La combinaison ne déclenche rien",
+          "steps": [
+            "La source navigateur doit être ouverte dans OBS : sans elle, le journal indique « aucune source navigateur ouverte ».",
+            "Un autre logiciel peut intercepter la même combinaison : choisissez-en une autre.",
+            "Si le champ de combinaison affiche « pynput absent », réinstallez les dépendances : `pip install -r requirements.txt`."
+          ]
+        },
+        {
+          "id": "source-vide",
+          "title": "La source navigateur reste vide ou affiche une erreur",
+          "steps": [
+            "L'application doit être lancée : c'est elle qui sert la page.",
+            "Vérifiez que l'URL collée est exactement celle affichée, avec `127.0.0.1` et le bon port.",
+            "Un bandeau jaune dans l'onglet signale un changement de port : recopiez les URL.",
+            "Une source ouverte avant le lancement de l'application affiche une erreur jusqu'à son actualisation. Cochez **Actualiser le navigateur quand la scène devient active** dans les propriétés de la source."
+          ]
+        },
+        {
+          "id": "pas-de-son",
+          "title": "Le son d'un raccourci ne s'entend pas",
+          "steps": [
+            "Dans les propriétés de la source navigateur, cochez **Contrôler l'audio via OBS**.",
+            "Vérifiez le niveau de la source dans le mélangeur audio d'OBS."
+          ]
+        },
+        {
+          "id": "glisser-deposer",
+          "title": "Le glisser-déposer ne fonctionne pas",
+          "steps": [
+            "Il nécessite le paquet `tkinterdnd2`, inclus dans l'exécutable.",
+            "Sans lui, la zone reste cliquable et ouvre le sélecteur de fichier."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "chat-twitch",
+      "title": "Chat Twitch",
+      "symptoms": [
+        {
+          "id": "reconnexion",
+          "title": "Le statut reste « Erreur — reconnexion… »",
+          "steps": [
+            "Vérifiez l'orthographe de la chaîne : le nom seul, pas l'URL.",
+            "Vérifiez votre connexion Internet. L'application se reconnecte seule, avec une attente croissante."
+          ]
+        },
+        {
+          "id": "lien-chat",
+          "title": "Le lien du chat ne répond plus",
+          "steps": [
+            "Il a probablement été régénéré.",
+            "Recopiez le lien affiché dans l'application et recollez-le dans OBS."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "widget-musique",
+      "title": "Widget musique",
+      "symptoms": [
+        {
+          "id": "interface-indisponible",
+          "title": "« Interface multimédia de Windows indisponible »",
+          "steps": [
+            "Les paquets `winrt-*` manquent (installation depuis les sources) : `pip install -r requirements.txt`."
+          ]
+        },
+        {
+          "id": "windows-ne-repond-pas",
+          "title": "« Windows ne répond pas »",
+          "steps": [
+            "Le service des sessions média de Windows est bloqué.",
+            "Fermez puis rouvrez l'application. Si le problème persiste, redémarrez Windows."
+          ]
+        },
+        {
+          "id": "aucune-session",
+          "title": "Aucune session détectée alors que la musique joue",
+          "steps": [
+            "Mettez en pause puis relancez la lecture.",
+            "Cliquez sur **Rafraîchir**."
+          ]
+        },
+        {
+          "id": "forme-onde-plate",
+          "title": "La forme d'onde reste plate",
+          "steps": [
+            "Le lecteur doit émettre du son : volume non coupé dans le mélangeur Windows.",
+            "Dans un navigateur, la forme d'onde suit tout le son du navigateur."
+          ]
+        },
+        {
+          "id": "carte-rognee",
+          "title": "La carte est rognée dans OBS",
+          "steps": [
+            "Agrandissez la source navigateur à la taille indiquée par l'application.",
+            "Ou utilisez 1132 × 383, qui couvre tous les cas."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "autre",
+      "title": "Autre question",
+      "symptoms": []
+    }
+  ]
+}
