@@ -1,0 +1,38 @@
+---
+import { lien, TEXTES, type Lang, type Page } from '../i18n';
+
+interface Props { lang: Lang; page: Page }
+const { lang, page } = Astro.props;
+const t = TEXTES[lang];
+const onglets: [Page, string][] = [
+  ['', t.commun.nav.presentation],
+  ['installation', t.commun.nav.installation],
+  ['contact', t.commun.nav.contact],
+];
+const autre = t.autreLangue.code as Lang;
+---
+<header class="nav">
+  <a class="marque" href={lien(lang)} aria-label={t.commun.accueilAria}>
+    <svg viewBox="0 0 256 256" aria-hidden="true" class="marque-logo">
+      <rect x="14" y="14" width="228" height="228" rx="44" />
+      <path d="M143 40 90 142h36l-19 76 68-110h-36z" />
+    </svg>
+    <span>OBS <b>Dynamics</b></span>
+  </a>
+
+  <div class="nav-droite">
+    <nav aria-label={t.commun.navAria}>
+      <ul class="onglets">
+        {onglets.map(([cible, label]) => (
+          <li>
+            <a href={lien(lang, cible)} aria-current={cible === page ? 'page' : undefined}>
+              {label}
+              {cible === page && <span class="indicateur" aria-hidden="true" />}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+    <a class="langue mono" href={lien(autre, page)} hreflang={autre} lang={autre}>{autre.toUpperCase()}</a>
+  </div>
+</header>

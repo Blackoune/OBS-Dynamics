@@ -1,0 +1,18 @@
+---
+// Une commande à copier. Le bouton n'apparaît qu'avec JavaScript
+// (scripts/copier.ts) ; sans lui, la commande reste sélectionnable.
+import { TEXTES, type Lang } from '../i18n';
+
+interface Props { texte: string; etiquette?: string; lang: Lang }
+const { texte, etiquette, lang } = Astro.props;
+const c = TEXTES[lang].commun;
+---
+<div class="commande">
+  {etiquette && <span class="commande-etiquette">{etiquette}</span>}
+  <code>{texte}</code>
+  <button type="button" class="copier" data-copier={texte} data-copie={c.copie} hidden>{c.copier}</button>
+</div>
+
+<script>
+  import '../scripts/copier';
+</script>

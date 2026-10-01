@@ -1,0 +1,167 @@
+name: Release
+
+# Seul chemin de publication de Dynamics.exe : construit ici, jamais sur un PC.
+# Les tags v* sont réservés au propriétaire (.github/rulesets/tags-release.json).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.14.7'
+
+      - name: Dépendances vérifiées par empreinte
+        # Un paquet modifié sur PyPI (même version, autre contenu) est refusé.
+        run: python -m pip install --require-hashes --no-deps -r requirements-release.txt
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Aucun secret dans le dépôt
+        run: python check_secrets.py --all
+
+      - name: Construire Dynamics.exe
+        run: python build.py
+
+      - id: envoi
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exe-brut
+          path: dist_release/Dynamics.exe
+          if-no-files-found: error
+    outputs:
+      artifact-id: ${{ steps.envoi.outputs.artifact-id }}
+
+  sign:
+    needs: build
+    # Ignoré tant que SignPath n'a pas accepté le projet : la variable de dépôt
+    # SIGNPATH_ORGANIZATION_ID n'existe pas encore.
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read  # SignPath récupère l'artefact exe-brut de ce run
+    steps:
+      - uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          connector-url: https://githubactions.connectors.signpath.io
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: OBS-Dynamics
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signe
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exe-signe
+          path: signe/Dynamics.exe
+          if-no-files-found: error
+
+  finalize:
+    needs: [build, sign]
+    # Continue si la signature est ignorée, jamais si elle a échoué.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.sign.result != 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write      # attestation de provenance
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.sign.result == 'success' && 'exe-signe' || 'exe-brut' }}
+          path: sortie
+
+      - name: SHA256SUMS.txt
+        working-directory: sortie
+        run: sha256sum Dynamics.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Attestation de provenance
+        # `gh attestation verify Dynamics.exe --repo …` prouve ensuite que ce
+        # fichier précis sort de ce workflow, à partir de ce commit.
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: sortie/Dynamics.exe
+
+      - name: Analyse VirusTotal
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          empreinte=$(cut -d' ' -f1 sortie/SHA256SUMS.txt)
+          if [ -z "$VT_API_KEY" ]; then
+            echo "VT_API_KEY absent : analyse non envoyée." | tee vt.txt
+          else
+            # Le .exe dépasse 32 Mo : envoi par une adresse d'upload dédiée.
+            adresse=$(curl -sSf -H "x-apikey: $VT_API_KEY" \
+              https://www.virustotal.com/api/v3/files/upload_url | jq -r .data)
+            curl -sSf -H "x-apikey: $VT_API_KEY" -F "file=@sortie/Dynamics.exe" "$adresse" > /dev/null
+            echo "[Rapport VirusTotal](https://www.virustotal.com/gui/file/$empreinte)" > vt.txt
+          fi
+
+      - name: Notes de version
+        env:
+          SIGNE: ${{ needs.sign.result == 'success' }}
+        run: |
+          {
+            if [ "$SIGNE" = "true" ]; then
+              echo "Exécutable signé (SignPath Foundation)."
+            else
+              echo "**Exécutable non signé** : Windows SmartScreen affichera un avertissement."
+            fi
+            echo
+            echo "SHA-256 : \`$(cut -d' ' -f1 sortie/SHA256SUMS.txt)\`"
+            echo
+            cat vt.txt
+            echo
+            echo "Vérifier ce fichier : voir SECURITY.md."
+          } > sortie/notes.md
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: sortie/
+          if-no-files-found: error
+
+  publish:
+    needs: finalize
+    runs-on: ubuntu-latest
+    # Approbation manuelle de Blackoune (Settings → Environments → release).
+    environment: release
+    permissions:
+      contents: write  # créer la release
+      actions: write   # relancer site.yml
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: sortie
+
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Un tag avec tiret (v1.0.0-test) donne une préversion, que le site ignore.
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" sortie/Dynamics.exe sortie/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+            --notes-file sortie/notes.md $prerelease
+
+      - name: Mettre à jour la page Installation
+        # Lancé sur main, pas sur le tag : l'environnement github-pages
+        # n'accepte que des déploiements depuis main.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run site.yml --repo "$GITHUB_REPOSITORY" --ref main

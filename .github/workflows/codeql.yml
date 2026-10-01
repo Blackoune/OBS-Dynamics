@@ -23,9 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # javascript-typescript s'ajoute avec le dossier site/ : CodeQL échoue
-        # sur un langage dont il ne trouve aucun fichier.
-        language: [python, actions]
+        language: [python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

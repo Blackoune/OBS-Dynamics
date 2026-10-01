@@ -1,0 +1,218 @@
+---
+import Base from '../layouts/Base.astro';
+import Texte from '../components/Texte.astro';
+import faqEn from '../data/faq.en.json';
+import faqFr from '../data/faq.fr.json';
+import { TEXTES, type Lang } from '../i18n';
+import { DISCORD, MAIL } from '../site';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = TEXTES[lang].contact;
+const c = TEXTES[lang].commun;
+const faq = lang === 'fr' ? faqFr : faqEn;
+const mailPret = Boolean(MAIL.utilisateur && MAIL.domaine);
+const sansMarques = (s: string) => s.replace(/\*\*|`/g, '');
+
+// Une seule source : faq.<langue>.json alimente la FAQ dépliable, le
+// questionnaire (qui relit la page) et ces données structurées.
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  inLanguage: lang,
+  mainEntity: faq.categories.flatMap((cat) => cat.symptoms.map((s) => ({
+    '@type': 'Question',
+    name: s.title,
+    acceptedAnswer: { '@type': 'Answer', text: s.steps.map(sansMarques).join(' ') },
+  }))),
+};
+---
+<Base lang={lang} page="contact" title={t.titre} description={t.description} jsonLd={jsonLd}>
+  <header class="entete">
+    <p class="surtitre">{t.surtitre}</p>
+    <h1 class="titre-page">{t.h1}</h1>
+    <p class="chapo">{t.chapo}</p>
+  </header>
+
+  <div class="contacts">
+    <section class="carte" aria-labelledby="titre-mail">
+      <h2 id="titre-mail" class="carte-titre">{t.mail.titre}</h2>
+      {mailPret ? (
+        <>
+          <p class="mail" data-mail-utilisateur={MAIL.utilisateur} data-mail-domaine={MAIL.domaine}
+            data-copier-label={c.copier} data-copie={c.copie}>
+            <span class="mono">{MAIL.utilisateur} [at] {MAIL.domaine}</span>
+          </p>
+          <p class="texte-doux">{t.mail.delai}</p>
+        </>
+      ) : (
+        <p class="texte-doux">{t.mail.bientot}</p>
+      )}
+    </section>
+
+    <section class="carte" aria-labelledby="titre-discord">
+      <h2 id="titre-discord" class="carte-titre">{t.discord.titre}</h2>
+      <p class="texte-doux">{t.discord.texte}</p>
+      {DISCORD.general ? (
+        <a class="btn btn-primaire" href={DISCORD.general} rel="noopener noreferrer">{t.discord.rejoindre}</a>
+      ) : (
+        <p class="texte-doux">{t.discord.bientot}</p>
+      )}
+    </section>
+  </div>
+
+  <!-- Questionnaire : affiché seulement avec JavaScript (scripts/faq.ts). -->
+  <section id="faq" class="assistant" aria-labelledby="assistant-titre" data-faq-assistant hidden
+    data-textes={JSON.stringify({ ...t.assistant, copier: c.copier, copie: c.copie })}>
+    <p class="surtitre" id="assistant-titre">{t.assistant.surtitre}</p>
+    <nav class="fil" aria-label={t.assistant.filAria} data-faq-fil></nav>
+    <div data-faq-etape></div>
+    <p class="visuellement-cache" aria-live="polite" data-faq-annonce></p>
+
+    <template data-faq-discord>
+      <div class="encart-discord">
+        <h3>{t.assistant.encartTitre}</h3>
+        <p>{t.assistant.encartTexte}</p>
+        {(DISCORD.ticket || DISCORD.vocal) ? (
+          <div class="actions">
+            {DISCORD.ticket && <a class="btn btn-primaire" href={DISCORD.ticket} rel="noopener noreferrer">{t.assistant.ticket} <span class="badge">{t.assistant.recommande}</span></a>}
+            {DISCORD.vocal && <a class="btn btn-secondaire" href={DISCORD.vocal} rel="noopener noreferrer">{t.assistant.vocal}</a>}
+          </div>
+        ) : (
+          <p class="texte-doux">{t.assistant.inviteBientot}</p>
+        )}
+        <p class="resume-titre">{t.assistant.resume}</p>
+        <div class="commande">
+          <code data-faq-resume></code>
+          <button type="button" class="copier" data-faq-copier>{c.copier}</button>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <!-- FAQ complète : source unique pour le questionnaire, lisible sans JavaScript. -->
+  <section class="faq" aria-labelledby="titre-faq">
+    <h2 id="titre-faq" class="bloc-titre">{t.faqTitre}</h2>
+    {faq.categories.filter((cat) => cat.symptoms.length).map((categorie) => (
+      <section class="faq-categorie" data-faq-categorie={categorie.id} data-titre={categorie.title}>
+        <h3>{categorie.title}</h3>
+        {categorie.symptoms.map((symptome) => (
+          <details id={`faq-${categorie.id}-${symptome.id}`} data-faq-symptome={symptome.id}>
+            <summary>{symptome.title}</summary>
+            <ol>
+              {symptome.steps.map((etape) => <li><Texte texte={etape} /></li>)}
+            </ol>
+          </details>
+        ))}
+      </section>
+    ))}
+  </section>
+</Base>
+
+<script>
+  import '../scripts/faq';
+  import '../scripts/mail';
+  import '../scripts/copier';
+</script>
+
+<style>
+  .entete { padding: clamp(3rem, 8vw, 5rem) 0 2rem; }
+  .texte-doux { color: var(--texte-doux); }
+
+  .contacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .carte {
+    border: 1px solid var(--ligne); border-radius: 1rem;
+    background: var(--surface); padding: clamp(1.25rem, 3vw, 1.75rem);
+  }
+  .carte-titre { font-size: 1.25rem; margin: 0 0 .75rem; font-variation-settings: 'wdth' 85; }
+  .carte p { margin: 0 0 1rem; }
+  .mail { font-size: 1.05rem; }
+
+  .bloc-titre {
+    font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.05; margin: 0 0 1.5rem;
+    font-variation-settings: 'wdth' 75; letter-spacing: -.01em;
+  }
+
+  /* ---------- Questionnaire ---------- */
+  .assistant {
+    margin-top: clamp(3rem, 6vw, 4.5rem);
+    border: 1px solid var(--ligne); border-radius: 1.25rem;
+    background: linear-gradient(var(--surface), var(--fond));
+    padding: clamp(1.25rem, 4vw, 2.5rem);
+  }
+  .fil { font-family: var(--mono); font-size: .8rem; color: var(--texte-doux); min-height: 1.2rem; margin-bottom: .75rem; }
+  .visuellement-cache {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  .actions { display: flex; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+  .badge {
+    font-family: var(--mono); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+    padding: .1rem .4rem; border-radius: .3rem; background: var(--encre-accent); color: var(--accent);
+  }
+  .resume-titre { margin: 1.25rem 0 .5rem; font-size: .9rem; color: var(--texte-doux); }
+
+  /* ---------- FAQ complète ---------- */
+  .faq { margin-top: clamp(4rem, 8vw, 6rem); }
+  .faq-categorie { margin-bottom: 2.5rem; }
+  .faq-categorie h3 {
+    font-family: var(--mono); font-size: .8rem; font-weight: 500; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 .5rem;
+  }
+  details { border-top: 1px solid var(--ligne); }
+  details:last-child { border-bottom: 1px solid var(--ligne); }
+  summary {
+    cursor: pointer; padding: 1rem 2rem 1rem 0; position: relative;
+    font-weight: 600; list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: '+'; position: absolute; right: .25rem; top: .85rem;
+    font-family: var(--mono); color: var(--texte-doux); transition: transform .2s;
+  }
+  details[open] summary::after { transform: rotate(45deg); color: var(--accent); }
+  details ol { margin: 0 0 1.25rem; padding-left: 1.4rem; color: var(--texte-doux); max-width: 46rem; }
+  details li { margin: .4rem 0; }
+  details :is(strong, code) { color: var(--texte); }
+
+  @media (max-width: 700px) {
+    .contacts { grid-template-columns: 1fr; }
+  }
+</style>
+
+<style is:global>
+  /* Éléments créés par scripts/faq.ts : hors de la portée des styles de la page. */
+  .assistant h2 {
+    font-size: clamp(1.6rem, 3.5vw, 2.2rem); line-height: 1.1; margin: 0 0 1.5rem;
+    font-variation-settings: 'wdth' 80; outline: none;
+  }
+  .choix { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+  .choix-categories { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  .choix button {
+    width: 100%; text-align: left; font: inherit; color: var(--texte); cursor: pointer;
+    display: flex; gap: .9rem; align-items: baseline;
+    padding: .9rem 1rem; border-radius: .6rem;
+    border: 1px solid var(--ligne); background: var(--surface);
+    transition: border-color .15s, background-color .15s;
+  }
+  .choix button:hover { border-color: var(--accent); background: var(--surface-haute); }
+  .choix-index { font-family: var(--mono); font-size: .75rem; color: var(--accent); flex: none; }
+  .reponse { margin: 0 0 1.75rem; padding-left: 1.4rem; max-width: 46rem; }
+  .reponse li { margin: .5rem 0; }
+  .reponse li::marker { color: var(--accent); font-family: var(--mono); }
+  .satisfait { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding-top: 1.25rem; border-top: 1px solid var(--ligne); }
+  .satisfait p { margin: 0 .5rem 0 0; font-weight: 600; }
+  .satisfait button, .retour {
+    font: inherit; cursor: pointer; border-radius: .5rem; padding: .5rem 1.1rem;
+    border: 1px solid var(--ligne); background: var(--surface); color: var(--texte);
+  }
+  .satisfait button:hover, .retour:hover { border-color: var(--texte-doux); }
+  .retour { margin-top: 1.5rem; color: var(--texte-doux); }
+  .merci {
+    padding: 1rem 1.25rem; border-radius: .6rem; font-weight: 600;
+    background: #0d2a1c; border: 1px solid #1f6b45; color: #86efac;
+  }
+  .encart-discord { padding-top: 1.25rem; border-top: 1px solid var(--ligne); }
+  .encart-discord h3 { margin: 0 0 .5rem; font-size: 1.2rem; }
+  .encart-discord p { margin: 0 0 .75rem; }
+</style>

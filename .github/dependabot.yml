@@ -11,4 +11,7 @@ updates:
     schedule:
       interval: weekly
 
-  # npm (/site) s'ajoute avec le dossier site/.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
