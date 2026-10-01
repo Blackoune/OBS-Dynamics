@@ -43,4 +43,4 @@ winrt-runtime==3.2.1
 # ailleurs et l'overlay fonctionne sans forme d'onde.
 pycaw==20251023
 comtypes==1.4.16
-tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
+tkinterdnd2==0.6.3          # glisser-déposer de médias sur la zone de dépôt
