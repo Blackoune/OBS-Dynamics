@@ -7,9 +7,9 @@ export const GITHUB_URL = `https://github.com/${REPO}`;
 // Tant qu'une valeur est vide, le bouton correspondant n'est pas affiché :
 // jamais de lien cassé ni de faux lien en ligne.
 export const DISCORD = {
-  general: '',
+  general: 'https://discord.gg/SND6DmDHrg',
   ticket: '',
-  vocal: '',
+  vocal: 'https://discord.gg/MnQw9rkxsX',
 };
 
 // Adresse de contact dédiée au projet (plan §13.1 n° 13), en deux morceaux :
