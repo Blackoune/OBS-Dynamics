@@ -15,7 +15,7 @@
 
 customtkinter==6.0.0        # interface graphique
 opencv-python==5.0.0.93     # détection visuelle (matchTemplate)
-numpy==2.5.1                # manipulé directement par detection.py et cover_service
+numpy==2.5.3                # manipulé directement par detection.py et cover_service
 Pillow==12.3.0              # capture d'écran (ImageGrab) + traitement des jaquettes
 psutil==7.2.2               # détection des processus de jeu
 simpleobsws==1.4.3          # client OBS WebSocket v5
