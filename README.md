@@ -4,13 +4,13 @@
 
 # OBS Dynamics
 
-**Le pilote automatique de tes scènes OBS Studio.**
+**Le pilote automatique de vos scènes OBS Studio.**
 
 Détection du jeu en cours, bascule de scène selon ce qui est à l'écran,
 overlays déclenchés au clavier, chat Twitch et widget musique — dans une
 seule application Windows, sans compte et sans configuration serveur.
 
-**Site officiel : [blackoune.github.io/OBS-Dynamics](https://blackoune.github.io/OBS-Dynamics/)**
+**Site officiel : [blackoune.github.io](https://blackoune.github.io/)**
 
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%2010%20%7C%2011-0B0F17?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-0B0F17?style=flat-square&logo=python&logoColor=22D3EE)
@@ -53,13 +53,13 @@ seule application Windows, sans compte et sans configuration serveur.
 ## Présentation
 
 OBS Dynamics est une application de bureau Windows qui fait le travail de
-régie à ta place pendant un stream. Elle observe quel jeu tourne, regarde
-l'écran pour savoir si tu es dans un **menu** ou **en jeu**, et demande à
+régie à votre place pendant un stream. Elle observe quel jeu tourne, regarde
+l'écran pour savoir si vous êtes dans un **menu** ou **en jeu**, et demande à
 OBS Studio d'afficher la scène correspondante.
 
 Autour de ce cœur, elle fournit trois overlays prêts à coller dans OBS comme
-sources navigateur : des médias déclenchés au clavier, le chat de ta chaîne
-Twitch, et un widget « en cours de lecture » pour ton lecteur de musique.
+sources navigateur : des médias déclenchés au clavier, le chat de votre chaîne
+Twitch, et un widget « en cours de lecture » pour votre lecteur de musique.
 
 Tout tient dans un seul processus : un `.exe` ou `python obs_dynamics.py`.
 Aucun navigateur à ouvrir, aucun terminal à laisser tourner, aucun compte à
@@ -71,7 +71,7 @@ créer.
   Processus Windows        Capture de l'écran         OBS Studio
   ─────────────────        ──────────────────         ──────────
   psutil repère le   ───►  OpenCV compare l'écran ───► WebSocket v5 :
-  jeu en cours             à tes captures de           bascule sur la
+  jeu en cours             à vos captures de           bascule sur la
                            référence (menu / jeu)      scène configurée
 ```
 
@@ -79,7 +79,7 @@ créer.
    leur dossier d'installation, ce qui reste fiable même quand l'exécutable
    est renommé. Les jeux ajoutés à la main sont reconnus par leur nom d'exe.
 2. **Confirmation visuelle** (OpenCV `matchTemplate`). L'écran est comparé à
-   des fragments de tes captures de référence. Deux lectures concordantes
+   des fragments de vos captures de référence. Deux lectures concordantes
    sont exigées avant toute bascule, et le meilleur état doit devancer le
    second d'au moins **0,15** : une quasi-égalité ne change rien.
 3. **Bascule de scène** (OBS WebSocket v5 via `simpleobsws`). La connexion
@@ -96,7 +96,7 @@ créer.
 | **Création de scènes** | Crée dans OBS les scènes « `<jeu> - Menu` » et « `<jeu> - En jeu` » avec leur source de capture, en un clic. |
 | **Hotkeys** | `F1` / `F2` / `F3` forcent l'état quand la détection se trompe. Combinaisons acceptées (`ctrl+shift+f1`). |
 | **Raccourcis & Overlays** | Une combinaison de touches affiche une image, joue une vidéo ou un son dans OBS. Mode maintien pour masquer une minimap. |
-| **Chat Twitch** | Chat de ta chaîne en overlay, en lecture anonyme : aucun compte, aucune clé. Lien permanent. |
+| **Chat Twitch** | Chat de votre chaîne en overlay, en lecture anonyme : aucun compte, aucune clé. Lien permanent. |
 | **Widget Musique** | Pochette, titre, artiste et forme d'onde, un overlay par lecteur (Spotify, Deezer, Apple Music…). Cinq dispositions, huit thèmes, image de fond personnalisée. |
 | **Interface** | 39 langues, changement à chaud. Identifiants chiffrés au repos. |
 
@@ -116,8 +116,8 @@ créer.
 
 ### Option A — Exécutable
 
-Si tu disposes de `dist_release/Dynamics.exe`, il n'y a rien à installer :
-lance-le. Pour créer un raccourci « Dynamics » sur le Bureau :
+Si vous disposez de `dist_release/Dynamics.exe`, il n'y a rien à installer :
+lancez-le. Pour créer un raccourci « Dynamics » sur le Bureau :
 
 ```bash
 python make_shortcut.py
@@ -126,7 +126,7 @@ python make_shortcut.py
 ### Option B — Depuis les sources
 
 ```bash
-git clone https://github.com/tristanbest0802-beep/OBS-Dynamics.git
+git clone https://github.com/Blackoune/OBS-Dynamics.git
 ```
 
 ```bash
@@ -176,7 +176,7 @@ Le mot de passe est écrit dans `%APPDATA%\OBS Dynamics\.env` puis chiffré
 
 ### 3. Ajouter un premier jeu
 
-Onglet **Bibliothèque** → **Scanner Steam** pour importer tes jeux Steam, ou
+Onglet **Bibliothèque** → **Scanner Steam** pour importer vos jeux Steam, ou
 **+ Ajouter** pour un jeu hors Steam. La suite est détaillée ci-dessous.
 
 ---
@@ -317,18 +317,18 @@ familles d'overlays (raccourcis, chat, musique).
   l'atteindre.
 - Il ne répond qu'aux requêtes dont l'hôte est `127.0.0.1`, `localhost` ou
   `::1`. Tout le reste reçoit un `403`. C'est ce qui empêche un site web
-  ouvert dans ton navigateur de lire tes overlays. Colle donc l'URL **telle
-  qu'affichée** : remplacer `127.0.0.1` par le nom de ton PC ne fonctionnera
+  ouvert dans votre navigateur de lire vos overlays. Collez donc l'URL **telle
+  qu'affichée** : remplacer `127.0.0.1` par le nom de votre PC ne fonctionnera
   pas.
 - Si le port est occupé, l'application réessaie brièvement puis se replie sur
   un port libre, et **le signale en jaune dans l'onglet**. Les URL déjà
-  collées dans OBS pointent alors vers l'ancien port : recopie celles
+  collées dans OBS pointent alors vers l'ancien port : recopiez celles
   affichées sous chaque ligne. Pour fixer un autre port durablement, voir
   `OBS_OVERLAY_PORT` dans [Configuration avancée](#configuration-avancée).
 
 ### Chat Twitch
 
-1. Carte Twitch → **Connexion** → nom de ta chaîne → **Valider**.
+1. Carte Twitch → **Connexion** → nom de votre chaîne → **Valider**.
 2. **Copier le lien** en bas de l'onglet.
 3. Dans OBS : **Sources → + → Navigateur → URL**.
 
@@ -391,7 +391,7 @@ hors catalogue affiche ses initiales dans sa couleur. Les logos sont dans
 > navigateur. La pastille affichera donc **CHROME**, **EDGE** ou **FIREFOX**,
 > jamais « Spotify » ou « Deezer ». Même limite pour le son : la forme d'onde
 > suit tout le son du navigateur, y compris celui d'un autre onglet. Pour
-> obtenir le nom du service, installe son application.
+> obtenir le nom du service, installez son application.
 
 #### Personnaliser l'apparence
 
@@ -405,7 +405,7 @@ direct :
 | Apparence de la pochette | **Auto**, **Vinyle** (disque qui tourne), **Carré**, **Large** (16:9), **Aucune** |
 | Éléments affichés | Forme d'onde, artiste, application, pastilles de fenêtre, progression, boutons décoratifs |
 | Couleurs | Couleur de fond, opacité du fond, contour et sa couleur |
-| Image personnalisée | Enregistrer le gabarit, dessiner par-dessus dans ton éditeur, puis **Choisir mon image**. La couleur du texte est déduite de la luminosité de l'image. |
+| Image personnalisée | Enregistrer le gabarit, dessiner par-dessus dans votre éditeur, puis **Choisir mon image**. La couleur du texte est déduite de la luminosité de l'image. |
 
 #### Taille de la source navigateur
 
@@ -464,7 +464,7 @@ Română, Slovenčina, Slovenščina, Suomi, Svenska, Tiếng Việt, Türkçe, 
 ### Le fichier `.env`
 
 Il vit dans `%APPDATA%\OBS Dynamics\.env`. L'onglet **Paramètres** l'écrit
-pour toi ; l'éditer à la main n'est utile que pour les réglages sans
+pour vous ; l'éditer à la main n'est utile que pour les réglages sans
 équivalent dans l'interface. Les clés reconnues sont commentées dans
 [`.env.example`](.env.example) ; toute autre clé est ignorée.
 
@@ -501,9 +501,9 @@ Redémarrer l'application après modification.
 
 ## Données, sécurité et confidentialité
 
-### Où vivent tes données
+### Où vivent vos données
 
-Tout est rangé dans ton profil Windows, **hors du dossier du programme** :
+Tout est rangé dans votre profil Windows, **hors du dossier du programme** :
 
 ```
 %APPDATA%\OBS Dynamics\
@@ -532,14 +532,14 @@ même déplacé, puis renommé `.env.old`.
 ### Chiffrement des identifiants
 
 Le mot de passe OBS, la clé RAWG et le jeton du lien chat sont **chiffrés au
-repos** avec DPAPI, dont la clé dérive de ton compte Windows. Le fichier
+repos** avec DPAPI, dont la clé dérive de votre compte Windows. Le fichier
 copié sur une clé USB, envoyé par mail, retrouvé dans une sauvegarde ou lu
 par un autre compte de la machine ne donne rien.
 
-Tu peux saisir une valeur en clair dans `.env` : elle est chiffrée au
+Vous pouvez saisir une valeur en clair dans `.env` : elle est chiffrée au
 démarrage suivant, sous la forme `enc:v2:…`.
 
-Limite inhérente à DPAPI : un programme lancé **sous ta propre session** peut
+Limite inhérente à DPAPI : un programme lancé **sous votre propre session** peut
 déchiffrer ces valeurs. Aucun stockage local sans mot de passe maître ne fait
 mieux.
 

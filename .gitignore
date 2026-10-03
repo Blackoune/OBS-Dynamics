@@ -22,8 +22,6 @@ obs_config.json
 config.json
 
 data/
-# Exception : code source du site (FAQ, lecture des releases), pas des données.
-!site/src/data/
 
 # Artefacts Visual Studio (index Copilot, sqlite de session).
 .vs/

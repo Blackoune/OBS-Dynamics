@@ -34,8 +34,7 @@ def test_journaux_et_anciennes_donnees_ne_se_versionnent_pas(chemin):
 
 
 @pytest.mark.parametrize("chemin", ["music_style.py", "README.md",
-                                    "tests/test_catalog.py", "logo.png",
-                                    "site/src/data/faq.fr.json"])
+                                    "tests/test_catalog.py", "logo.png"])
 def test_les_fichiers_du_projet_restent_versionnables(chemin):
     assert not _refuse(chemin)
 
