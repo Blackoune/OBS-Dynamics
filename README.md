@@ -10,6 +10,8 @@ Détection du jeu en cours, bascule de scène selon ce qui est à l'écran,
 overlays déclenchés au clavier, chat Twitch et widget musique — dans une
 seule application Windows, sans compte et sans configuration serveur.
 
+**Site officiel : [blackoune.github.io/OBS-Dynamics](https://blackoune.github.io/OBS-Dynamics/)**
+
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%2010%20%7C%2011-0B0F17?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-0B0F17?style=flat-square&logo=python&logoColor=22D3EE)
 ![OBS](https://img.shields.io/badge/OBS%20WebSocket-v5-0B0F17?style=flat-square&logo=obsstudio&logoColor=22D3EE)
