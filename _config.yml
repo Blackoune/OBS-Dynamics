@@ -1,0 +1,4 @@
+# GitHub Pages : ne publier que la redirection index.html,
+# pas le reste du dépôt (code, README, notes).
+exclude: ["*"]
+include: ["index.html"]
