@@ -38,6 +38,23 @@ jobs:
           name: exe-brut
           path: dist_release/Dynamics.exe
           if-no-files-found: error
+
+      - name: Assistant d'installation (OBS-Dynamics-Setup.exe)
+        # ponytail: l'installateur embarque l'exe NON signé (construit avant le
+        # job sign). Quand SignPath sera actif, le compiler après la signature.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          choco install innosetup --version=6.4.3 -y --no-progress
+          $version = $env:TAG.TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=$version" "/DNumVersion=$($version -replace '-.*', '')" installer\OBS-Dynamics.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installateur
+          path: dist_release/OBS-Dynamics-Setup.exe
+          if-no-files-found: error
     outputs:
       artifact-id: ${{ steps.envoi.outputs.artifact-id }}
 
@@ -83,16 +100,23 @@ jobs:
           name: ${{ needs.sign.result == 'success' && 'exe-signe' || 'exe-brut' }}
           path: sortie
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: installateur
+          path: sortie
+
       - name: SHA256SUMS.txt
         working-directory: sortie
-        run: sha256sum Dynamics.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum Dynamics.exe OBS-Dynamics-Setup.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Attestation de provenance
         # `gh attestation verify Dynamics.exe --repo …` prouve ensuite que ce
         # fichier précis sort de ce workflow, à partir de ce commit.
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: sortie/Dynamics.exe
+          subject-path: |
+            sortie/Dynamics.exe
+            sortie/OBS-Dynamics-Setup.exe
 
       - name: Analyse VirusTotal
         env:
@@ -120,7 +144,9 @@ jobs:
               echo "**Exécutable non signé** : Windows SmartScreen affichera un avertissement."
             fi
             echo
-            echo "SHA-256 : \`$(cut -d' ' -f1 sortie/SHA256SUMS.txt)\`"
+            echo "SHA-256 :"
+            echo
+            sed 's/^/    /' sortie/SHA256SUMS.txt
             echo
             cat vt.txt
             echo
@@ -156,6 +182,6 @@ jobs:
           # Un tag avec tiret (v1.0.0-test) donne une préversion, que le site ignore.
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" sortie/Dynamics.exe sortie/SHA256SUMS.txt \
+          gh release create "$TAG" sortie/OBS-Dynamics-Setup.exe sortie/Dynamics.exe sortie/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
             --notes-file sortie/notes.md $prerelease

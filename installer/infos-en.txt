@@ -1,0 +1,14 @@
+OBS Dynamics switches your OBS scenes based on the game on screen.
+
+Before you install
+- OBS Studio 28 or later, with the WebSocket server enabled (Tools > WebSocket Server Settings).
+- Windows 10 or 11, 64-bit.
+
+Your data
+- Everything stays on your computer: no account, no ads, no data sent to Blackoune.
+- Your settings are stored in %APPDATA%. Uninstalling does not delete them.
+
+Free software under the GPL-3.0 license, provided without warranty.
+Source code: https://github.com/Blackoune/OBS-Dynamics
+Legal notice: https://blackoune.github.io/en/legal-notice/
+Privacy: https://blackoune.github.io/en/privacy/
