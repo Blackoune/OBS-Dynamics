@@ -6,6 +6,37 @@ from pathlib import Path
 block_cipher = None
 ROOT = Path(SPECPATH)
 
+# Propriétés du fichier (clic droit > Propriétés > Détails) : nom du produit et
+# version, exigés par SignPath. Version lue du tag de release (v1.2.3) en CI,
+# 0.0.0 en local.
+import os
+import re
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
+)
+_tag = os.environ.get("GITHUB_REF_NAME", "")
+_nums = [int(n) for n in re.findall(r"\d+", _tag.split("-")[0])[:3]] if _tag.startswith("v") else []
+_nums = (_nums + [0, 0, 0])[:3]
+_version = ".".join(map(str, _nums))
+VERSION_FILE = ROOT / "build" / "version_info.txt"
+VERSION_FILE.parent.mkdir(exist_ok=True)
+VERSION_FILE.write_text(str(VSVersionInfo(
+    ffi=FixedFileInfo(filevers=(*_nums, 0), prodvers=(*_nums, 0)),
+    kids=[
+        StringFileInfo([StringTable("040C04B0", [
+            StringStruct("CompanyName", "Blackoune"),
+            StringStruct("FileDescription", "OBS Dynamics"),
+            StringStruct("FileVersion", _version),
+            StringStruct("InternalName", "Dynamics"),
+            StringStruct("LegalCopyright", "© Blackoune, GPL-3.0"),
+            StringStruct("OriginalFilename", "Dynamics.exe"),
+            StringStruct("ProductName", "OBS Dynamics"),
+            StringStruct("ProductVersion", _version),
+        ])]),
+        VarFileInfo([VarStruct("Translation", [0x040C, 1200])]),
+    ],
+)), encoding="utf-8")
+
 # assets/ (icon, images) et data/ (games.json vierge) sont embarqués s'ils
 # existent déjà à la racine du projet ; sinon PyInstaller les recrée au
 # premier lancement via get_base_path()/DATA_DIR.mkdir(exist_ok=True).
@@ -107,4 +138,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(ROOT / "assets" / "icon.ico") if (ROOT / "assets" / "icon.ico").exists() else None,
+    version=str(VERSION_FILE),
 )

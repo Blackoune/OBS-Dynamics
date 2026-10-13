@@ -39,6 +39,10 @@ UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 CloseApplications=yes
 
+; Inno 6 masque la page Bienvenue par défaut : on la garde, c'est elle qui
+; montre le grand panneau logo + nom (wizard-*.bmp), comme la page Fin.
+DisableWelcomePage=no
+DisableDirPage=no
 WizardStyle=modern
 WizardSizePercent=110
 SetupIconFile=..\assets\icon.ico

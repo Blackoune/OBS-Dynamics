@@ -155,6 +155,24 @@ logiciel.
 
 ---
 
+## Politique de signature du code
+
+Signature de code gratuite fournie par [SignPath.io](https://about.signpath.io),
+certificat de la [SignPath Foundation](https://signpath.org).
+
+Chaque version est construite par GitHub Actions à partir de ce dépôt public
+(`.github/workflows/release.yml`), jamais sur un PC, puis approuvée à la main
+avant d'être signée et publiée.
+
+| Rôle | Membres |
+|------|---------|
+| Auteurs et relecteurs | [Blackoune](https://github.com/Blackoune) |
+| Approbateurs | [Blackoune](https://github.com/Blackoune) |
+
+Confidentialité : ce programme n'envoie aucune information à d'autres systèmes
+en réseau, sauf à la demande explicite de l'utilisateur. Détails :
+[politique de confidentialité](https://blackoune.github.io/confidentialite/).
+
 ## Premier démarrage
 
 ### 1. Activer le serveur WebSocket dans OBS
