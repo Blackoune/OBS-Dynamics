@@ -135,6 +135,8 @@ jobs:
 
   publish:
     needs: finalize
+    # Sans ce test, la signature ignorée (sign: skipped) fait sauter ce job aussi.
+    if: ${{ !cancelled() && needs.finalize.result == 'success' }}
     runs-on: ubuntu-latest
     # Approbation manuelle de Blackoune (Settings → Environments → release).
     environment: release
