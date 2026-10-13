@@ -55,6 +55,10 @@ if (ROOT / "assets").exists():
 if (ROOT / "i18n.json").exists():
     datas.append((str(ROOT / "i18n.json"), "."))
 
+# Version lue par update_check.py pour comparer avec la dernière release.
+(ROOT / "build" / "version.txt").write_text(_version, encoding="utf-8")
+datas.append((str(ROOT / "build" / "version.txt"), "."))
+
 a = Analysis(
     ["obs_dynamics.py"],
     pathex=[str(ROOT)],

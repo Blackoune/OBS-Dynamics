@@ -31,6 +31,7 @@ import queue
 import subprocess
 import sys
 import threading
+import webbrowser
 from typing import Callable, Optional
 
 from app_paths import (ASSETS_DIR, BASE_DIR, COVERS_DIR, DATA_DIR, ENV_PATH,
@@ -51,6 +52,7 @@ from i18n import t  # noqa: E402
 # reçoivent ctk depuis ui_common, qui a déjà réglé l'éveil DPI à temps.
 import detection  # noqa: E402  (expose le module pour le monkeypatch des tests)
 import screen_match  # noqa: E402
+import update_check  # noqa: E402
 import secret_store  # noqa: E402
 from env_config import ENV_KEYS, EnvConfigManager, OBSConfig  # noqa: E402
 from cover_service import GameCoverService  # noqa: E402
@@ -129,6 +131,14 @@ class Sidebar(ctk.CTkFrame):
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
         ctrl.grid(row=7, column=0, sticky="sew", padx=16, pady=20)
 
+        # Caché tant qu'aucune version plus récente n'est publiée (show_update).
+        self._update_version: Optional[str] = None
+        self.update_btn = ctk.CTkButton(ctrl, text="", height=34, corner_radius=9,
+                                         fg_color="transparent", hover_color=COL_CARD,
+                                         border_width=1, border_color=COL_ACCENT,
+                                         text_color=COL_ACCENT, font=font(12, "bold"),
+                                         command=lambda: webbrowser.open(update_check.install_page(i18n.current_lang())))
+
         self.status_dot = ctk.CTkLabel(ctrl, text="●", text_color=COL_RED, font=font(14))
         self.status_dot.pack(anchor="w")
         self.status_text = ctk.CTkLabel(ctrl, text=t("SIDEBAR_STATUS_STOPPED"), font=font(11),
@@ -197,6 +207,14 @@ class Sidebar(ctk.CTkFrame):
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
         self.start_btn.configure(text=t("SIDEBAR_BTN_START"))
         self.stop_btn.configure(text=t("SIDEBAR_BTN_STOP"))
+        if self._update_version:
+            self.update_btn.configure(text=t("SIDEBAR_UPDATE_AVAILABLE", version=self._update_version))
+
+    def show_update(self, version: str) -> None:
+        """Bouton discret au-dessus de l'état : ouvre la page Installation."""
+        self._update_version = version
+        self.update_btn.configure(text=t("SIDEBAR_UPDATE_AVAILABLE", version=version))
+        self.update_btn.pack(fill="x", pady=(0, 12), before=self.status_dot)
 
 
 # ============================================================================
@@ -330,6 +348,12 @@ class App(ctk.CTk):
         i18n.on_change(self._on_lang_changed)
 
         self._pump_ui_queue()
+        threading.Thread(target=self._check_update_bg, daemon=True).start()
+
+    def _check_update_bg(self) -> None:
+        version = update_check.check()
+        if version:
+            self.post_ui(lambda: self.sidebar.show_update(version))
 
     def _on_lang_changed(self, _lang: str) -> None:
         self.title(t("APP_TITLE_WINDOW"))
