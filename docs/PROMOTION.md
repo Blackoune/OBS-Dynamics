@@ -74,6 +74,9 @@ Ajouter `valorant` (ou le jeu de la démo) si la démo l'utilise.
 
 ## 4. Reddit
 
+À publier à la main : Reddit est bloqué pour l'automatisation par Claude dans Chrome.
+Joindre `docs/promo/demo_en.mp4` au post.
+
 Lire d'abord les règles de chaque sous-forum (jour autorisé pour l'auto-promo,
 flair à choisir). Un seul post pour commencer : r/obs. Attendre les retours
 avant r/Twitch, r/streaming, r/Twitch_startup, r/SideProject, r/Python.
