@@ -12,6 +12,8 @@ seule application Windows, sans compte et sans configuration serveur.
 
 **Site officiel : [blackoune.github.io](https://blackoune.github.io/)**
 
+<img src="docs/promo/demo.gif" alt="Démo : OBS Dynamics repère le jeu, compare l'écran à vos captures et bascule la scène OBS" width="800">
+
 ![Plateforme](https://img.shields.io/badge/plateforme-Windows%2010%20%7C%2011-0B0F17?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-0B0F17?style=flat-square&logo=python&logoColor=22D3EE)
 ![OBS](https://img.shields.io/badge/OBS%20WebSocket-v5-0B0F17?style=flat-square&logo=obsstudio&logoColor=22D3EE)
@@ -19,6 +21,22 @@ seule application Windows, sans compte et sans configuration serveur.
 ![Tests](https://img.shields.io/badge/tests-pytest-0B0F17?style=flat-square&logo=pytest&logoColor=22D3EE)
 
 </div>
+
+---
+
+### En 30 secondes
+
+- **Le problème** : en plein stream, vous changez de scène OBS à la main à chaque menu, partie ou écran de chargement.
+- **La solution** : OBS Dynamics reconnaît le jeu et ce qui est à l'écran, puis bascule la bonne scène tout seul.
+- **Sans friction** : gratuit, open source (GPL-3.0), 100 % local, sans compte ni télémétrie, build public avec empreinte SHA-256.
+- **Télécharger** : [dernière version pour Windows 10 et 11](https://github.com/Blackoune/OBS-Dynamics/releases/latest) · [vidéo de démo](docs/promo/demo_fr.mp4).
+
+### In 30 seconds
+
+- **The problem**: mid-stream, you switch OBS scenes by hand for every menu, match and loading screen.
+- **The fix**: OBS Dynamics recognizes the game and what is on screen, then switches to the right scene by itself.
+- **No friction**: free, open source (GPL-3.0), 100% local, no account, no telemetry, public build with SHA-256 checksums.
+- **Download**: [latest release for Windows 10 and 11](https://github.com/Blackoune/OBS-Dynamics/releases/latest) · [demo video](docs/promo/demo_en.mp4) · [English website](https://blackoune.github.io/en/).
 
 ---
 
@@ -116,11 +134,20 @@ créer.
 
 ### Option A — Exécutable
 
-Si vous disposez de `dist_release/Dynamics.exe`, il n'y a rien à installer :
-lancez-le. Pour créer un raccourci « Dynamics » sur le Bureau :
+Téléchargez la [dernière version](https://github.com/Blackoune/OBS-Dynamics/releases/latest).
+Chaque version contient trois fichiers, construits par GitHub Actions :
 
-```bash
-python make_shortcut.py
+| Fichier | Usage |
+|---|---|
+| `OBS-Dynamics-Setup.exe` | Assistant d'installation : menu Démarrer, raccourci Bureau en option, désinstallation propre. |
+| `Dynamics.exe` | Version portable : rien à installer, lancez-la. |
+| `SHA256SUMS.txt` | Empreintes SHA-256 des deux exécutables. |
+
+Pour vérifier un fichier, comparez la sortie de cette commande PowerShell à la
+ligne correspondante de `SHA256SUMS.txt` :
+
+```powershell
+Get-FileHash .\OBS-Dynamics-Setup.exe -Algorithm SHA256
 ```
 
 ### Option B — Depuis les sources
