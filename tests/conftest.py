@@ -69,6 +69,15 @@ def faux_trousseau(monkeypatch):
     return faux
 
 
+@pytest.fixture(autouse=True)
+def _capture_autorisee(monkeypatch):
+    """Sur un runner macOS, la vraie question à CoreGraphics peut répondre
+    « non » : la boucle de scan ouvrirait alors une boîte modale que personne
+    ne ferme, et la suite resterait bloquée."""
+    import obs_client
+    monkeypatch.setattr(obs_client, "screen_capture_allowed", lambda: True)
+
+
 @pytest.fixture(scope="session")
 def app_module():
     import obs_dynamics

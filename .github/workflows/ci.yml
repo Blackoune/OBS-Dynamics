@@ -37,7 +37,10 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Tests
-        run: python -m pytest tests/ -q
+        # Un test bloqué affiche sa pile au bout de 120 s au lieu de tenir le
+        # runner jusqu'au délai global.
+        run: python -m pytest tests/ -q -o faulthandler_timeout=120
+        timeout-minutes: 20
 
       - name: Vérifier la cohérence i18n
         # Échoue si une clé t("...") du code n'existe pas dans i18n.json, ou
