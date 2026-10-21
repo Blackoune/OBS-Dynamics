@@ -1,10 +1,16 @@
 name: Release
 
-# Seul chemin de publication de Dynamics.exe : construit ici, jamais sur un PC.
-# Les tags v* sont réservés au propriétaire (.github/rulesets/tags-release.json).
+# Seul chemin de publication de Dynamics.exe et d'OBS-Dynamics.dmg : construits
+# ici, jamais sur un PC. Les tags v* sont réservés au propriétaire
+# (.github/rulesets/tags-release.json).
+#
+# Lancement manuel (workflow_dispatch) = répétition : tout est construit et
+# rangé dans l'artefact `release`, mais rien n'est signé, envoyé à VirusTotal
+# ni publié. Sert à essayer le build sans créer de tag.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -45,8 +51,8 @@ jobs:
   sign:
     needs: build
     # Ignoré tant que SignPath n'a pas accepté le projet : la variable de dépôt
-    # SIGNPATH_ORGANIZATION_ID n'existe pas encore.
-    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    # SIGNPATH_ORGANIZATION_ID n'existe pas encore. Jamais pour une répétition.
+    if: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,7 +91,8 @@ jobs:
 
       - name: Assistant d'installation (OBS-Dynamics-Setup.exe)
         env:
-          TAG: ${{ github.ref_name }}
+          # Répétition sans tag : numéro factice, Inno Setup exige un numéro.
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0' }}
         run: |
           choco install innosetup --version=6.4.3 -y --no-progress
           $version = $env:TAG.TrimStart('v')
@@ -104,7 +111,7 @@ jobs:
   sign-installateur:
     needs: installateur
     # Même condition que sign : ignoré tant que SignPath n'est pas configuré.
-    if: ${{ !cancelled() && needs.installateur.result == 'success' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.installateur.result == 'success' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -128,11 +135,83 @@ jobs:
           path: signe/OBS-Dynamics-Setup.exe
           if-no-files-found: error
 
+  mac:
+    # Mac à puce Apple, macOS 13 ou plus (cible annoncée sur le site).
+    # Pas de compte Apple Developer : signature ad hoc, sans notarisation.
+    # L'utilisateur autorise l'app une fois (Réglages Système > Confidentialité
+    # et sécurité > Ouvrir quand même).
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14.7'
+
+      - name: Dépendances vérifiées par empreinte
+        run: python -m pip install --require-hashes --no-deps -r requirements-release.txt
+
+      - name: numpy pour macOS 13
+        # Sur le runner (macOS récent), pip prend la roue numpy macosx_14_0 :
+        # l'app refuserait de démarrer sous macOS 13. La roue macosx_11_0 est
+        # la même version, et son empreinte doit figurer dans le fichier
+        # verrouillé : pas de contournement de --require-hashes.
+        run: |
+          python -m pip download numpy==2.5.1 --only-binary=:all: --no-deps \
+            --platform macosx_13_0_arm64 --python-version 3.14 --implementation cp -d roue
+          empreinte=$(shasum -a 256 roue/numpy-*.whl | cut -d' ' -f1)
+          grep -q "sha256:$empreinte" requirements-release.txt
+          python -m pip install --force-reinstall --no-deps roue/numpy-*.whl
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Construire OBS Dynamics.app
+        run: python build.py
+
+      - name: Aucun binaire au-dessus de macOS 13
+        # Un seul .so compilé pour macOS 14 suffit à faire planter l'app au
+        # lancement sous 13 : contrôle de chaque Mach-O du bundle.
+        run: |
+          trop_recent=0
+          while IFS= read -r -d '' f; do
+            minos=$(vtool -show-build "$f" 2>/dev/null | awk '/minos/ {print $2; exit}')
+            [ -z "$minos" ] && continue
+            plus_haut=$(printf '%s\n13.0\n' "$minos" | sort -V | tail -1)
+            if [ "$plus_haut" != "13.0" ]; then
+              echo "macOS $minos exigé : $f"
+              trop_recent=1
+            fi
+          done < <(find "dist_release/OBS Dynamics.app" -type f -print0)
+          exit $trop_recent
+
+      - name: Signature ad hoc
+        # Sans signature, un Mac à puce Apple dit « endommagée » au lieu de
+        # proposer « Ouvrir quand même ».
+        run: |
+          codesign --force --deep -s - "dist_release/OBS Dynamics.app"
+          codesign --verify --deep --strict --verbose=2 "dist_release/OBS Dynamics.app"
+
+      - name: OBS-Dynamics.dmg
+        run: |
+          mkdir dmg
+          ditto "dist_release/OBS Dynamics.app" "dmg/OBS Dynamics.app"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "OBS Dynamics" -srcfolder dmg -ov -format UDZO dist_release/OBS-Dynamics.dmg
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dmg
+          path: dist_release/OBS-Dynamics.dmg
+          if-no-files-found: error
+
   finalize:
-    needs: [build, sign, installateur, sign-installateur]
+    needs: [build, sign, installateur, sign-installateur, mac]
     # Continue si une signature est ignorée, jamais si elle a échoué.
     if: >-
-      ${{ !cancelled() && needs.installateur.result == 'success'
+      ${{ !cancelled() && needs.installateur.result == 'success' && needs.mac.result == 'success'
       && needs.sign.result != 'failure' && needs.sign-installateur.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
@@ -150,9 +229,15 @@ jobs:
           name: ${{ needs.sign-installateur.result == 'success' && 'installateur-signe' || 'installateur-brut' }}
           path: sortie
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dmg
+          path: sortie
+
       - name: SHA256SUMS.txt
+        # Le site exige la ligne d'OBS-Dynamics.dmg : sans elle, son build échoue.
         working-directory: sortie
-        run: sha256sum Dynamics.exe OBS-Dynamics-Setup.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum Dynamics.exe OBS-Dynamics-Setup.exe OBS-Dynamics.dmg > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Attestation de provenance
         # `gh attestation verify Dynamics.exe --repo …` prouve ensuite que ce
@@ -162,12 +247,14 @@ jobs:
           subject-path: |
             sortie/Dynamics.exe
             sortie/OBS-Dynamics-Setup.exe
+            sortie/OBS-Dynamics.dmg
 
       - name: Analyse VirusTotal
+        if: ${{ github.ref_type == 'tag' }}
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
-          empreinte=$(cut -d' ' -f1 sortie/SHA256SUMS.txt)
+          empreinte=$(grep ' Dynamics.exe$' sortie/SHA256SUMS.txt | cut -d' ' -f1)
           if [ -z "$VT_API_KEY" ]; then
             echo "VT_API_KEY absent : analyse non envoyée." | tee vt.txt
           else
@@ -193,8 +280,9 @@ jobs:
             echo
             sed 's/^/    /' sortie/SHA256SUMS.txt
             echo
-            cat vt.txt
+            echo "**Mac (OBS-Dynamics.dmg) non notarisé** : au premier lancement, autoriser l'app dans Réglages Système > Confidentialité et sécurité > Ouvrir quand même."
             echo
+            if [ -f vt.txt ]; then cat vt.txt; echo; fi
             echo "Vérifier ce fichier : voir SECURITY.md."
           } > sortie/notes.md
 
@@ -207,7 +295,8 @@ jobs:
   publish:
     needs: finalize
     # Sans ce test, la signature ignorée (sign: skipped) fait sauter ce job aussi.
-    if: ${{ !cancelled() && needs.finalize.result == 'success' }}
+    # Une répétition (workflow_dispatch) s'arrête avant : rien n'est publié.
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.finalize.result == 'success' }}
     runs-on: ubuntu-latest
     # Approbation manuelle de Blackoune (Settings → Environments → release).
     environment: release
@@ -227,6 +316,6 @@ jobs:
           # Un tag avec tiret (v1.0.0-test) donne une préversion, que le site ignore.
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" sortie/OBS-Dynamics-Setup.exe sortie/Dynamics.exe sortie/SHA256SUMS.txt \
+          gh release create "$TAG" sortie/OBS-Dynamics-Setup.exe sortie/Dynamics.exe sortie/OBS-Dynamics.dmg sortie/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
             --notes-file sortie/notes.md $prerelease

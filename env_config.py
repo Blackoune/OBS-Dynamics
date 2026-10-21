@@ -174,7 +174,7 @@ class EnvConfigManager:
 
         if not self.save(self.load()):
             return False
-        logger.info("Identifiants du .env chiffrés au repos (DPAPI).")
+        logger.info("Identifiants du .env chiffrés au repos (DPAPI ou Trousseau).")
         return True
 
     def save(self, cfg: OBSConfig) -> bool:
@@ -183,11 +183,11 @@ class EnvConfigManager:
                 updates = {
                     ENV_KEYS["host"]: cfg.host,
                     ENV_KEYS["port"]: str(cfg.port),
-                    ENV_KEYS["password"]: secret_store.encrypt(cfg.password),
+                    ENV_KEYS["password"]: secret_store.encrypt(cfg.password, ENV_KEYS["password"]),
                     ENV_KEYS["scan_interval_seconds"]: str(cfg.scan_interval_seconds),
                     ENV_KEYS["match_threshold"]: str(cfg.match_threshold),
                     ENV_KEYS["lang"]: cfg.lang,
-                    ENV_KEYS["rawg_api_key"]: secret_store.encrypt(cfg.rawg_api_key),
+                    ENV_KEYS["rawg_api_key"]: secret_store.encrypt(cfg.rawg_api_key, ENV_KEYS["rawg_api_key"]),
                     ENV_KEYS["overlay_port"]: str(cfg.overlay_port),
                 }
                 seen = dict.fromkeys(updates, False)
@@ -202,7 +202,7 @@ class EnvConfigManager:
                                 seen[key] = True
                                 continue
                             if _a_nettoyer(key, value):
-                                lines.append(f"{key}={secret_store.encrypt(value)}")
+                                lines.append(f"{key}={secret_store.encrypt(value, key)}")
                                 continue
                         lines.append(line)
                 for key, present in seen.items():

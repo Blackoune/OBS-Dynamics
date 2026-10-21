@@ -15,6 +15,7 @@ fonctionnalité. Les retirer et défaire le câblage dans `obs_dynamics.py`
 from __future__ import annotations
 
 import io
+import sys
 import tkinter as tk
 
 from tkinter import messagebox
@@ -632,8 +633,10 @@ class MusicView(ctk.CTkFrame):
             self._status_lbl.configure(text="")
             self._refresh_btn.configure(state="disabled")
             self._copy_btn.configure(state="disabled")
+            # Hors Windows, ni l'erreur d'import ni la commande pip n'aident :
+            # SMTC n'existe tout simplement pas sur ce système.
             self._banner(t("MUSIC_UNAVAILABLE"), COL_RED,
-                         f"{self._error}\n\n{PIP_HINT}")
+                         f"{self._error}\n\n{PIP_HINT}" if sys.platform == "win32" else "")
             return
 
         self._status_lbl.configure(text=t("MUSIC_COUNT", count=len(self._sessions)))

@@ -11,8 +11,8 @@ MDP = "mot-de-passe-factice-éàü"
 CLE = "cle-rawg-factice"
 
 windows_seulement = pytest.mark.skipif(
-    not secret_store.available(),
-    reason="DPAPI n'existe que sous Windows ; ailleurs les valeurs restent en clair.")
+    sys.platform != "win32",
+    reason="DPAPI n'existe que sous Windows.")
 
 
 # --- Le module seul ------------------------------------------------------ #
@@ -67,11 +67,66 @@ def test_an_unreadable_blob_yields_an_empty_string(caplog):
     assert any("déchiffré" in r.message for r in caplog.records)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="cas non-Windows")
-def test_without_dpapi_the_value_is_left_alone():
+def test_without_a_vault_the_value_is_left_alone(monkeypatch):
     """Mieux vaut un fichier manifestement en clair qu'un encodage qui
     ressemble à du chiffrement."""
+    monkeypatch.setattr(secret_store, "_SYSTEME", "linux")
+    assert secret_store.encrypt(MDP, "OBS_WS_PASSWORD") == MDP
+
+
+# --- macOS : Trousseau (faux trousseau de conftest.py) -------------------- #
+
+@pytest.fixture
+def mac(monkeypatch):
+    monkeypatch.setattr(secret_store, "_SYSTEME", "darwin")
+
+
+def test_mac_keeps_only_a_reference_in_the_file(mac, faux_trousseau):
+    chiffre = secret_store.encrypt(MDP, "OBS_WS_PASSWORD")
+    assert chiffre == secret_store.PREFIX_KEYCHAIN + "OBS_WS_PASSWORD"
+    assert faux_trousseau.elements[("OBS Dynamics", "OBS_WS_PASSWORD")] == MDP
+    assert secret_store.decrypt(chiffre) == MDP
+
+
+def test_mac_saving_twice_replaces_the_keychain_item(mac, faux_trousseau):
+    """Un élément par variable, pas un par enregistrement."""
+    secret_store.encrypt("ancien", "OBS_WS_PASSWORD")
+    secret_store.encrypt("nouveau", "OBS_WS_PASSWORD")
+    assert list(faux_trousseau.elements.values()) == ["nouveau"]
+
+
+def test_mac_without_a_name_the_value_is_left_alone(mac, faux_trousseau):
     assert secret_store.encrypt(MDP) == MDP
+    assert not faux_trousseau.elements
+
+
+def test_mac_a_missing_keychain_item_yields_an_empty_string(mac, caplog):
+    assert secret_store.decrypt(secret_store.PREFIX_KEYCHAIN + "ABSENT") == ""
+    assert any("Trousseau" in r.message for r in caplog.records)
+
+
+def test_mac_a_keychain_failure_leaves_the_value_in_clear(mac, monkeypatch):
+    """Trousseau refusé ou paquet absent : la valeur reste utilisable."""
+    def refuse():
+        raise RuntimeError("trousseau verrouillé")
+    monkeypatch.setattr(secret_store, "_trousseau", refuse)
+    assert secret_store.encrypt(MDP, "OBS_WS_PASSWORD") == MDP
+
+
+def test_mac_a_legacy_clear_env_is_moved_to_the_keychain(mac, app_module, tmp_env):
+    """Un .env en clair (lancement depuis les sources) passe au Trousseau
+    au démarrage, et reste lisible ensuite."""
+    tmp_env.write_text(f"OBS_WS_PASSWORD={MDP}\nRAWG_API_KEY={CLE}\n",
+                       encoding="utf-8")
+    mgr = app_module.EnvConfigManager(tmp_env)
+
+    assert mgr.encrypt_secrets_at_rest() is True
+    brut = tmp_env.read_text(encoding="utf-8")
+    assert MDP not in brut and CLE not in brut
+    assert "OBS_WS_PASSWORD=enc:kc:OBS_WS_PASSWORD" in brut
+    relu = mgr.load()
+    assert (relu.password, relu.rawg_api_key) == (MDP, CLE)
+    assert mgr.encrypt_secrets_at_rest() is False      # déjà au format courant
 
 
 # --- Entropie secondaire et migration v1 --------------------------------- #

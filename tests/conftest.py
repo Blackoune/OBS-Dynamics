@@ -46,6 +46,29 @@ def _clavier_simule(monkeypatch):
     monkeypatch.setattr(hotkeys, "_key_down", lambda _vk: None)
 
 
+class FauxTrousseau:
+    """Trousseau macOS en mémoire : (service, compte) -> valeur."""
+
+    def __init__(self) -> None:
+        self.elements: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, compte: str, valeur: str) -> None:
+        self.elements[(service, compte)] = valeur
+
+    def get_password(self, service: str, compte: str):
+        return self.elements.get((service, compte))
+
+
+@pytest.fixture(autouse=True)
+def faux_trousseau(monkeypatch):
+    """Aucun test ne touche au vrai Trousseau : sur un runner macOS, il peut
+    être verrouillé ou ouvrir une fenêtre d'autorisation qui bloque la CI."""
+    import secret_store
+    faux = FauxTrousseau()
+    monkeypatch.setattr(secret_store, "_trousseau", lambda: faux)
+    return faux
+
+
 @pytest.fixture(scope="session")
 def app_module():
     import obs_dynamics

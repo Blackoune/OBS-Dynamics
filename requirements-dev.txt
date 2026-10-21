@@ -9,6 +9,8 @@ pytest==9.1.1               # suite de tests (dossier tests/)
 # (tools/generer_logos_musique.py). Les PNG produits sont
 # versionnes : rien de tout ceci n'est requis pour lancer ni
 # packager l'application.
-simpleicons==7.21.0        # traces de marques (CC0)
-svglib==2.2.0              # SVG -> dessin reportlab
-rlPyCairo==0.4.0           # rendu bitmap de ce dessin
+# Windows seulement : pycairo n'a pas de roue macOS et voudrait compiler
+# cairo sur le runner Mac de la CI.
+simpleicons==7.21.0 ; sys_platform == "win32"        # traces de marques (CC0)
+svglib==2.2.0 ; sys_platform == "win32"              # SVG -> dessin reportlab
+rlPyCairo==0.4.0 ; sys_platform == "win32"           # rendu bitmap de ce dessin

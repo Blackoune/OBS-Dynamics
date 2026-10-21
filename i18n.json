@@ -247,7 +247,8 @@
     "MUSIC_STYLE_PROGRESS": "Progression",
     "MUSIC_STYLE_CONTROLS": "Boutons (décoratifs)",
     "LANG_NAME": "Français",
-    "SETTINGS_LANG_MORE": "Autres langues"
+    "SETTINGS_LANG_MORE": "Autres langues",
+    "SCREEN_PERMISSION_MAC": "La détection visuelle ne voit pas l'écran. Autorisez OBS Dynamics dans Réglages Système > Confidentialité et sécurité > Enregistrement de l'écran, puis quittez et relancez l'app."
   },
   "en": {
     "APP_NAME": "OBS Dynamics",
@@ -497,7 +498,8 @@
     "MUSIC_STYLE_PROGRESS": "Progress",
     "MUSIC_STYLE_CONTROLS": "Buttons (decorative)",
     "LANG_NAME": "English",
-    "SETTINGS_LANG_MORE": "More languages"
+    "SETTINGS_LANG_MORE": "More languages",
+    "SCREEN_PERMISSION_MAC": "Visual detection cannot see the screen. Allow OBS Dynamics in System Settings > Privacy & Security > Screen Recording, then quit and reopen the app."
   },
   "es": {
     "APP_NAME": "OBS Dynamics",
@@ -747,7 +749,8 @@
     "MUSIC_STYLE_PROGRESS": "Progreso",
     "MUSIC_STYLE_CONTROLS": "Botones (decorativos)",
     "LANG_NAME": "Español",
-    "SETTINGS_LANG_MORE": "Otros idiomas"
+    "SETTINGS_LANG_MORE": "Otros idiomas",
+    "SCREEN_PERMISSION_MAC": "La detección visual no ve la pantalla. Permite OBS Dynamics en Ajustes del Sistema > Privacidad y seguridad > Grabación de pantalla, y luego cierra y vuelve a abrir la app."
   },
   "id": {
     "APP_NAME": "OBS Dynamics",
@@ -997,7 +1000,8 @@
     "MUSIC_STYLE_PROGRESS": "Progres",
     "MUSIC_STYLE_CONTROLS": "Tombol (dekoratif)",
     "LANG_NAME": "Bahasa Indonesia",
-    "SETTINGS_LANG_MORE": "Bahasa lainnya"
+    "SETTINGS_LANG_MORE": "Bahasa lainnya",
+    "SCREEN_PERMISSION_MAC": "Deteksi visual tidak dapat melihat layar. Izinkan OBS Dynamics di Pengaturan Sistem > Privasi & Keamanan > Perekaman Layar, lalu tutup dan buka kembali aplikasi."
   },
   "ms": {
     "APP_NAME": "OBS Dynamics",
@@ -1247,7 +1251,8 @@
     "MUSIC_STYLE_PROGRESS": "Kemajuan",
     "MUSIC_STYLE_CONTROLS": "Butang (hiasan)",
     "LANG_NAME": "Bahasa Melayu",
-    "SETTINGS_LANG_MORE": "Bahasa lain"
+    "SETTINGS_LANG_MORE": "Bahasa lain",
+    "SCREEN_PERMISSION_MAC": "Pengesanan visual tidak dapat melihat skrin. Benarkan OBS Dynamics dalam Seting Sistem > Privasi & Keselamatan > Rakaman Skrin, kemudian keluar dan buka semula aplikasi."
   },
   "cs": {
     "APP_NAME": "OBS Dynamics",
@@ -1497,7 +1502,8 @@
     "MUSIC_STYLE_PROGRESS": "Průběh",
     "MUSIC_STYLE_CONTROLS": "Tlačítka (ozdobná)",
     "LANG_NAME": "Čeština",
-    "SETTINGS_LANG_MORE": "Další jazyky"
+    "SETTINGS_LANG_MORE": "Další jazyky",
+    "SCREEN_PERMISSION_MAC": "Vizuální detekce nevidí obrazovku. Povolte OBS Dynamics v Nastavení systému > Soukromí a zabezpečení > Záznam obrazovky, pak aplikaci ukončete a znovu otevřete."
   },
   "da": {
     "APP_NAME": "OBS Dynamics",
@@ -1747,7 +1753,8 @@
     "MUSIC_STYLE_PROGRESS": "Forløb",
     "MUSIC_STYLE_CONTROLS": "Knapper (dekorative)",
     "LANG_NAME": "Dansk",
-    "SETTINGS_LANG_MORE": "Flere sprog"
+    "SETTINGS_LANG_MORE": "Flere sprog",
+    "SCREEN_PERMISSION_MAC": "Visuel registrering kan ikke se skærmen. Tillad OBS Dynamics under Systemindstillinger > Anonymitet & sikkerhed > Skærmoptagelse, og luk og åbn derefter appen igen."
   },
   "de": {
     "APP_NAME": "OBS Dynamics",
@@ -1997,7 +2004,8 @@
     "MUSIC_STYLE_PROGRESS": "Fortschritt",
     "MUSIC_STYLE_CONTROLS": "Schaltflächen (dekorativ)",
     "LANG_NAME": "Deutsch",
-    "SETTINGS_LANG_MORE": "Weitere Sprachen"
+    "SETTINGS_LANG_MORE": "Weitere Sprachen",
+    "SCREEN_PERMISSION_MAC": "Die visuelle Erkennung sieht den Bildschirm nicht. Erlaube OBS Dynamics unter Systemeinstellungen > Datenschutz & Sicherheit > Bildschirmaufnahme, beende dann die App und öffne sie erneut."
   },
   "et": {
     "APP_NAME": "OBS Dynamics",
@@ -2247,7 +2255,8 @@
     "MUSIC_STYLE_PROGRESS": "Edenemine",
     "MUSIC_STYLE_CONTROLS": "Nupud (dekoratiivsed)",
     "LANG_NAME": "Eesti",
-    "SETTINGS_LANG_MORE": "Rohkem keeli"
+    "SETTINGS_LANG_MORE": "Rohkem keeli",
+    "SCREEN_PERMISSION_MAC": "Visuaalne tuvastus ei näe ekraani. Luba OBS Dynamics jaotises Süsteemiseaded > Privaatsus ja turvalisus > Ekraanisalvestus, seejärel sulge rakendus ja ava see uuesti."
   },
   "tl": {
     "APP_NAME": "OBS Dynamics",
@@ -2497,7 +2506,8 @@
     "MUSIC_STYLE_PROGRESS": "Progreso",
     "MUSIC_STYLE_CONTROLS": "Mga button (palamuti)",
     "LANG_NAME": "Filipino",
-    "SETTINGS_LANG_MORE": "Iba pang wika"
+    "SETTINGS_LANG_MORE": "Iba pang wika",
+    "SCREEN_PERMISSION_MAC": "Hindi makita ng visual detection ang screen. Payagan ang OBS Dynamics sa System Settings > Privacy & Security > Screen Recording, pagkatapos ay isara at buksan muli ang app."
   },
   "ha": {
     "APP_NAME": "OBS Dynamics",
@@ -2747,7 +2757,8 @@
     "MUSIC_STYLE_PROGRESS": "Ci gaba",
     "MUSIC_STYLE_CONTROLS": "Maɓallai (ado)",
     "LANG_NAME": "Hausa",
-    "SETTINGS_LANG_MORE": "Ƙarin harsuna"
+    "SETTINGS_LANG_MORE": "Ƙarin harsuna",
+    "SCREEN_PERMISSION_MAC": "Gano ta gani ba ya ganin allon. Ba da izini ga OBS Dynamics a System Settings > Privacy & Security > Screen Recording, sannan ka rufe ka sake buɗe manhajar."
   },
   "hr": {
     "APP_NAME": "OBS Dynamics",
@@ -2997,7 +3008,8 @@
     "MUSIC_STYLE_PROGRESS": "Napredak",
     "MUSIC_STYLE_CONTROLS": "Gumbi (ukrasni)",
     "LANG_NAME": "Hrvatski",
-    "SETTINGS_LANG_MORE": "Ostali jezici"
+    "SETTINGS_LANG_MORE": "Ostali jezici",
+    "SCREEN_PERMISSION_MAC": "Vizualno prepoznavanje ne vidi zaslon. Dopustite OBS Dynamics u Postavkama sustava > Privatnost i sigurnost > Snimanje zaslona, zatim zatvorite i ponovno otvorite aplikaciju."
   },
   "it": {
     "APP_NAME": "OBS Dynamics",
@@ -3247,7 +3259,8 @@
     "MUSIC_STYLE_PROGRESS": "Avanzamento",
     "MUSIC_STYLE_CONTROLS": "Pulsanti (decorativi)",
     "LANG_NAME": "Italiano",
-    "SETTINGS_LANG_MORE": "Altre lingue"
+    "SETTINGS_LANG_MORE": "Altre lingue",
+    "SCREEN_PERMISSION_MAC": "Il rilevamento visivo non vede lo schermo. Consenti OBS Dynamics in Impostazioni di Sistema > Privacy e sicurezza > Registrazione schermo, poi chiudi e riapri l'app."
   },
   "sw": {
     "APP_NAME": "OBS Dynamics",
@@ -3497,7 +3510,8 @@
     "MUSIC_STYLE_PROGRESS": "Maendeleo",
     "MUSIC_STYLE_CONTROLS": "Vitufe (mapambo)",
     "LANG_NAME": "Kiswahili",
-    "SETTINGS_LANG_MORE": "Lugha zaidi"
+    "SETTINGS_LANG_MORE": "Lugha zaidi",
+    "SCREEN_PERMISSION_MAC": "Ugunduzi wa kuona hauoni skrini. Ruhusu OBS Dynamics katika System Settings > Privacy & Security > Screen Recording, kisha funga na ufungue programu tena."
   },
   "lv": {
     "APP_NAME": "OBS Dynamics",
@@ -3747,7 +3761,8 @@
     "MUSIC_STYLE_PROGRESS": "Progress",
     "MUSIC_STYLE_CONTROLS": "Pogas (dekoratīvas)",
     "LANG_NAME": "Latviešu",
-    "SETTINGS_LANG_MORE": "Citas valodas"
+    "SETTINGS_LANG_MORE": "Citas valodas",
+    "SCREEN_PERMISSION_MAC": "Vizuālā noteikšana neredz ekrānu. Atļaujiet OBS Dynamics sadaļā Sistēmas iestatījumi > Privātums un drošība > Ekrāna ierakstīšana, pēc tam aizveriet un atkal atveriet lietotni."
   },
   "lt": {
     "APP_NAME": "OBS Dynamics",
@@ -3997,7 +4012,8 @@
     "MUSIC_STYLE_PROGRESS": "Eiga",
     "MUSIC_STYLE_CONTROLS": "Mygtukai (dekoratyviniai)",
     "LANG_NAME": "Lietuvių",
-    "SETTINGS_LANG_MORE": "Kitos kalbos"
+    "SETTINGS_LANG_MORE": "Kitos kalbos",
+    "SCREEN_PERMISSION_MAC": "Vaizdinis aptikimas nemato ekrano. Leiskite OBS Dynamics skiltyje Sistemos nustatymai > Privatumas ir sauga > Ekrano įrašymas, tada išeikite ir vėl atidarykite programą."
   },
   "hu": {
     "APP_NAME": "OBS Dynamics",
@@ -4247,7 +4263,8 @@
     "MUSIC_STYLE_PROGRESS": "Folyamat",
     "MUSIC_STYLE_CONTROLS": "Gombok (díszítő)",
     "LANG_NAME": "Magyar",
-    "SETTINGS_LANG_MORE": "További nyelvek"
+    "SETTINGS_LANG_MORE": "További nyelvek",
+    "SCREEN_PERMISSION_MAC": "A vizuális felismerés nem látja a képernyőt. Engedélyezd az OBS Dynamicset a Rendszerbeállítások > Adatvédelem és biztonság > Képernyőfelvétel alatt, majd lépj ki és nyisd meg újra az appot."
   },
   "nl": {
     "APP_NAME": "OBS Dynamics",
@@ -4497,7 +4514,8 @@
     "MUSIC_STYLE_PROGRESS": "Voortgang",
     "MUSIC_STYLE_CONTROLS": "Knoppen (decoratief)",
     "LANG_NAME": "Nederlands",
-    "SETTINGS_LANG_MORE": "Meer talen"
+    "SETTINGS_LANG_MORE": "Meer talen",
+    "SCREEN_PERMISSION_MAC": "Visuele detectie ziet het scherm niet. Sta OBS Dynamics toe in Systeeminstellingen > Privacy en beveiliging > Schermopname, sluit de app daarna af en open hem opnieuw."
   },
   "nb": {
     "APP_NAME": "OBS Dynamics",
@@ -4747,7 +4765,8 @@
     "MUSIC_STYLE_PROGRESS": "Fremdrift",
     "MUSIC_STYLE_CONTROLS": "Knapper (dekorative)",
     "LANG_NAME": "Norsk",
-    "SETTINGS_LANG_MORE": "Flere språk"
+    "SETTINGS_LANG_MORE": "Flere språk",
+    "SCREEN_PERMISSION_MAC": "Visuell gjenkjenning ser ikke skjermen. Tillat OBS Dynamics i Systeminnstillinger > Personvern og sikkerhet > Skjermopptak, og avslutt og åpne appen på nytt."
   },
   "pl": {
     "APP_NAME": "OBS Dynamics",
@@ -4997,7 +5016,8 @@
     "MUSIC_STYLE_PROGRESS": "Postęp",
     "MUSIC_STYLE_CONTROLS": "Przyciski (ozdobne)",
     "LANG_NAME": "Polski",
-    "SETTINGS_LANG_MORE": "Więcej języków"
+    "SETTINGS_LANG_MORE": "Więcej języków",
+    "SCREEN_PERMISSION_MAC": "Wykrywanie wizualne nie widzi ekranu. Zezwól OBS Dynamics w Ustawieniach systemowych > Prywatność i ochrona > Nagrywanie ekranu, a następnie zamknij i ponownie otwórz aplikację."
   },
   "pt": {
     "APP_NAME": "OBS Dynamics",
@@ -5247,7 +5267,8 @@
     "MUSIC_STYLE_PROGRESS": "Progresso",
     "MUSIC_STYLE_CONTROLS": "Botões (decorativos)",
     "LANG_NAME": "Português",
-    "SETTINGS_LANG_MORE": "Mais idiomas"
+    "SETTINGS_LANG_MORE": "Mais idiomas",
+    "SCREEN_PERMISSION_MAC": "A detecção visual não vê a tela. Permita o OBS Dynamics em Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela e depois feche e reabra o app."
   },
   "ro": {
     "APP_NAME": "OBS Dynamics",
@@ -5497,7 +5518,8 @@
     "MUSIC_STYLE_PROGRESS": "Progres",
     "MUSIC_STYLE_CONTROLS": "Butoane (decorative)",
     "LANG_NAME": "Română",
-    "SETTINGS_LANG_MORE": "Alte limbi"
+    "SETTINGS_LANG_MORE": "Alte limbi",
+    "SCREEN_PERMISSION_MAC": "Detecția vizuală nu vede ecranul. Permite OBS Dynamics în Configurări sistem > Confidențialitate și securitate > Înregistrare ecran, apoi închide și redeschide aplicația."
   },
   "sk": {
     "APP_NAME": "OBS Dynamics",
@@ -5747,7 +5769,8 @@
     "MUSIC_STYLE_PROGRESS": "Priebeh",
     "MUSIC_STYLE_CONTROLS": "Tlačidlá (ozdobné)",
     "LANG_NAME": "Slovenčina",
-    "SETTINGS_LANG_MORE": "Ďalšie jazyky"
+    "SETTINGS_LANG_MORE": "Ďalšie jazyky",
+    "SCREEN_PERMISSION_MAC": "Vizuálna detekcia nevidí obrazovku. Povoľte OBS Dynamics v Nastaveniach systému > Súkromie a bezpečnosť > Nahrávanie obrazovky, potom aplikáciu ukončite a znova otvorte."
   },
   "sl": {
     "APP_NAME": "OBS Dynamics",
@@ -5997,7 +6020,8 @@
     "MUSIC_STYLE_PROGRESS": "Napredek",
     "MUSIC_STYLE_CONTROLS": "Gumbi (okrasni)",
     "LANG_NAME": "Slovenščina",
-    "SETTINGS_LANG_MORE": "Drugi jeziki"
+    "SETTINGS_LANG_MORE": "Drugi jeziki",
+    "SCREEN_PERMISSION_MAC": "Vizualno zaznavanje ne vidi zaslona. Dovolite OBS Dynamics v Sistemskih nastavitvah > Zasebnost in varnost > Snemanje zaslona, nato zaprite in znova odprite aplikacijo."
   },
   "fi": {
     "APP_NAME": "OBS Dynamics",
@@ -6247,7 +6271,8 @@
     "MUSIC_STYLE_PROGRESS": "Edistyminen",
     "MUSIC_STYLE_CONTROLS": "Painikkeet (koriste)",
     "LANG_NAME": "Suomi",
-    "SETTINGS_LANG_MORE": "Lisää kieliä"
+    "SETTINGS_LANG_MORE": "Lisää kieliä",
+    "SCREEN_PERMISSION_MAC": "Visuaalinen tunnistus ei näe näyttöä. Salli OBS Dynamics kohdassa Järjestelmäasetukset > Yksityisyys ja suojaus > Näytön tallennus, ja sulje ja avaa appi uudelleen."
   },
   "sv": {
     "APP_NAME": "OBS Dynamics",
@@ -6497,7 +6522,8 @@
     "MUSIC_STYLE_PROGRESS": "Förlopp",
     "MUSIC_STYLE_CONTROLS": "Knappar (dekorativa)",
     "LANG_NAME": "Svenska",
-    "SETTINGS_LANG_MORE": "Fler språk"
+    "SETTINGS_LANG_MORE": "Fler språk",
+    "SCREEN_PERMISSION_MAC": "Visuell identifiering ser inte skärmen. Tillåt OBS Dynamics i Systeminställningar > Integritet och säkerhet > Skärminspelning, avsluta sedan appen och öppna den igen."
   },
   "vi": {
     "APP_NAME": "OBS Dynamics",
@@ -6747,7 +6773,8 @@
     "MUSIC_STYLE_PROGRESS": "Tiến trình",
     "MUSIC_STYLE_CONTROLS": "Nút (trang trí)",
     "LANG_NAME": "Tiếng Việt",
-    "SETTINGS_LANG_MORE": "Ngôn ngữ khác"
+    "SETTINGS_LANG_MORE": "Ngôn ngữ khác",
+    "SCREEN_PERMISSION_MAC": "Tính năng nhận diện hình ảnh không thấy màn hình. Hãy cho phép OBS Dynamics trong Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Ghi màn hình, rồi thoát và mở lại ứng dụng."
   },
   "tr": {
     "APP_NAME": "OBS Dynamics",
@@ -6997,7 +7024,8 @@
     "MUSIC_STYLE_PROGRESS": "İlerleme",
     "MUSIC_STYLE_CONTROLS": "Düğmeler (süs)",
     "LANG_NAME": "Türkçe",
-    "SETTINGS_LANG_MORE": "Diğer diller"
+    "SETTINGS_LANG_MORE": "Diğer diller",
+    "SCREEN_PERMISSION_MAC": "Görsel algılama ekranı göremiyor. Sistem Ayarları > Gizlilik ve Güvenlik > Ekran Kaydı bölümünden OBS Dynamics'e izin verin, ardından uygulamadan çıkıp yeniden açın."
   },
   "ru": {
     "APP_NAME": "OBS Dynamics",
@@ -7247,7 +7275,8 @@
     "MUSIC_STYLE_PROGRESS": "Прогресс",
     "MUSIC_STYLE_CONTROLS": "Кнопки (декоративные)",
     "LANG_NAME": "Русский",
-    "SETTINGS_LANG_MORE": "Другие языки"
+    "SETTINGS_LANG_MORE": "Другие языки",
+    "SCREEN_PERMISSION_MAC": "Визуальное распознавание не видит экран. Разрешите OBS Dynamics в разделе «Системные настройки» > «Конфиденциальность и безопасность» > «Запись экрана», затем закройте и снова откройте приложение."
   },
   "uk": {
     "APP_NAME": "OBS Dynamics",
@@ -7497,7 +7526,8 @@
     "MUSIC_STYLE_PROGRESS": "Прогрес",
     "MUSIC_STYLE_CONTROLS": "Кнопки (декоративні)",
     "LANG_NAME": "Українська",
-    "SETTINGS_LANG_MORE": "Інші мови"
+    "SETTINGS_LANG_MORE": "Інші мови",
+    "SCREEN_PERMISSION_MAC": "Візуальне розпізнавання не бачить екран. Дозвольте OBS Dynamics у «Системні параметри» > «Приватність і безпека» > «Записування екрана», потім закрийте й знову відкрийте програму."
   },
   "ur": {
     "APP_NAME": "OBS Dynamics",
@@ -7747,7 +7777,8 @@
     "MUSIC_STYLE_PROGRESS": "پیش رفت",
     "MUSIC_STYLE_CONTROLS": "بٹن (آرائشی)",
     "LANG_NAME": "اردو",
-    "SETTINGS_LANG_MORE": "مزید زبانیں"
+    "SETTINGS_LANG_MORE": "مزید زبانیں",
+    "SCREEN_PERMISSION_MAC": "بصری شناخت اسکرین نہیں دیکھ پا رہی۔ System Settings > Privacy & Security > Screen Recording میں OBS Dynamics کو اجازت دیں، پھر ایپ بند کر کے دوبارہ کھولیں۔"
   },
   "ar": {
     "APP_NAME": "OBS Dynamics",
@@ -7997,7 +8028,8 @@
     "MUSIC_STYLE_PROGRESS": "التقدّم",
     "MUSIC_STYLE_CONTROLS": "أزرار (للزينة)",
     "LANG_NAME": "العربية",
-    "SETTINGS_LANG_MORE": "لغات أخرى"
+    "SETTINGS_LANG_MORE": "لغات أخرى",
+    "SCREEN_PERMISSION_MAC": "لا يرى الاكتشاف المرئي الشاشة. اسمح لـ OBS Dynamics في إعدادات النظام > الخصوصية والأمن > تسجيل الشاشة، ثم أغلق التطبيق وأعد فتحه."
   },
   "fa": {
     "APP_NAME": "OBS Dynamics",
@@ -8247,7 +8279,8 @@
     "MUSIC_STYLE_PROGRESS": "پیشرفت",
     "MUSIC_STYLE_CONTROLS": "دکمه‌ها (تزئینی)",
     "LANG_NAME": "فارسی",
-    "SETTINGS_LANG_MORE": "زبان‌های دیگر"
+    "SETTINGS_LANG_MORE": "زبان‌های دیگر",
+    "SCREEN_PERMISSION_MAC": "تشخیص تصویری صفحه را نمی‌بیند. در تنظیمات سیستم > حریم خصوصی و امنیت > ضبط صفحه به OBS Dynamics اجازه دهید، سپس برنامه را ببندید و دوباره باز کنید."
   },
   "hi": {
     "APP_NAME": "OBS Dynamics",
@@ -8497,7 +8530,8 @@
     "MUSIC_STYLE_PROGRESS": "प्रगति",
     "MUSIC_STYLE_CONTROLS": "बटन (सजावटी)",
     "LANG_NAME": "हिन्दी",
-    "SETTINGS_LANG_MORE": "अन्य भाषाएँ"
+    "SETTINGS_LANG_MORE": "अन्य भाषाएँ",
+    "SCREEN_PERMISSION_MAC": "विज़ुअल पहचान स्क्रीन नहीं देख पा रही। सिस्टम सेटिंग्ज़ > गोपनीयता और सुरक्षा > स्क्रीन रिकॉर्डिंग में OBS Dynamics को अनुमति दें, फिर ऐप बंद करके दोबारा खोलें।"
   },
   "bn": {
     "APP_NAME": "OBS Dynamics",
@@ -8747,7 +8781,8 @@
     "MUSIC_STYLE_PROGRESS": "অগ্রগতি",
     "MUSIC_STYLE_CONTROLS": "বোতাম (সাজসজ্জা)",
     "LANG_NAME": "বাংলা",
-    "SETTINGS_LANG_MORE": "আরও ভাষা"
+    "SETTINGS_LANG_MORE": "আরও ভাষা",
+    "SCREEN_PERMISSION_MAC": "ভিজ্যুয়াল শনাক্তকরণ স্ক্রিন দেখতে পাচ্ছে না। System Settings > Privacy & Security > Screen Recording-এ OBS Dynamics-কে অনুমতি দিন, তারপর অ্যাপটি বন্ধ করে আবার খুলুন।"
   },
   "th": {
     "APP_NAME": "OBS Dynamics",
@@ -8997,7 +9032,8 @@
     "MUSIC_STYLE_PROGRESS": "ความคืบหน้า",
     "MUSIC_STYLE_CONTROLS": "ปุ่ม (ตกแต่ง)",
     "LANG_NAME": "ไทย",
-    "SETTINGS_LANG_MORE": "ภาษาอื่น ๆ"
+    "SETTINGS_LANG_MORE": "ภาษาอื่น ๆ",
+    "SCREEN_PERMISSION_MAC": "การตรวจจับภาพมองไม่เห็นหน้าจอ อนุญาต OBS Dynamics ในการตั้งค่าระบบ > ความเป็นส่วนตัวและความปลอดภัย > การบันทึกหน้าจอ แล้วออกและเปิดแอปใหม่"
   },
   "zh": {
     "APP_NAME": "OBS Dynamics",
@@ -9247,7 +9283,8 @@
     "MUSIC_STYLE_PROGRESS": "进度",
     "MUSIC_STYLE_CONTROLS": "按钮（装饰）",
     "LANG_NAME": "中文",
-    "SETTINGS_LANG_MORE": "更多语言"
+    "SETTINGS_LANG_MORE": "更多语言",
+    "SCREEN_PERMISSION_MAC": "视觉检测看不到屏幕。请在“系统设置”>“隐私与安全性”>“录屏”中允许 OBS Dynamics，然后退出并重新打开应用。"
   },
   "ja": {
     "APP_NAME": "OBS Dynamics",
@@ -9497,7 +9534,8 @@
     "MUSIC_STYLE_PROGRESS": "進行状況",
     "MUSIC_STYLE_CONTROLS": "ボタン（装飾）",
     "LANG_NAME": "日本語",
-    "SETTINGS_LANG_MORE": "その他の言語"
+    "SETTINGS_LANG_MORE": "その他の言語",
+    "SCREEN_PERMISSION_MAC": "画面認識が画面を取得できません。「システム設定」>「プライバシーとセキュリティ」>「画面収録」で OBS Dynamics を許可し、アプリを終了して再度開いてください。"
   },
   "ko": {
     "APP_NAME": "OBS Dynamics",
@@ -9747,6 +9785,7 @@
     "MUSIC_STYLE_PROGRESS": "진행률",
     "MUSIC_STYLE_CONTROLS": "버튼 (장식용)",
     "LANG_NAME": "한국어",
-    "SETTINGS_LANG_MORE": "다른 언어"
+    "SETTINGS_LANG_MORE": "다른 언어",
+    "SCREEN_PERMISSION_MAC": "시각 감지가 화면을 볼 수 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 OBS Dynamics를 허용한 다음 앱을 종료하고 다시 여세요."
   }
 }

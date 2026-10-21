@@ -13,7 +13,7 @@ qui reste ouvert. Pour l'installation et l'usage, voir [README.md](README.md).
 
 ## 1. Architecture
 
-Application Windows autonome, **un seul point d'entrée** : `obs_dynamics.py`.
+Application de bureau Windows et macOS, **un seul point d'entrée** : `obs_dynamics.py`.
 
 ```
 obs_dynamics.py     point d'entrée : fenêtre, Sidebar, App, câblage
@@ -37,7 +37,7 @@ overlay_server.py   serveur HTTP + SSE des sources navigateur OBS
                     (overlays de déclencheurs ET overlay du chat Twitch)
 i18n.py / i18n.json fr / en / es, changement de langue à chaud
 build.py            validation i18n bloquante + PyInstaller
-secret_store.py     chiffrement DPAPI des identifiants au repos
+secret_store.py     identifiants au repos : DPAPI (Windows), Trousseau (macOS)
 tests/              380 tests pytest, sans OBS ni Steam ni serveur graphique
 ```
 
@@ -115,6 +115,26 @@ Ces fonctionnalités compilent et passent les tests unitaires, mais n'ont pas
 réseau, clavier). Elles restent marquées 🟡 tant que la case n'est pas cochée.
 
 **Cocher la case et passer la ligne du §2 en ✅ une fois le test concluant.**
+
+- [ ] 🟡 **Version Mac (`OBS-Dynamics.dmg`)** — ajoutée le 2026-10-21, construite
+      par le job `mac` de `release.yml` (runner `macos-latest`, arm64, macOS 13+),
+      **jamais lancée sur un vrai Mac**. Signature ad hoc, sans notarisation :
+      l'utilisateur passe par Réglages Système > Confidentialité et sécurité >
+      Ouvrir quand même. Ce qui diffère de Windows :
+      - identifiants dans le **Trousseau** (`secret_store`, paquet `keyring`) ;
+        le `.env` ne garde que `enc:kc:<NOM>` ;
+      - configuration dans `~/Library/Application Support/OBS Dynamics` ;
+      - Steam lu dans `~/Library/Application Support/Steam` ;
+      - autorisation « Enregistrement de l'écran » vérifiée par
+        `detection.screen_capture_allowed()` (CoreGraphics), avertissement une
+        fois par session ; sans elle macOS rend une image vide sans erreur ;
+      - hotkeys : `pynput` demande « Surveillance de l'entrée » ;
+      - **onglet Musique désactivé** (SMTC n'existe pas sur Mac ; lecture
+        Spotify / Apple Music par AppleScript non faite) ;
+      - la signature ad hoc change à chaque build : macOS peut redemander les
+        autorisations et l'accès au Trousseau après une mise à jour.
+      À tester : premier lancement, deux autorisations, détection, connexion OBS.
+      Répétition du build sans publier : Actions > Release > Run workflow.
 
 - [x] ✅ **Jaquettes** — validé le 2026-09-03 contre le vrai CDN Steam.
       Les 6 jeux testés (Portal 2, Hades, Elden Ring, Terraria, Hollow Knight,
