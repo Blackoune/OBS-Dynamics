@@ -174,10 +174,13 @@ jobs:
 
       - name: Aucun binaire au-dessus de macOS 13
         # Un seul .so compilé pour macOS 14 suffit à faire planter l'app au
-        # lancement sous 13 : contrôle de chaque Mach-O du bundle.
+        # lancement sous 13 : contrôle de chaque Mach-O du bundle. Exception :
+        # tkdnd (macOS 14), chargé à la demande sous try/except
+        # (ui_common._try_enable_dnd) : sous 13, seul le glisser-déposer manque.
         run: |
           trop_recent=0
           while IFS= read -r -d '' f; do
+            case "$f" in */tkinterdnd2/tkdnd/*) continue ;; esac
             minos=$(vtool -show-build "$f" 2>/dev/null | awk '/minos/ {print $2; exit}')
             [ -z "$minos" ] && continue
             plus_haut=$(printf '%s\n13.0\n' "$minos" | sort -V | tail -1)

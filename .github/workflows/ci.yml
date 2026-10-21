@@ -24,6 +24,11 @@ jobs:
         # version sous laquelle le .exe est construit — sans elle la CI ne
         # testerait jamais l'interpréteur qui sert réellement au packaging.
         python-version: ["3.12", "3.14"]
+        exclude:
+          # Le Tk 8.6 du Python 3.12 macOS bloque dans update() (test_music_ui) ;
+          # le .dmg est construit en 3.14, seule version Mac testée.
+          - os: macos-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
