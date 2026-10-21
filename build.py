@@ -85,6 +85,19 @@ def run_pyinstaller() -> None:
 
 
 def collect_output() -> None:
+    if sys.platform == "darwin":
+        # macOS : un dossier `.app`, pas un fichier. Le .dmg est fabriqué
+        # ensuite par le workflow de release, qui le signe ad hoc.
+        app = DIST_DIR / "OBS Dynamics.app"
+        if not app.is_dir():
+            print(f"[build] ERREUR : application attendue introuvable : {app}")
+            sys.exit(1)
+        RELEASE_DIR.mkdir(exist_ok=True)
+        dest = RELEASE_DIR / app.name
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(app, dest, symlinks=True)
+        print(f"[build] Application copiée -> {dest}")
+        return
     exe_name = "Dynamics.exe" if sys.platform == "win32" else "Dynamics"
     exe_path = DIST_DIR / exe_name
     if not exe_path.exists():

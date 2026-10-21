@@ -56,7 +56,14 @@ COL_BADGE_FG = "#F3F0FA"
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "Inter"
+# Police livrée avec le système : Inter n'est installée ni sur Windows ni sur
+# macOS, et Tk retombait alors sur une police bitmap sans prévenir.
+if sys.platform == "win32":
+    FONT_FAMILY = "Segoe UI"
+elif sys.platform == "darwin":
+    FONT_FAMILY = "Helvetica Neue"
+else:
+    FONT_FAMILY = "Inter"
 
 
 def font(size: int, weight: str = "normal") -> ctk.CTkFont:

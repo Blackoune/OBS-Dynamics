@@ -69,7 +69,11 @@ def get_user_config_dir() -> Path:
     """
     if sys.platform == "win32":
         root = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
-    else:  # Linux/macOS : convention XDG, utile pour les tests hors Windows
+    elif sys.platform == "darwin":
+        # Emplacement attendu par macOS : ~/.config n'y est pas une convention,
+        # et une app glissée dans /Applications n'a rien à y écrire.
+        root = Path.home() / "Library" / "Application Support"
+    else:  # Linux : convention XDG, utile pour les tests hors Windows
         root = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
     path = Path(root) / "OBS Dynamics"
     path.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import sys
+
 import pytest
 
 ctk = pytest.importorskip("customtkinter")
@@ -252,6 +254,8 @@ def test_the_list_closes_only_when_focus_leaves_it(vue, monkeypatch):
     assert menu._popup is None
 
 
+@pytest.mark.skipif(sys.platform == "darwin",
+                    reason="Tk macOS ne propage pas le déplacement par geometry() avant update()")
 def test_the_list_closes_when_the_window_moves(vue):
     """La liste est une fenêtre à part : si la fenêtre principale bouge sans
     elle, elle resterait à flotter à l'ancienne place. Fenêtre affichée : Tk

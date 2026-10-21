@@ -7,6 +7,7 @@ ui_common.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -58,6 +59,31 @@ def is_game_active(game: Game) -> bool:
     except (psutil.Error, OSError):
         logger.debug("Erreur vérification processus pour '%s'.", game.name, exc_info=True)
     return False
+
+
+def screen_capture_allowed() -> bool:
+    """macOS : l'app a-t-elle l'autorisation « Enregistrement de l'écran » ?
+
+    Sans elle, la capture ne lève AUCUNE erreur : macOS rend une image
+    expurgée (fond d'écran ou noir), la détection ne reconnaît jamais rien et
+    rien ne dit pourquoi. On interroge donc l'autorisation elle-même. Le
+    premier appel à `CGRequestScreenCaptureAccess` ouvre aussi la demande
+    système, qui inscrit l'app dans Réglages Système. Vrai hors macOS et
+    si la question ne peut pas être posée : ne jamais bloquer à tort.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        import ctypes
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+        if cg.CGPreflightScreenCaptureAccess():
+            return True
+        cg.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
+        cg.CGRequestScreenCaptureAccess()
+        return False
+    except (OSError, AttributeError):
+        return True
 
 
 def _capture_screen_bgr() -> Optional[np.ndarray]:

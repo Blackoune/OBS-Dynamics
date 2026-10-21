@@ -9,6 +9,7 @@ vérifier son empreinte.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Optional
 
 import requests
@@ -42,10 +43,14 @@ def newer_version(current: str, latest_tag: str) -> Optional[str]:
     return None
 
 
-def install_page(lang: str) -> str:
-    """Section « Mettre à jour » du site, en français ou sinon en anglais."""
+def install_page(lang: str, systeme: str = sys.platform) -> str:
+    """Section « Mettre à jour » du site, en français ou sinon en anglais.
+
+    Sur Mac, la section de l'onglet Mac : c'est là qu'est le .dmg, pas
+    l'installeur Windows."""
     prefixe = "" if lang == "fr" else "/en"
-    return f"{SITE_URL}{prefixe}/installation/#mise-a-jour"
+    ancre = "titre-mise-a-jour-mac" if systeme == "darwin" else "mise-a-jour"
+    return f"{SITE_URL}{prefixe}/installation/#{ancre}"
 
 
 def check(timeout: float = 5.0) -> Optional[str]:
