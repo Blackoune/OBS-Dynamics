@@ -16,11 +16,14 @@
 customtkinter==6.0.0        # interface graphique
 opencv-python==5.0.0.93     # détection visuelle (matchTemplate)
 numpy==2.5.1                # manipulé directement par detection.py et cover_service
-Pillow==12.3.0              # capture d'écran (ImageGrab) + traitement des jaquettes
+Pillow==13.0.0              # capture d'écran (ImageGrab) + traitement des jaquettes
 psutil==7.2.2               # détection des processus de jeu
 simpleobsws==1.4.3          # client OBS WebSocket v5
 requests==2.34.2            # téléchargement des jaquettes (cover_service)
 pynput==1.8.2               # hotkeys globales (dégradation propre si absent)
+
+# Les paquets marqués `sys_platform == "win32"` n'existent que pour Windows :
+# sans le marqueur, `pip install` échoue sur Mac.
 
 # Widget Musique : lecture des métadonnées « en cours de lecture » publiées par
 # Windows (SMTC). Le paquet `winsdk`, cité par presque tous les exemples en
@@ -30,19 +33,19 @@ pynput==1.8.2               # hotkeys globales (dégradation propre si absent)
 # `get_sessions()` — sans lui, ModuleNotFoundError au premier morceau lu.
 # `music_smtc` dégrade proprement si ces paquets manquent : l'onglet affiche
 # l'erreur et la commande d'installation, le reste de l'application fonctionne.
-winrt-Windows.Media.Control==3.2.1
-winrt-Windows.Storage.Streams==3.2.1
-winrt-Windows.Foundation==3.2.1
-winrt-Windows.Foundation.Collections==3.2.1
-winrt-runtime==3.2.1
+winrt-Windows.Media.Control==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Storage.Streams==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Foundation==3.2.1 ; sys_platform == "win32"
+winrt-Windows.Foundation.Collections==3.2.1 ; sys_platform == "win32"
+winrt-runtime==3.2.1 ; sys_platform == "win32"
 
 # Forme d'onde du widget musique : niveau audio PAR APPLICATION, lu sur le
 # compteur de la session (`IAudioMeterInformation`) — le meme que le melangeur
 # de volume de Windows. C'est ce qui permet a l'overlay Spotify de ne reagir
 # qu'au son de Spotify. Windows uniquement ; `music_audio.available()` est faux
 # ailleurs et l'overlay fonctionne sans forme d'onde.
-pycaw==20251023
-comtypes==1.4.16
+pycaw==20251023 ; sys_platform == "win32"
+comtypes==1.4.16 ; sys_platform == "win32"
 tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
 
 # Sous-titres : reconnaissance vocale locale en flux (modèles téléchargés au
@@ -51,3 +54,7 @@ tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
 # le reste de l'application fonctionne.
 sherpa-onnx==1.13.8
 soundcard==0.4.6
+
+# Identifiants au repos sur Mac : Trousseau de la session (secret_store.py).
+# Sous Windows c'est DPAPI, appelé par ctypes, sans paquet.
+keyring==25.7.0 ; sys_platform == "darwin"

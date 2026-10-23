@@ -11,31 +11,33 @@ ROOT = Path(SPECPATH)
 # 0.0.0 en local.
 import os
 import re
-from PyInstaller.utils.win32.versioninfo import (
-    FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
-)
 _tag = os.environ.get("GITHUB_REF_NAME", "")
 _nums = [int(n) for n in re.findall(r"\d+", _tag.split("-")[0])[:3]] if _tag.startswith("v") else []
 _nums = (_nums + [0, 0, 0])[:3]
 _version = ".".join(map(str, _nums))
 VERSION_FILE = ROOT / "build" / "version_info.txt"
 VERSION_FILE.parent.mkdir(exist_ok=True)
-VERSION_FILE.write_text(str(VSVersionInfo(
-    ffi=FixedFileInfo(filevers=(*_nums, 0), prodvers=(*_nums, 0)),
-    kids=[
-        StringFileInfo([StringTable("040C04B0", [
-            StringStruct("CompanyName", "Blackoune"),
-            StringStruct("FileDescription", "OBS Dynamics"),
-            StringStruct("FileVersion", _version),
-            StringStruct("InternalName", "Dynamics"),
-            StringStruct("LegalCopyright", "© Blackoune, GPL-3.0"),
-            StringStruct("OriginalFilename", "Dynamics.exe"),
-            StringStruct("ProductName", "OBS Dynamics"),
-            StringStruct("ProductVersion", _version),
-        ])]),
-        VarFileInfo([VarStruct("Translation", [0x040C, 1200])]),
-    ],
-)), encoding="utf-8")
+# Ressource de version PE : Windows seulement (pefile n'est installé que là).
+if sys.platform == "win32":
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
+    )
+    VERSION_FILE.write_text(str(VSVersionInfo(
+        ffi=FixedFileInfo(filevers=(*_nums, 0), prodvers=(*_nums, 0)),
+        kids=[
+            StringFileInfo([StringTable("040C04B0", [
+                StringStruct("CompanyName", "Blackoune"),
+                StringStruct("FileDescription", "OBS Dynamics"),
+                StringStruct("FileVersion", _version),
+                StringStruct("InternalName", "Dynamics"),
+                StringStruct("LegalCopyright", "© Blackoune, GPL-3.0"),
+                StringStruct("OriginalFilename", "Dynamics.exe"),
+                StringStruct("ProductName", "OBS Dynamics"),
+                StringStruct("ProductVersion", _version),
+            ])]),
+            VarFileInfo([VarStruct("Translation", [0x040C, 1200])]),
+        ],
+    )), encoding="utf-8")
 
 # assets/ (icon, images) et data/ (games.json vierge) sont embarqués s'ils
 # existent déjà à la racine du projet ; sinon PyInstaller les recrée au
@@ -127,7 +129,12 @@ a = Analysis(
         "requests",
         "pynput",
         "tkinterdnd2",     # glisser-déposer (extension Tcl tkdnd)
-    ],
+    ] + ([
+        # macOS : modules choisis à l'exécution, invisibles à l'analyse.
+        "keyring.backends.macOS",   # Trousseau (secret_store)
+        "pynput.keyboard._darwin",
+        "pynput.mouse._darwin",
+    ] if sys.platform == "darwin" else []),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -140,26 +147,71 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name="Dynamics",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,  # False = pas de fenêtre console noire derrière la GUI
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=str(ROOT / "assets" / "icon.ico") if (ROOT / "assets" / "icon.ico").exists() else None,
-    version=str(VERSION_FILE),
-)
+if sys.platform == "darwin":
+    # macOS : une app `.app` en mode dossier. Le mode un-seul-fichier dans un
+    # .app est refusé par PyInstaller 7 et relancerait l'extraction à chaque
+    # ouverture. Signature ad hoc (`codesign_identity=None`) : sans aucune
+    # signature, un Mac à puce Apple dit « endommagée » au lieu de proposer
+    # « Ouvrir quand même ».
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="Dynamics",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch="arm64",
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+    coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas,
+                   strip=False, upx=False, name="Dynamics")
+    app = BUNDLE(
+        coll,
+        name="OBS Dynamics.app",
+        icon=str(ROOT / "assets" / "icon.ico"),  # converti en .icns via Pillow
+        # Identifiant STABLE : macOS rattache les autorisations (Enregistrement
+        # de l'écran, Surveillance de l'entrée) à lui. Le changer d'une version
+        # à l'autre ferait tout redemander à chaque mise à jour.
+        bundle_identifier="io.github.blackoune.obsdynamics",
+        version=_version,
+        info_plist={
+            "CFBundleName": "OBS Dynamics",
+            "CFBundleDisplayName": "OBS Dynamics",
+            "CFBundleShortVersionString": _version,
+            "CFBundleVersion": _version,
+            "LSMinimumSystemVersion": "13.0",
+            "NSHighResolutionCapable": True,
+            "NSHumanReadableCopyright": "© Blackoune, GPL-3.0",
+        },
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name="Dynamics",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,  # False = pas de fenêtre console noire derrière la GUI
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=str(ROOT / "assets" / "icon.ico") if (ROOT / "assets" / "icon.ico").exists() else None,
+        version=str(VERSION_FILE),
+    )

@@ -159,7 +159,8 @@ class TwitchChatConfig:
         # .env : c'est le seul controle d'acces de la page de chat, il n'a pas
         # de raison de rester lisible dans un fichier JSON.
         return {
-            "overlay_token": secret_store.encrypt(self.overlay_token),
+            "overlay_token": secret_store.encrypt(self.overlay_token,
+                                                 "TWITCH_CHAT_OVERLAY_TOKEN"),
             "platforms": {name: self.platform(name).to_dict() for name in PLATFORMS},
         }
 

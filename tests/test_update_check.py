@@ -17,8 +17,13 @@ def test_newer_version_compares_numbers_not_text():
 
 
 def test_install_page_by_language():
-    assert update_check.install_page("fr").endswith("/installation/#mise-a-jour")
-    assert "/en/installation/" in update_check.install_page("de")
+    assert update_check.install_page("fr", "win32").endswith("/installation/#mise-a-jour")
+    assert "/en/installation/" in update_check.install_page("de", "win32")
+
+
+def test_install_page_on_mac_points_to_the_mac_tab():
+    assert update_check.install_page("fr", "darwin").endswith(
+        "/installation/#titre-mise-a-jour-mac")
 
 
 def test_no_check_without_embedded_version(tmp_path, monkeypatch):

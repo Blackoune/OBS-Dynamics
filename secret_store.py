@@ -16,13 +16,21 @@ nous. C'est une limite de DPAPI, pas un défaut d'implémentation — sans un mo
 de passe maître redemandé à chaque démarrage, aucun stockage local ne fait
 mieux.
 
-Hors Windows, les valeurs restent en clair : mieux vaut un fichier
+Sous macOS, pas de DPAPI : la valeur part dans le **Trousseau** de la
+session (paquet `keyring`, backend macOS), et le fichier ne garde qu'un renvoi
+`enc:kc:<NOM>`. Même garantie qu'au-dessus : le `.env` copié ailleurs ne
+contient rien, et un autre compte du Mac ne lit pas ce trousseau. L'élément
+est rangé sous le nom de la variable, pas sous une empreinte de la valeur :
+réenregistrer remplace l'élément au lieu d'en empiler un par sauvegarde.
+
+Ailleurs (Linux), les valeurs restent en clair : mieux vaut un fichier
 manifestement en clair qu'un encodage qui **ressemble** à du chiffrement.
 
 Format d'une valeur chiffrée :
 
     enc:v2:<base64 url-safe du blob DPAPI, scellé avec entropie secondaire>
     enc:v1:<idem, sans entropie>   — lu seulement, plus jamais écrit
+    enc:kc:<NOM>                   — macOS : la valeur est dans le Trousseau
 
 Le préfixe rend la migration transparente : une valeur sans préfixe est une
 valeur héritée en clair, un `enc:v1:` un blob de l'avant-entropie. Les deux
@@ -54,15 +62,30 @@ _PREFIX_V1 = "enc:v1:"
 #: la récolte aveugle, pas l'attaque ciblée — et ça ne coûte rien.
 _ENTROPY = b"OBS Dynamics/secret_store/v2"
 
+#: Format macOS : renvoi vers un élément du Trousseau, jamais la valeur.
+PREFIX_KEYCHAIN = "enc:kc:"
+
+#: Service sous lequel les éléments sont rangés dans le Trousseau (visible
+#: dans l'app Trousseaux d'accès).
+_SERVICE = "OBS Dynamics"
+
+#: Lu à chaque appel plutôt que `sys.platform` en dur : les tests basculent
+#: ainsi sur le chemin macOS depuis n'importe quel système.
+_SYSTEME = sys.platform
+
 
 def available() -> bool:
-    """DPAPI est-il utilisable sur cette plateforme ?"""
-    return sys.platform == "win32"
+    """Un coffre (DPAPI ou Trousseau) est-il utilisable sur cette plateforme ?"""
+    return _SYSTEME in ("win32", "darwin")
+
+
+def _prefixe_courant() -> str:
+    return PREFIX_KEYCHAIN if _SYSTEME == "darwin" else PREFIX
 
 
 def is_encrypted(value: str) -> bool:
     """Valeur déjà chiffrée, quel que soit son format."""
-    return value.startswith((PREFIX, _PREFIX_V1))
+    return value.startswith((PREFIX, _PREFIX_V1, PREFIX_KEYCHAIN))
 
 
 def needs_rewrite(value: str) -> bool:
@@ -72,7 +95,7 @@ def needs_rewrite(value: str) -> bool:
     blob v1 sans entropie. Les appelants s'en servent pour réécrire le fichier
     une fois, au démarrage, plutôt que d'attendre un enregistrement manuel.
     """
-    return bool(value) and not value.startswith(PREFIX)
+    return bool(value) and not value.startswith(_prefixe_courant())
 
 
 def _blob_type():
@@ -121,16 +144,37 @@ def _dpapi(fonction: str, data: bytes, entropie: Optional[bytes]) -> bytes:
         ctypes.windll.kernel32.LocalFree(resultat.pbData)
 
 
-def encrypt(value: str) -> str:
+def _trousseau():
+    """Trousseau macOS, importé à l'appel : `keyring` n'est installé que sur
+    Mac. Le backend est nommé directement plutôt que découvert par points
+    d'entrée, découverte que PyInstaller ne reproduit pas toujours."""
+    from keyring.backends import macOS
+    return macOS.Keyring()
+
+
+def encrypt(value: str, nom: str = "") -> str:
     """Valeur chiffrée prête à écrire dans `.env`.
 
     Une chaîne vide reste vide — chiffrer « rien » produirait un blob qui
     laisserait croire au lecteur qu'un mot de passe est configuré. Une valeur
     déjà chiffrée est rendue telle quelle, pour que rechiffrer deux fois soit
     sans effet.
+
+    `nom` (la variable du `.env`) n'importe que sous macOS : c'est la clé de
+    l'élément du Trousseau. Sans nom, la valeur reste en clair plutôt que de
+    créer un élément impossible à remplacer ensuite.
     """
     if not value or is_encrypted(value) or not available():
         return value
+    if _SYSTEME == "darwin":
+        if not nom:
+            return value
+        try:
+            _trousseau().set_password(_SERVICE, nom, value)
+        except Exception:     # keyring absent, trousseau verrouillé, refus
+            logger.exception("Écriture dans le Trousseau impossible : la valeur reste en clair.")
+            return value
+        return PREFIX_KEYCHAIN + nom
     try:
         blob = _dpapi("CryptProtectData", value.encode("utf-8"), _ENTROPY)
     except (OSError, AttributeError):
@@ -153,6 +197,17 @@ def decrypt(value: str) -> str:
     """
     if not value or not is_encrypted(value):
         return value
+    if value.startswith(PREFIX_KEYCHAIN):
+        try:
+            secret = _trousseau().get_password(_SERVICE, value[len(PREFIX_KEYCHAIN):])
+        except Exception:
+            secret = None
+        if secret is None:
+            logger.warning(
+                "Un identifiant du .env est introuvable dans le Trousseau de "
+                "cette session macOS. Ressaisis-le dans l'onglet Paramètres.")
+            return ""
+        return secret
     v2 = value.startswith(PREFIX)
     charge = value[len(PREFIX if v2 else _PREFIX_V1):]
     try:

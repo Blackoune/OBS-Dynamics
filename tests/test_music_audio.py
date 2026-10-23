@@ -12,6 +12,11 @@ import music_audio
 
 from music_audio import BANDS, AppLevels
 
+#: Ces tests remplacent une méthode de pycaw : sans pycaw (hors Windows), rien
+#: à remplacer.
+pycaw_requis = pytest.mark.skipif(not hasattr(music_audio, "AudioUtilities"),
+                                  reason="pycaw : Windows uniquement")
+
 
 def _moteur() -> tuple[AppLevels, list]:
     recus: list[list[float]] = []
@@ -241,6 +246,7 @@ class _Session:
         return f"metre-{self.Process.name()}"
 
 
+@pycaw_requis
 def test_seules_les_sessions_de_lapplication_visee_sont_retenues(monkeypatch):
     """Le cœur de la demande : l'overlay Spotify n'écoute que Spotify.
 
@@ -257,6 +263,7 @@ def test_seules_les_sessions_de_lapplication_visee_sont_retenues(monkeypatch):
     assert metres == ["metre-Spotify.exe", "metre-Spotify.exe"]
 
 
+@pycaw_requis
 def test_chaque_lecteur_connu_retrouve_ses_propres_sessions(monkeypatch):
     monkeypatch.setattr(music_audio.AudioUtilities, "GetAllSessions",
                         staticmethod(lambda: [
@@ -268,6 +275,7 @@ def test_chaque_lecteur_connu_retrouve_ses_propres_sessions(monkeypatch):
     assert music_audio.session_meters("itunes") == []
 
 
+@pycaw_requis
 def test_une_session_sans_processus_est_ignoree(monkeypatch):
     # Le son système n'appartient à aucun processus.
     orpheline = _Session("x")
@@ -278,6 +286,7 @@ def test_une_session_sans_processus_est_ignoree(monkeypatch):
     assert music_audio.session_meters("spotify") == []
 
 
+@pycaw_requis
 def test_un_processus_disparu_pendant_lenumeration_est_ignore(monkeypatch):
     class _Volatile:
         def __init__(self) -> None:

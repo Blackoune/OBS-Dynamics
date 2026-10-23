@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -46,7 +47,11 @@ class SteamScanner:
                         return path
             except OSError:
                 logger.debug("Clé de registre Steam introuvable, tentative chemins par défaut.")
-        for candidate in (Path(r"C:\Program Files (x86)\Steam"), Path(r"C:\Program Files\Steam")):
+        # macOS n'a pas de registre : Steam vit toujours au même endroit.
+        candidates = ([Path.home() / "Library" / "Application Support" / "Steam"]
+                      if sys.platform == "darwin" else
+                      [Path(r"C:\Program Files (x86)\Steam"), Path(r"C:\Program Files\Steam")])
+        for candidate in candidates:
             if candidate.exists():
                 return candidate
         return None

@@ -369,7 +369,8 @@
     "SUBS_CC_ACCENTS": "Garder les accents",
     "SUBS_CC_HINT": "Chaque spectateur active les CC avec le bouton CC de Twitch ou YouTube, et choisit lui-même police, couleur et taille. Seules les phrases terminées partent ; en mode Précis, après leur correction. Si les accents s’affichent mal chez les spectateurs, désactivez « Garder les accents ».",
     "SUBS_HOWTO": "Pour commencer :\n1. Choisissez la source audio et la langue, puis cliquez « Démarrer » juste en dessous : rien n’est transcrit avant.\n2. Widget : collez son lien dans une source Navigateur d’OBS.\n3. Sous-titres CC : lancez aussi la surveillance (bouton « Démarrer » en bas à gauche) pour connecter OBS, activez « Envoyer à OBS », puis lancez votre live.",
-    "SUBS_CC_CENTER": "Centrer"
+    "SUBS_CC_CENTER": "Centrer",
+    "SCREEN_PERMISSION_MAC": "La détection visuelle ne voit pas l'écran. Autorisez OBS Dynamics dans Réglages Système > Confidentialité et sécurité > Enregistrement de l'écran, puis quittez et relancez l'app."
   },
   "en": {
     "APP_NAME": "OBS Dynamics",
@@ -741,7 +742,8 @@
     "SUBS_CC_ACCENTS": "Keep accents",
     "SUBS_CC_HINT": "Each viewer turns captions on with the CC button on Twitch or YouTube, and picks the font, color and size. Only finished sentences are sent; in Accurate mode, after their correction. If accents look wrong for viewers, turn off “Keep accents”.",
     "SUBS_HOWTO": "To get started:\n1. Pick the audio source and language, then click “Start” just below: nothing is transcribed before that.\n2. Widget: paste its link into an OBS Browser source.\n3. Closed captions: also start monitoring (“Start” button, bottom left) to connect OBS, turn on “Send to OBS”, then go live.",
-    "SUBS_CC_CENTER": "Center"
+    "SUBS_CC_CENTER": "Center",
+    "SCREEN_PERMISSION_MAC": "Visual detection cannot see the screen. Allow OBS Dynamics in System Settings > Privacy & Security > Screen Recording, then quit and reopen the app."
   },
   "es": {
     "APP_NAME": "OBS Dynamics",
@@ -1113,7 +1115,8 @@
     "SUBS_CC_ACCENTS": "Conservar acentos",
     "SUBS_CC_HINT": "Cada espectador activa los CC con el botón CC de Twitch o YouTube y elige él mismo la fuente, el color y el tamaño. Solo se envían las frases terminadas; en modo «Preciso», después de su corrección. Si los acentos se ven mal a los espectadores, desactiva «Conservar acentos».",
     "SUBS_HOWTO": "Para empezar:\n1. Elija la fuente de audio y el idioma, y luego haga clic en «Iniciar» justo debajo: no se transcribe nada antes de eso.\n2. Widget: pegue su enlace en una fuente de Navegador de OBS.\n3. Subtítulos CC: inicie también la supervisión (botón «Iniciar», abajo a la izquierda) para conectar OBS, active «Enviar a OBS» y luego inicie su directo.",
-    "SUBS_CC_CENTER": "Centrar"
+    "SUBS_CC_CENTER": "Centrar",
+    "SCREEN_PERMISSION_MAC": "La detección visual no ve la pantalla. Permite OBS Dynamics en Ajustes del Sistema > Privacidad y seguridad > Grabación de pantalla, y luego cierra y vuelve a abrir la app."
   },
   "id": {
     "APP_NAME": "OBS Dynamics",
@@ -1485,7 +1488,8 @@
     "SUBS_CC_ACCENTS": "Pertahankan aksen",
     "SUBS_CC_HINT": "Setiap penonton mengaktifkan CC dengan tombol CC di Twitch atau YouTube, dan memilih sendiri font, warna, dan ukuran. Hanya kalimat yang sudah selesai yang dikirim; dalam mode “Akurat”, setelah koreksinya. Jika aksen tampil salah bagi penonton, nonaktifkan “Pertahankan aksen”.",
     "SUBS_HOWTO": "Untuk memulai:\n1. Pilih sumber audio dan bahasa, lalu klik “Mulai” tepat di bawahnya: tidak ada yang ditranskripsi sebelum itu.\n2. Widget: tempelkan tautannya ke sumber Browser di OBS.\n3. Teks CC: mulai juga pemantauan (tombol “Mulai”, kiri bawah) untuk menghubungkan OBS, aktifkan “Kirim ke OBS”, lalu mulai siaran Anda.",
-    "SUBS_CC_CENTER": "Tengah"
+    "SUBS_CC_CENTER": "Tengah",
+    "SCREEN_PERMISSION_MAC": "Deteksi visual tidak dapat melihat layar. Izinkan OBS Dynamics di Pengaturan Sistem > Privasi & Keamanan > Perekaman Layar, lalu tutup dan buka kembali aplikasi."
   },
   "ms": {
     "APP_NAME": "OBS Dynamics",
@@ -1857,7 +1861,8 @@
     "SUBS_CC_ACCENTS": "Kekalkan aksen",
     "SUBS_CC_HINT": "Setiap penonton mengaktifkan CC dengan butang CC Twitch atau YouTube, dan memilih fon, warna dan saiz sendiri. Hanya ayat yang selesai dihantar; dalam mod “Tepat”, selepas pembetulannya. Jika aksen kelihatan salah kepada penonton, matikan “Kekalkan aksen”.",
     "SUBS_HOWTO": "Untuk bermula:\n1. Pilih sumber audio dan bahasa, kemudian klik “Mula” di bawahnya: tiada apa-apa ditranskrip sebelum itu.\n2. Widget: tampal pautannya dalam sumber Pelayar OBS.\n3. Sari kata CC: mulakan pemantauan juga (butang “Mula”, bawah kiri) untuk menyambung OBS, hidupkan “Hantar ke OBS”, kemudian mulakan siaran anda.",
-    "SUBS_CC_CENTER": "Tengah"
+    "SUBS_CC_CENTER": "Tengah",
+    "SCREEN_PERMISSION_MAC": "Pengesanan visual tidak dapat melihat skrin. Benarkan OBS Dynamics dalam Seting Sistem > Privasi & Keselamatan > Rakaman Skrin, kemudian keluar dan buka semula aplikasi."
   },
   "cs": {
     "APP_NAME": "OBS Dynamics",
@@ -2229,7 +2234,8 @@
     "SUBS_CC_ACCENTS": "Zachovat diakritiku",
     "SUBS_CC_HINT": "Každý divák zapne titulky tlačítkem CC na Twitch nebo YouTube a sám si zvolí písmo, barvu a velikost. Odesílají se jen dokončené věty; v režimu „Přesné“ až po jejich opravě. Pokud divákům diakritika vypadá špatně, vypněte „Zachovat diakritiku“.",
     "SUBS_HOWTO": "Jak začít:\n1. Vyberte zdroj zvuku a jazyk, pak klikněte na tlačítko „Spustit“ těsně pod ním: před tím se nic nepřepisuje.\n2. Widget: vložte jeho odkaz do zdroje Prohlížeč v OBS.\n3. Titulky CC: spusťte také sledování (tlačítko „Spustit“ vlevo dole), aby se připojil OBS, zapněte „Odesílat do OBS“ a pak spusťte živé vysílání.",
-    "SUBS_CC_CENTER": "Na střed"
+    "SUBS_CC_CENTER": "Na střed",
+    "SCREEN_PERMISSION_MAC": "Vizuální detekce nevidí obrazovku. Povolte OBS Dynamics v Nastavení systému > Soukromí a zabezpečení > Záznam obrazovky, pak aplikaci ukončete a znovu otevřete."
   },
   "da": {
     "APP_NAME": "OBS Dynamics",
@@ -2601,7 +2607,8 @@
     "SUBS_CC_ACCENTS": "Behold accenter",
     "SUBS_CC_HINT": "Hver seer slår CC til med CC-knappen på Twitch eller YouTube og vælger selv skrifttype, farve og størrelse. Kun færdige sætninger sendes; i tilstanden »Præcis« først efter rettelsen. Hvis accenterne ser forkerte ud for seerne, så slå »Behold accenter« fra.",
     "SUBS_HOWTO": "Sådan kommer du i gang:\n1. Vælg lydkilde og sprog, og klik derefter på »Start« lige nedenunder: der transskriberes intet før det.\n2. Widget: indsæt dens link i en browserkilde i OBS.\n3. Undertekster (CC): start også overvågningen (»Start«-knappen nederst til venstre) for at forbinde OBS, slå »Send til OBS« til, og start din live.",
-    "SUBS_CC_CENTER": "Centrer"
+    "SUBS_CC_CENTER": "Centrer",
+    "SCREEN_PERMISSION_MAC": "Visuel registrering kan ikke se skærmen. Tillad OBS Dynamics under Systemindstillinger > Anonymitet & sikkerhed > Skærmoptagelse, og luk og åbn derefter appen igen."
   },
   "de": {
     "APP_NAME": "OBS Dynamics",
@@ -2973,7 +2980,8 @@
     "SUBS_CC_ACCENTS": "Akzente beibehalten",
     "SUBS_CC_HINT": "Jeder Zuschauer aktiviert die CC über die CC-Schaltfläche bei Twitch oder YouTube und wählt Schrift, Farbe und Größe selbst. Es werden nur abgeschlossene Sätze gesendet; im Modus „Genau“ erst nach deren Korrektur. Wenn Akzente bei den Zuschauern falsch aussehen, deaktiviere „Akzente beibehalten“.",
     "SUBS_HOWTO": "So fangen Sie an:\n1. Wählen Sie die Audioquelle und die Sprache und klicken Sie dann direkt darunter auf „Starten“: Vorher wird nichts transkribiert.\n2. Widget: Fügen Sie den Link in eine Browserquelle in OBS ein.\n3. Untertitel (CC): Starten Sie zusätzlich die Überwachung („Starten“-Schaltfläche unten links), um OBS zu verbinden, aktivieren Sie „An OBS senden“ und starten Sie dann Ihren Livestream.",
-    "SUBS_CC_CENTER": "Zentrieren"
+    "SUBS_CC_CENTER": "Zentrieren",
+    "SCREEN_PERMISSION_MAC": "Die visuelle Erkennung sieht den Bildschirm nicht. Erlaube OBS Dynamics unter Systemeinstellungen > Datenschutz & Sicherheit > Bildschirmaufnahme, beende dann die App und öffne sie erneut."
   },
   "et": {
     "APP_NAME": "OBS Dynamics",
@@ -3345,7 +3353,8 @@
     "SUBS_CC_ACCENTS": "Säilita täpitähed",
     "SUBS_CC_HINT": "Iga vaataja lülitab CC sisse Twitchi või YouTube'i CC-nupust ning valib ise fondi, värvi ja suuruse. Saadetakse ainult lõppenud lauseid; režiimis „Täpne“ pärast nende parandamist. Kui vaatajatele täpitähed valesti välja näevad, lülitage „Säilita täpitähed“ välja.",
     "SUBS_HOWTO": "Alustamiseks:\n1. Valige helisallikas ja keel ning klõpsake seejärel all olevat nuppu „Käivita“: enne seda ei transkribeerita midagi.\n2. Vidin: kleepige selle link OBS-i brauserisallikasse.\n3. Subtiitrid CC: käivitage ka jälgimine („Käivita“ nupp vasakus alanurgas), et ühendada OBS, lülitage sisse „Saada OBS-i“ ning alustage otseülekannet.",
-    "SUBS_CC_CENTER": "Keskel"
+    "SUBS_CC_CENTER": "Keskel",
+    "SCREEN_PERMISSION_MAC": "Visuaalne tuvastus ei näe ekraani. Luba OBS Dynamics jaotises Süsteemiseaded > Privaatsus ja turvalisus > Ekraanisalvestus, seejärel sulge rakendus ja ava see uuesti."
   },
   "tl": {
     "APP_NAME": "OBS Dynamics",
@@ -3717,7 +3726,8 @@
     "SUBS_CC_ACCENTS": "Panatilihin ang mga accent",
     "SUBS_CC_HINT": "Bawat manonood ay bubuksan ang CC gamit ang CC button sa Twitch o YouTube, at sila mismo ang pipili ng font, kulay, at laki. Tanging tapos na mga pangungusap lang ang ipinapadala; sa mode na “Tumpak”, pagkatapos ng pagwawasto nito. Kung mukhang mali ang mga accent sa mga manonood, i-off ang “Panatilihin ang mga accent”.",
     "SUBS_HOWTO": "Para magsimula:\n1. Piliin ang pinagmulan ng audio at wika, saka i-click ang “Simulan” sa ibaba nito: walang na-transcribe bago iyon.\n2. Widget: i-paste ang link nito sa isang Browser source sa OBS.\n3. Closed captions: simulan din ang pagmo-monitor (button na “Simulan”, sa kaliwang ibaba) para kumonekta sa OBS, i-on ang “Ipadala sa OBS”, at saka mag-live.",
-    "SUBS_CC_CENTER": "Gitna"
+    "SUBS_CC_CENTER": "Gitna",
+    "SCREEN_PERMISSION_MAC": "Hindi makita ng visual detection ang screen. Payagan ang OBS Dynamics sa System Settings > Privacy & Security > Screen Recording, pagkatapos ay isara at buksan muli ang app."
   },
   "ha": {
     "APP_NAME": "OBS Dynamics",
@@ -4089,7 +4099,8 @@
     "SUBS_CC_ACCENTS": "Ajiye alamomin lafazi",
     "SUBS_CC_HINT": "Kowane mai kallo yana kunna CC ta maɓallin CC na Twitch ko YouTube, kuma shi da kansa yana zaɓar salo, launi da girma. Ana aika jimloli da suka cika kawai; a yanayin “Daidai”, bayan gyaransu. Idan alamomin lafazi sun bayyana ba daidai ga masu kallo ba, kashe “Ajiye alamomin lafazi”.",
     "SUBS_HOWTO": "Don farawa:\n1. Zaɓi tushen sauti da harshe, sannan danna “Fara” da ke ƙasa: babu abin da ake rubutawa kafin nan.\n2. Widget: liƙa hanyar haɗinsa a cikin tushen Browser na OBS.\n3. Rubutun CC: fara sa ido ma (maɓallin “Fara”, kasan hagu) don haɗa OBS, kunna “Aika zuwa OBS”, sannan ka fara watsa kai tsaye.",
-    "SUBS_CC_CENTER": "Tsakiya"
+    "SUBS_CC_CENTER": "Tsakiya",
+    "SCREEN_PERMISSION_MAC": "Gano ta gani ba ya ganin allon. Ba da izini ga OBS Dynamics a System Settings > Privacy & Security > Screen Recording, sannan ka rufe ka sake buɗe manhajar."
   },
   "hr": {
     "APP_NAME": "OBS Dynamics",
@@ -4461,7 +4472,8 @@
     "SUBS_CC_ACCENTS": "Zadrži dijakritičke znakove",
     "SUBS_CC_HINT": "Svaki gledatelj uključuje CC gumbom na Twitchu ili YouTubeu i sam bira font, boju i veličinu. Šalju se samo završene rečenice; u načinu „Precizno“ nakon njihova ispravka. Ako dijakritički znakovi gledateljima izgledaju krivo, isključite „Zadrži dijakritičke znakove“.",
     "SUBS_HOWTO": "Za početak:\n1. Odaberite izvor zvuka i jezik, zatim kliknite „Pokreni“ odmah ispod: prije toga se ništa ne transkribira.\n2. Widget: zalijepite njegovu poveznicu u izvor Preglednik u OBS-u.\n3. Titlovi CC: pokrenite i praćenje (gumb „Pokreni“, dolje lijevo) da se poveže OBS, uključite „Pošalji u OBS“, zatim pokrenite prijenos uživo.",
-    "SUBS_CC_CENTER": "Središte"
+    "SUBS_CC_CENTER": "Središte",
+    "SCREEN_PERMISSION_MAC": "Vizualno prepoznavanje ne vidi zaslon. Dopustite OBS Dynamics u Postavkama sustava > Privatnost i sigurnost > Snimanje zaslona, zatim zatvorite i ponovno otvorite aplikaciju."
   },
   "it": {
     "APP_NAME": "OBS Dynamics",
@@ -4833,7 +4845,8 @@
     "SUBS_CC_ACCENTS": "Mantieni gli accenti",
     "SUBS_CC_HINT": "Ogni spettatore attiva i CC con il pulsante CC di Twitch o YouTube e sceglie da sé font, colore e dimensione. Vengono inviate solo le frasi completate; in modalità «Preciso», dopo la loro correzione. Se gli accenti appaiono errati agli spettatori, disattiva «Mantieni gli accenti».",
     "SUBS_HOWTO": "Per iniziare:\n1. Scegli la sorgente audio e la lingua, poi clicca su «Avvia» appena sotto: prima non viene trascritto nulla.\n2. Widget: incolla il suo link in una sorgente Browser di OBS.\n3. Sottotitoli CC: avvia anche il monitoraggio (pulsante «Avvia», in basso a sinistra) per collegare OBS, attiva «Invia a OBS» e poi avvia la diretta.",
-    "SUBS_CC_CENTER": "Centra"
+    "SUBS_CC_CENTER": "Centra",
+    "SCREEN_PERMISSION_MAC": "Il rilevamento visivo non vede lo schermo. Consenti OBS Dynamics in Impostazioni di Sistema > Privacy e sicurezza > Registrazione schermo, poi chiudi e riapri l'app."
   },
   "sw": {
     "APP_NAME": "OBS Dynamics",
@@ -5205,7 +5218,8 @@
     "SUBS_CC_ACCENTS": "Hifadhi lafudhi",
     "SUBS_CC_HINT": "Kila mtazamaji huwasha CC kwa kitufe cha CC cha Twitch au YouTube, na yeye mwenyewe huchagua fonti, rangi na ukubwa. Sentensi zilizokamilika pekee ndizo hutumwa; katika hali ya “Sahihi”, baada ya marekebisho yake. Ikiwa lafudhi zinaonekana vibaya kwa watazamaji, zima “Hifadhi lafudhi”.",
     "SUBS_HOWTO": "Ili kuanza:\n1. Chagua chanzo cha sauti na lugha, kisha bofya “Anza” hapo chini: hakuna kinachonakiliwa kabla ya hapo.\n2. Widget: bandika kiungo chake kwenye chanzo cha Browser katika OBS.\n3. Manukuu CC: anzisha pia ufuatiliaji (kitufe cha “Anza”, chini kushoto) ili kuunganisha OBS, washa “Tuma kwa OBS”, kisha anza matangazo yako ya moja kwa moja.",
-    "SUBS_CC_CENTER": "Katikati"
+    "SUBS_CC_CENTER": "Katikati",
+    "SCREEN_PERMISSION_MAC": "Ugunduzi wa kuona hauoni skrini. Ruhusu OBS Dynamics katika System Settings > Privacy & Security > Screen Recording, kisha funga na ufungue programu tena."
   },
   "lv": {
     "APP_NAME": "OBS Dynamics",
@@ -5577,7 +5591,8 @@
     "SUBS_CC_ACCENTS": "Saglabāt diakritiskās zīmes",
     "SUBS_CC_HINT": "Katrs skatītājs ieslēdz CC ar CC pogu Twitch vai YouTube un pats izvēlas fontu, krāsu un izmēru. Tiek sūtītas tikai pabeigtas teikumi; režīmā “Precīzi” – pēc to labošanas. Ja skatītājiem diakritiskās zīmes izskatās nepareizi, izslēdziet “Saglabāt diakritiskās zīmes”.",
     "SUBS_HOWTO": "Lai sāktu:\n1. Izvēlieties audio avotu un valodu, pēc tam noklikšķiniet uz „Sākt“ tieši zemāk: līdz tam nekas netiek transkribēts.\n2. Logrīks: ielīmējiet tā saiti OBS pārlūkprogrammas avotā.\n3. Titri CC: palaidiet arī uzraudzību (poga „Sākt“, apakšā pa kreisi), lai savienotu OBS, ieslēdziet „Sūtīt uz OBS“ un pēc tam sāciet tiešraidi.",
-    "SUBS_CC_CENTER": "Centrēt"
+    "SUBS_CC_CENTER": "Centrēt",
+    "SCREEN_PERMISSION_MAC": "Vizuālā noteikšana neredz ekrānu. Atļaujiet OBS Dynamics sadaļā Sistēmas iestatījumi > Privātums un drošība > Ekrāna ierakstīšana, pēc tam aizveriet un atkal atveriet lietotni."
   },
   "lt": {
     "APP_NAME": "OBS Dynamics",
@@ -5949,7 +5964,8 @@
     "SUBS_CC_ACCENTS": "Išlaikyti diakritinius ženklus",
     "SUBS_CC_HINT": "Kiekvienas žiūrovas įjungia CC Twitch ar YouTube CC mygtuku ir pats pasirenka šriftą, spalvą ir dydį. Siunčiami tik baigti sakiniai; režimu „Tikslus“ – po jų taisymo. Jei žiūrovams diakritiniai ženklai atrodo neteisingai, išjunkite „Išlaikyti diakritinius ženklus“.",
     "SUBS_HOWTO": "Kaip pradėti:\n1. Pasirinkite garso šaltinį ir kalbą, tada spustelėkite „Pradėti“ tuoj pat žemiau: iki tol nieko neperrašoma.\n2. Valdiklis: įklijuokite jo nuorodą į OBS naršyklės šaltinį.\n3. Uždarieji titrai (CC): taip pat paleiskite stebėjimą („Pradėti“ mygtukas, apačioje kairėje), kad prisijungtų OBS, įjunkite „Siųsti į OBS“, tada pradėkite transliaciją.",
-    "SUBS_CC_CENTER": "Centruoti"
+    "SUBS_CC_CENTER": "Centruoti",
+    "SCREEN_PERMISSION_MAC": "Vaizdinis aptikimas nemato ekrano. Leiskite OBS Dynamics skiltyje Sistemos nustatymai > Privatumas ir sauga > Ekrano įrašymas, tada išeikite ir vėl atidarykite programą."
   },
   "hu": {
     "APP_NAME": "OBS Dynamics",
@@ -6321,7 +6337,8 @@
     "SUBS_CC_ACCENTS": "Ékezetek megtartása",
     "SUBS_CC_HINT": "Minden néző a Twitch vagy a YouTube CC gombjával kapcsolja be a feliratot, és maga választja ki a betűtípust, színt és méretet. Csak a befejezett mondatok kerülnek küldésre; a „Pontos” módban a javításuk után. Ha az ékezetek hibásan jelennek meg a nézőknél, kapcsolja ki az „Ékezetek megtartása” opciót.",
     "SUBS_HOWTO": "Első lépések:\n1. Válassza ki a hangforrást és a nyelvet, majd kattintson a közvetlenül alatta lévő „Indítás“ gombra: addig semmi nem íródik át.\n2. Widget: illessze be a hivatkozását egy OBS Böngésző forrásba.\n3. Feliratok (CC): indítsa el a figyelést is („Indítás“ gomb, bal alul), hogy csatlakozzon az OBS-hez, kapcsolja be a „Küldés az OBS-nek“ opciót, majd indítsa el az élő adást.",
-    "SUBS_CC_CENTER": "Középre"
+    "SUBS_CC_CENTER": "Középre",
+    "SCREEN_PERMISSION_MAC": "A vizuális felismerés nem látja a képernyőt. Engedélyezd az OBS Dynamicset a Rendszerbeállítások > Adatvédelem és biztonság > Képernyőfelvétel alatt, majd lépj ki és nyisd meg újra az appot."
   },
   "nl": {
     "APP_NAME": "OBS Dynamics",
@@ -6693,7 +6710,8 @@
     "SUBS_CC_ACCENTS": "Accenten behouden",
     "SUBS_CC_HINT": "Elke kijker zet de CC's aan met de CC-knop op Twitch of YouTube en kiest zelf lettertype, kleur en grootte. Alleen afgemaakte zinnen worden verstuurd; in de modus “Nauwkeurig” pas na de correctie. Als accenten bij kijkers verkeerd lijken, zet je “Accenten behouden” uit.",
     "SUBS_HOWTO": "Aan de slag:\n1. Kies de audiobron en de taal en klik daarna op „Start“ hier direct onder: er wordt niets getranscribeerd voordat je dat doet.\n2. Widget: plak de link ervan in een Browserbron in OBS.\n3. Ondertitels (CC): start ook de monitoring (knop „Starten“, linksonder) om OBS te verbinden, zet „Naar OBS sturen“ aan en start daarna je live.",
-    "SUBS_CC_CENTER": "Centreren"
+    "SUBS_CC_CENTER": "Centreren",
+    "SCREEN_PERMISSION_MAC": "Visuele detectie ziet het scherm niet. Sta OBS Dynamics toe in Systeeminstellingen > Privacy en beveiliging > Schermopname, sluit de app daarna af en open hem opnieuw."
   },
   "nb": {
     "APP_NAME": "OBS Dynamics",
@@ -7065,7 +7083,8 @@
     "SUBS_CC_ACCENTS": "Behold aksenter",
     "SUBS_CC_HINT": "Hver seer slår på CC med CC-knappen på Twitch eller YouTube og velger selv skrifttype, farge og størrelse. Bare ferdige setninger sendes; i modusen «Presis» først etter korrigeringen. Hvis aksentene ser feil ut for seerne, slå av «Behold aksenter».",
     "SUBS_HOWTO": "Komme i gang:\n1. Velg lydkilde og språk, og klikk deretter på «Start» rett under: ingenting transkriberes før det.\n2. Widget: lim inn lenken i en nettleserkilde i OBS.\n3. Undertekster (CC): start også overvåkingen («Start»-knappen nederst til venstre) for å koble til OBS, slå på «Send til OBS», og start sendingen.",
-    "SUBS_CC_CENTER": "Midtstill"
+    "SUBS_CC_CENTER": "Midtstill",
+    "SCREEN_PERMISSION_MAC": "Visuell gjenkjenning ser ikke skjermen. Tillat OBS Dynamics i Systeminnstillinger > Personvern og sikkerhet > Skjermopptak, og avslutt og åpne appen på nytt."
   },
   "pl": {
     "APP_NAME": "OBS Dynamics",
@@ -7437,7 +7456,8 @@
     "SUBS_CC_ACCENTS": "Zachowaj znaki diakrytyczne",
     "SUBS_CC_HINT": "Każdy widz włącza napisy przyciskiem CC na Twitchu lub YouTube i sam wybiera czcionkę, kolor i rozmiar. Wysyłane są tylko zakończone zdania; w trybie „Dokładnie” po ich korekcie. Jeśli znaki diakrytyczne wyglądają widzom źle, wyłącz „Zachowaj znaki diakrytyczne”.",
     "SUBS_HOWTO": "Jak zacząć:\n1. Wybierz źródło dźwięku i język, a następnie kliknij przycisk „Start” tuż pod spodem: przed tym nic nie jest transkrybowane.\n2. Widżet: wklej jego link w źródle Przeglądarka w OBS.\n3. Napisy CC: uruchom także monitorowanie (przycisk „Uruchom”, w lewym dolnym rogu), aby połączyć OBS, włącz „Wyślij do OBS” i rozpocznij transmisję na żywo.",
-    "SUBS_CC_CENTER": "Wyśrodkuj"
+    "SUBS_CC_CENTER": "Wyśrodkuj",
+    "SCREEN_PERMISSION_MAC": "Wykrywanie wizualne nie widzi ekranu. Zezwól OBS Dynamics w Ustawieniach systemowych > Prywatność i ochrona > Nagrywanie ekranu, a następnie zamknij i ponownie otwórz aplikację."
   },
   "pt": {
     "APP_NAME": "OBS Dynamics",
@@ -7809,7 +7829,8 @@
     "SUBS_CC_ACCENTS": "Manter acentos",
     "SUBS_CC_HINT": "Cada espectador ativa as legendas com o botão CC da Twitch ou do YouTube e escolhe a fonte, a cor e o tamanho. Só são enviadas as frases concluídas; no modo «Preciso», depois da correção. Se os acentos aparecerem mal aos espectadores, desative «Manter acentos».",
     "SUBS_HOWTO": "Para começar:\n1. Escolha a fonte de áudio e o idioma, depois clique em «Iniciar» logo abaixo: nada é transcrito antes disso.\n2. Widget: cole o link dele numa fonte Navegador do OBS.\n3. Legendas CC: inicie também a monitorização (botão «Iniciar», canto inferior esquerdo) para conectar o OBS, ative «Enviar para o OBS» e depois inicie a transmissão.",
-    "SUBS_CC_CENTER": "Centralizar"
+    "SUBS_CC_CENTER": "Centralizar",
+    "SCREEN_PERMISSION_MAC": "A detecção visual não vê a tela. Permita o OBS Dynamics em Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela e depois feche e reabra o app."
   },
   "ro": {
     "APP_NAME": "OBS Dynamics",
@@ -8181,7 +8202,8 @@
     "SUBS_CC_ACCENTS": "Păstrează diacriticele",
     "SUBS_CC_HINT": "Fiecare spectator activează subtitrările cu butonul CC de pe Twitch sau YouTube și alege singur fontul, culoarea și dimensiunea. Se trimit doar propozițiile terminate; în modul „Precis”, după corectarea lor. Dacă diacriticele apar greșit la spectatori, dezactivați „Păstrează diacriticele”.",
     "SUBS_HOWTO": "Pentru a începe:\n1. Alegeți sursa audio și limba, apoi apăsați pe „Pornește” chiar dedesubt: nimic nu este transcris înainte.\n2. Widget: lipiți linkul lui într-o sursă Browser din OBS.\n3. Subtitrări CC: porniți și monitorizarea (butonul „Pornește”, jos în stânga) ca să conectați OBS, activați „Trimite către OBS”, apoi porniți transmisiunea.",
-    "SUBS_CC_CENTER": "Centrat"
+    "SUBS_CC_CENTER": "Centrat",
+    "SCREEN_PERMISSION_MAC": "Detecția vizuală nu vede ecranul. Permite OBS Dynamics în Configurări sistem > Confidențialitate și securitate > Înregistrare ecran, apoi închide și redeschide aplicația."
   },
   "sk": {
     "APP_NAME": "OBS Dynamics",
@@ -8553,7 +8575,8 @@
     "SUBS_CC_ACCENTS": "Zachovať diakritiku",
     "SUBS_CC_HINT": "Každý divák zapne titulky tlačidlom CC na Twitch alebo YouTube a sám si zvolí písmo, farbu a veľkosť. Odosielajú sa len dokončené vety; v režime „Presné“ až po ich oprave. Ak divákom diakritika vyzerá zle, vypnite „Zachovať diakritiku“.",
     "SUBS_HOWTO": "Ako začať:\n1. Vyberte zdroj zvuku a jazyk, potom kliknite na „Spustiť“ hneď pod tým: pred tým sa nič neprepisuje.\n2. Widget: vložte jeho odkaz do zdroja Prehliadač v OBS.\n3. Titulky CC: spustite aj monitorovanie (tlačidlo „Spustiť“, vľavo dole), aby sa pripojil OBS, zapnite „Odosielať do OBS“ a potom spustite živé vysielanie.",
-    "SUBS_CC_CENTER": "Na stred"
+    "SUBS_CC_CENTER": "Na stred",
+    "SCREEN_PERMISSION_MAC": "Vizuálna detekcia nevidí obrazovku. Povoľte OBS Dynamics v Nastaveniach systému > Súkromie a bezpečnosť > Nahrávanie obrazovky, potom aplikáciu ukončite a znova otvorte."
   },
   "sl": {
     "APP_NAME": "OBS Dynamics",
@@ -8925,7 +8948,8 @@
     "SUBS_CC_ACCENTS": "Ohrani poudarjene znake",
     "SUBS_CC_HINT": "Vsak gledalec vklopi CC z gumbom CC na Twitchu ali YouTubu in sam izbere pisavo, barvo in velikost. Pošiljajo se samo dokončani stavki; v načinu „Natančno“ po njihovem popravku. Če gledalcem poudarjeni znaki izgledajo narobe, izklopi „Ohrani poudarjene znake“.",
     "SUBS_HOWTO": "Kako začeti:\n1. Izberite vir zvoka in jezik, nato kliknite gumb „Začni“ tik pod tem: prej se nič ne prepisuje.\n2. Gradnik: prilepite njegovo povezavo v vir Brskalnik v OBS.\n3. Podnapisi CC: zaženite tudi spremljanje (gumb „Zaženi“, spodaj levo), da povežete OBS, vklopite „Pošlji v OBS“ in nato začnite prenos v živo.",
-    "SUBS_CC_CENTER": "Središče"
+    "SUBS_CC_CENTER": "Središče",
+    "SCREEN_PERMISSION_MAC": "Vizualno zaznavanje ne vidi zaslona. Dovolite OBS Dynamics v Sistemskih nastavitvah > Zasebnost in varnost > Snemanje zaslona, nato zaprite in znova odprite aplikacijo."
   },
   "fi": {
     "APP_NAME": "OBS Dynamics",
@@ -9297,7 +9321,8 @@
     "SUBS_CC_ACCENTS": "Säilytä erikoismerkit",
     "SUBS_CC_HINT": "Jokainen katsoja kytkee tekstitykset päälle Twitchin tai YouTuben CC-painikkeella ja valitsee itse fontin, värin ja koon. Vain valmiit lauseet lähetetään; Tarkka-tilassa vasta niiden korjauksen jälkeen. Jos erikoismerkit näkyvät katsojille väärin, poista käytöstä ”Säilytä erikoismerkit”.",
     "SUBS_HOWTO": "Näin pääset alkuun:\n1. Valitse äänilähde ja kieli, ja napsauta sitten juuri alla olevaa painiketta ”Käynnistä”: mitään ei litteroida ennen sitä.\n2. Widget: liitä sen linkki OBS:n Selain-lähteeseen.\n3. Tekstitykset (CC): käynnistä myös valvonta (”Käynnistä”-painike, vasemmassa alakulmassa) yhdistääksesi OBS:n, ota käyttöön ”Lähetä OBS:lle” ja aloita lähetys.",
-    "SUBS_CC_CENTER": "Keskitä"
+    "SUBS_CC_CENTER": "Keskitä",
+    "SCREEN_PERMISSION_MAC": "Visuaalinen tunnistus ei näe näyttöä. Salli OBS Dynamics kohdassa Järjestelmäasetukset > Yksityisyys ja suojaus > Näytön tallennus, ja sulje ja avaa appi uudelleen."
   },
   "sv": {
     "APP_NAME": "OBS Dynamics",
@@ -9669,7 +9694,8 @@
     "SUBS_CC_ACCENTS": "Behåll accenter",
     "SUBS_CC_HINT": "Varje tittare slår på CC med CC-knappen på Twitch eller YouTube och väljer själv typsnitt, färg och storlek. Endast färdiga meningar skickas; i läget ”Exakt” först efter rättningen. Om accenterna ser fel ut för tittarna, stäng av ”Behåll accenter”.",
     "SUBS_HOWTO": "Så här kommer du igång:\n1. Välj ljudkälla och språk, klicka sedan på ”Starta” precis nedanför: inget transkriberas innan dess.\n2. Widget: klistra in dess länk i en webbläsarkälla i OBS.\n3. Textning (CC): starta även övervakningen (knappen ”Starta”, nere till vänster) för att ansluta OBS, aktivera ”Skicka till OBS” och starta sedan sändningen.",
-    "SUBS_CC_CENTER": "Centrera"
+    "SUBS_CC_CENTER": "Centrera",
+    "SCREEN_PERMISSION_MAC": "Visuell identifiering ser inte skärmen. Tillåt OBS Dynamics i Systeminställningar > Integritet och säkerhet > Skärminspelning, avsluta sedan appen och öppna den igen."
   },
   "vi": {
     "APP_NAME": "OBS Dynamics",
@@ -10041,7 +10067,8 @@
     "SUBS_CC_ACCENTS": "Giữ dấu thanh",
     "SUBS_CC_HINT": "Mỗi người xem tự bật CC bằng nút CC trên Twitch hoặc YouTube, và tự chọn phông chữ, màu sắc, cỡ chữ. Chỉ các câu đã hoàn chỉnh được gửi; ở chế độ “Chính xác”, sau khi đã được sửa. Nếu dấu thanh hiển thị sai với người xem, hãy tắt “Giữ dấu thanh”.",
     "SUBS_HOWTO": "Để bắt đầu:\n1. Chọn nguồn âm thanh và ngôn ngữ, sau đó nhấp vào nút “Bắt đầu” ngay bên dưới: trước đó sẽ không có gì được chép lời.\n2. Widget: dán liên kết của nó vào nguồn Trình duyệt trong OBS.\n3. Phụ đề CC: bắt đầu giám sát (nút “Bắt đầu”, góc dưới bên trái) để kết nối OBS, bật “Gửi tới OBS”, rồi bắt đầu phát trực tiếp.",
-    "SUBS_CC_CENTER": "Căn giữa"
+    "SUBS_CC_CENTER": "Căn giữa",
+    "SCREEN_PERMISSION_MAC": "Tính năng nhận diện hình ảnh không thấy màn hình. Hãy cho phép OBS Dynamics trong Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Ghi màn hình, rồi thoát và mở lại ứng dụng."
   },
   "tr": {
     "APP_NAME": "OBS Dynamics",
@@ -10413,7 +10440,8 @@
     "SUBS_CC_ACCENTS": "Aksanları koru",
     "SUBS_CC_HINT": "Her izleyici, Twitch veya YouTube'daki CC düğmesiyle altyazıyı açar ve yazı tipini, rengini ve boyutunu kendisi seçer. Yalnızca tamamlanmış cümleler gönderilir; “Doğru” modunda ise düzeltmelerinden sonra. İzleyicilere aksanlar yanlış görünüyorsa “Aksanları koru” seçeneğini kapatın.",
     "SUBS_HOWTO": "Başlarken:\n1. Ses kaynağını ve dili seçin, ardından hemen altındaki “Başlat” düğmesine tıklayın: bundan önce hiçbir şey yazıya dökülmez.\n2. Widget: bağlantısını OBS'de bir Tarayıcı kaynağına yapıştırın.\n3. Altyazılar (CC): OBS'yi bağlamak için izlemeyi de başlatın (sol altta “Başlat” düğmesi), “OBS'ye gönder” seçeneğini açın, sonra canlı yayını başlatın.",
-    "SUBS_CC_CENTER": "Ortala"
+    "SUBS_CC_CENTER": "Ortala",
+    "SCREEN_PERMISSION_MAC": "Görsel algılama ekranı göremiyor. Sistem Ayarları > Gizlilik ve Güvenlik > Ekran Kaydı bölümünden OBS Dynamics'e izin verin, ardından uygulamadan çıkıp yeniden açın."
   },
   "ru": {
     "APP_NAME": "OBS Dynamics",
@@ -10785,7 +10813,8 @@
     "SUBS_CC_ACCENTS": "Сохранять акценты",
     "SUBS_CC_HINT": "Каждый зритель включает субтитры кнопкой CC на Twitch или YouTube и сам выбирает шрифт, цвет и размер. Отправляются только законченные предложения; в режиме «Точно» — после их исправления. Если акценты у зрителей отображаются неправильно, отключите «Сохранять акценты».",
     "SUBS_HOWTO": "Чтобы начать:\n1. Выберите источник звука и язык, затем нажмите кнопку «Старт» сразу под ним: до этого ничего не распознаётся.\n2. Виджет: вставьте его ссылку в источник «Браузер» в OBS.\n3. Субтитры CC: также запустите отслеживание (кнопка «Запустить», внизу слева), чтобы подключить OBS, включите «Отправлять в OBS» и начинайте трансляцию.",
-    "SUBS_CC_CENTER": "По центру"
+    "SUBS_CC_CENTER": "По центру",
+    "SCREEN_PERMISSION_MAC": "Визуальное распознавание не видит экран. Разрешите OBS Dynamics в разделе «Системные настройки» > «Конфиденциальность и безопасность» > «Запись экрана», затем закройте и снова откройте приложение."
   },
   "uk": {
     "APP_NAME": "OBS Dynamics",
@@ -11157,7 +11186,8 @@
     "SUBS_CC_ACCENTS": "Зберігати наголоси",
     "SUBS_CC_HINT": "Кожен глядач вмикає субтитри кнопкою CC на Twitch або YouTube і сам обирає шрифт, колір і розмір. Надсилаються лише завершені речення; у режимі «Точно» — після їх виправлення. Якщо наголоси глядачам відображаються неправильно, вимкніть «Зберігати наголоси».",
     "SUBS_HOWTO": "Щоб почати:\n1. Оберіть джерело звуку та мову, потім натисніть кнопку «Старт» одразу під ним: до цього нічого не транскрибується.\n2. Віджет: вставте його посилання в джерело «Браузер» в OBS.\n3. Субтитри CC: запустіть також моніторинг (кнопка «Запустити», унизу зліва), щоб підключити OBS, увімкніть «Надсилати в OBS» і починайте трансляцію.",
-    "SUBS_CC_CENTER": "По центру"
+    "SUBS_CC_CENTER": "По центру",
+    "SCREEN_PERMISSION_MAC": "Візуальне розпізнавання не бачить екран. Дозвольте OBS Dynamics у «Системні параметри» > «Приватність і безпека» > «Записування екрана», потім закрийте й знову відкрийте програму."
   },
   "ur": {
     "APP_NAME": "OBS Dynamics",
@@ -11529,7 +11559,8 @@
     "SUBS_CC_ACCENTS": "اعراب برقرار رکھیں",
     "SUBS_CC_HINT": "ہر ناظر Twitch یا YouTube کے CC بٹن سے کیپشن آن کرتا ہے اور فونٹ، رنگ اور سائز خود منتخب کرتا ہے۔ صرف مکمل جملے بھیجے جاتے ہیں؛ “درست” موڈ میں ان کی تصحیح کے بعد۔ اگر ناظرین کو اعراب غلط نظر آئیں تو “اعراب برقرار رکھیں” بند کریں۔",
     "SUBS_HOWTO": "شروع کرنے کے لیے:\n1. آڈیو ماخذ اور زبان منتخب کریں، پھر اس کے ٹھیک نیچے “شروع کریں” پر کلک کریں: اس سے پہلے کچھ بھی ٹرانسکرائب نہیں ہوتا۔\n2. ویجیٹ: اس کا لنک OBS میں ایک Browser ماخذ میں پیسٹ کریں۔\n3. کلوزڈ کیپشنز (CC): OBS سے منسلک کرنے کے لیے نگرانی بھی شروع کریں (“شروع کریں” بٹن، نیچے بائیں)، “OBS کو بھیجیں” آن کریں، پھر لائیو جائیں۔",
-    "SUBS_CC_CENTER": "درمیان میں"
+    "SUBS_CC_CENTER": "درمیان میں",
+    "SCREEN_PERMISSION_MAC": "بصری شناخت اسکرین نہیں دیکھ پا رہی۔ System Settings > Privacy & Security > Screen Recording میں OBS Dynamics کو اجازت دیں، پھر ایپ بند کر کے دوبارہ کھولیں۔"
   },
   "ar": {
     "APP_NAME": "OBS Dynamics",
@@ -11901,7 +11932,8 @@
     "SUBS_CC_ACCENTS": "الاحتفاظ بالتشكيل",
     "SUBS_CC_HINT": "يفعّل كل مشاهد الترجمة من زر CC في Twitch أو YouTube، ويختار الخط واللون والحجم بنفسه. تُرسل الجمل المكتملة فقط؛ وفي وضع “دقيق” بعد تصحيحها. إذا بدا التشكيل خاطئًا عند المشاهدين، فألغِ تفعيل “الاحتفاظ بالتشكيل”.",
     "SUBS_HOWTO": "للبدء:\n1. اختر مصدر الصوت واللغة، ثم انقر على زر «ابدأ» أسفله مباشرة: لا يتم تفريغ أي شيء قبل ذلك.\n2. الأداة: الصق رابطها في مصدر «متصفح» في OBS.\n3. الترجمة المغلقة (CC): ابدأ المراقبة أيضًا (زر «تشغيل»، أسفل اليسار) لربط OBS، ثم فعّل «إرسال إلى OBS»، وبعدها ابدأ البث المباشر.",
-    "SUBS_CC_CENTER": "توسيط"
+    "SUBS_CC_CENTER": "توسيط",
+    "SCREEN_PERMISSION_MAC": "لا يرى الاكتشاف المرئي الشاشة. اسمح لـ OBS Dynamics في إعدادات النظام > الخصوصية والأمن > تسجيل الشاشة، ثم أغلق التطبيق وأعد فتحه."
   },
   "fa": {
     "APP_NAME": "OBS Dynamics",
@@ -12273,7 +12305,8 @@
     "SUBS_CC_ACCENTS": "حفظ اعراب",
     "SUBS_CC_HINT": "هر بیننده با دکمه CC در Twitch یا YouTube زیرنویس را روشن می‌کند و خودش قلم، رنگ و اندازه را انتخاب می‌کند. فقط جمله‌های کامل ارسال می‌شوند؛ در حالت «دقیق»، پس از اصلاح آن‌ها. اگر اعراب برای بینندگان اشتباه نمایش داده می‌شود، «حفظ اعراب» را خاموش کنید.",
     "SUBS_HOWTO": "برای شروع:\n1. منبع صدا و زبان را انتخاب کنید، سپس روی دکمه «شروع» درست زیر آن کلیک کنید: قبل از آن هیچ متنی تبدیل نمی‌شود.\n2. ویجت: لینک آن را در یک منبع «مرورگر» در OBS قرار دهید.\n3. زیرنویس CC: نظارت را هم شروع کنید (دکمه «شروع»، پایین سمت چپ) تا OBS وصل شود، «ارسال به OBS» را روشن کنید، سپس پخش زنده را شروع کنید.",
-    "SUBS_CC_CENTER": "وسط"
+    "SUBS_CC_CENTER": "وسط",
+    "SCREEN_PERMISSION_MAC": "تشخیص تصویری صفحه را نمی‌بیند. در تنظیمات سیستم > حریم خصوصی و امنیت > ضبط صفحه به OBS Dynamics اجازه دهید، سپس برنامه را ببندید و دوباره باز کنید."
   },
   "hi": {
     "APP_NAME": "OBS Dynamics",
@@ -12645,7 +12678,8 @@
     "SUBS_CC_ACCENTS": "मात्राएँ रखें",
     "SUBS_CC_HINT": "हर दर्शक Twitch या YouTube के CC बटन से कैप्शन चालू करता है और फ़ॉन्ट, रंग और आकार खुद चुनता है। केवल पूरे वाक्य भेजे जाते हैं; “सटीक” मोड में उनके सुधार के बाद। अगर दर्शकों को मात्राएँ गलत दिखें, तो “मात्राएँ रखें” बंद करें।",
     "SUBS_HOWTO": "शुरू करने के लिए:\n1. ऑडियो स्रोत और भाषा चुनें, फिर ठीक नीचे “शुरू करें” पर क्लिक करें: उससे पहले कुछ भी ट्रांसक्राइब नहीं होता।\n2. विजेट: उसका लिंक OBS में एक Browser स्रोत में पेस्ट करें।\n3. क्लोज़्ड कैप्शन (CC): OBS से जोड़ने के लिए निगरानी भी शुरू करें (“शुरू करें” बटन, नीचे बाईं ओर), “OBS को भेजें” चालू करें, फिर लाइव जाएँ।",
-    "SUBS_CC_CENTER": "केंद्र"
+    "SUBS_CC_CENTER": "केंद्र",
+    "SCREEN_PERMISSION_MAC": "विज़ुअल पहचान स्क्रीन नहीं देख पा रही। सिस्टम सेटिंग्ज़ > गोपनीयता और सुरक्षा > स्क्रीन रिकॉर्डिंग में OBS Dynamics को अनुमति दें, फिर ऐप बंद करके दोबारा खोलें।"
   },
   "bn": {
     "APP_NAME": "OBS Dynamics",
@@ -13017,7 +13051,8 @@
     "SUBS_CC_ACCENTS": "অ্যাকসেন্ট রাখুন",
     "SUBS_CC_HINT": "প্রতিটি দর্শক Twitch বা YouTube-এর CC বোতামে ক্যাপশন চালু করেন এবং ফন্ট, রঙ ও আকার নিজে বেছে নেন। শুধু সম্পূর্ণ বাক্য পাঠানো হয়; “নির্ভুল” মোডে সেগুলোর সংশোধনের পরে। দর্শকদের কাছে অ্যাকসেন্ট ভুল দেখালে “অ্যাকসেন্ট রাখুন” বন্ধ করুন।",
     "SUBS_HOWTO": "শুরু করতে:\n1. অডিও সোর্স ও ভাষা বেছে নিন, তারপর ঠিক নিচের “শুরু” বোতামে ক্লিক করুন: তার আগে কিছুই ট্রান্সক্রাইব হয় না।\n2. উইজেট: এর লিংক OBS-এর একটি Browser সোর্সে পেস্ট করুন।\n3. ক্লোজড ক্যাপশন (CC): OBS সংযুক্ত করতে পর্যবেক্ষণও শুরু করুন (“শুরু করুন” বোতাম, নিচে বাঁ দিকে), “OBS-এ পাঠান” চালু করুন, তারপর লাইভ যান।",
-    "SUBS_CC_CENTER": "মাঝখানে"
+    "SUBS_CC_CENTER": "মাঝখানে",
+    "SCREEN_PERMISSION_MAC": "ভিজ্যুয়াল শনাক্তকরণ স্ক্রিন দেখতে পাচ্ছে না। System Settings > Privacy & Security > Screen Recording-এ OBS Dynamics-কে অনুমতি দিন, তারপর অ্যাপটি বন্ধ করে আবার খুলুন।"
   },
   "th": {
     "APP_NAME": "OBS Dynamics",
@@ -13389,7 +13424,8 @@
     "SUBS_CC_ACCENTS": "คงวรรณยุกต์ไว้",
     "SUBS_CC_HINT": "ผู้ชมแต่ละคนเปิด CC ด้วยปุ่ม CC บน Twitch หรือ YouTube และเลือกฟอนต์ สี และขนาดเอง ส่งเฉพาะประโยคที่จบแล้ว ในโหมด “แม่นยำ” จะส่งหลังแก้ไขแล้ว หากผู้ชมเห็นวรรณยุกต์ผิดเพี้ยน ให้ปิด “คงวรรณยุกต์ไว้”",
     "SUBS_HOWTO": "เริ่มต้นใช้งาน:\n1. เลือกแหล่งเสียงและภาษา จากนั้นคลิก “เริ่ม” ที่อยู่ด้านล่างทันที: ก่อนหน้านั้นจะยังไม่มีการถอดเสียง\n2. วิดเจ็ต: วางลิงก์ลงในแหล่งข้อมูล Browser ของ OBS\n3. คำบรรยายแบบปิด (CC): เริ่มการติดตามด้วย (ปุ่ม “เริ่ม” มุมล่างซ้าย) เพื่อเชื่อมต่อ OBS เปิด “ส่งไป OBS” แล้วจึงเริ่มไลฟ์",
-    "SUBS_CC_CENTER": "กึ่งกลาง"
+    "SUBS_CC_CENTER": "กึ่งกลาง",
+    "SCREEN_PERMISSION_MAC": "การตรวจจับภาพมองไม่เห็นหน้าจอ อนุญาต OBS Dynamics ในการตั้งค่าระบบ > ความเป็นส่วนตัวและความปลอดภัย > การบันทึกหน้าจอ แล้วออกและเปิดแอปใหม่"
   },
   "zh": {
     "APP_NAME": "OBS Dynamics",
@@ -13761,7 +13797,8 @@
     "SUBS_CC_ACCENTS": "保留重音符号",
     "SUBS_CC_HINT": "每位观众可在 Twitch 或 YouTube 上用 CC 按钮开启字幕，并自行选择字体、颜色和大小。只发送已完成的句子；“精确”模式下，在更正之后发送。如果观众看到的重音符号显示有误，请关闭“保留重音符号”。",
     "SUBS_HOWTO": "开始使用：\n1. 选择音频源和语言，然后点击正下方的“开始”：在此之前不会转录任何内容。\n2. 小组件：将其链接粘贴到 OBS 的“浏览器”源中。\n3. 隐藏式字幕（CC）：还需启动监控（左下角的“开始”按钮）以连接 OBS，开启“发送到 OBS”，然后开始直播。",
-    "SUBS_CC_CENTER": "居中"
+    "SUBS_CC_CENTER": "居中",
+    "SCREEN_PERMISSION_MAC": "视觉检测看不到屏幕。请在“系统设置”>“隐私与安全性”>“录屏”中允许 OBS Dynamics，然后退出并重新打开应用。"
   },
   "ja": {
     "APP_NAME": "OBS Dynamics",
@@ -14133,7 +14170,8 @@
     "SUBS_CC_ACCENTS": "アクセント記号を残す",
     "SUBS_CC_HINT": "視聴者はTwitchまたはYouTubeのCCボタンで字幕を表示し、フォント・色・サイズを自分で選べます。送信されるのは確定した文のみで、「高精度」モードでは修正後に送信されます。視聴者にアクセント記号が正しく表示されない場合は、「アクセント記号を残す」をオフにしてください。",
     "SUBS_HOWTO": "はじめに:\n1. 音声ソースと言語を選び、すぐ下の「開始」をクリックしてください。それまでは文字起こしされません。\n2. ウィジェット: そのリンクを OBS のブラウザソースに貼り付けます。\n3. 字幕 (CC): OBS に接続するため、左下の「開始」ボタンで監視も開始し、「OBS に送信」をオンにしてから配信を開始してください。",
-    "SUBS_CC_CENTER": "中央揃え"
+    "SUBS_CC_CENTER": "中央揃え",
+    "SCREEN_PERMISSION_MAC": "画面認識が画面を取得できません。「システム設定」>「プライバシーとセキュリティ」>「画面収録」で OBS Dynamics を許可し、アプリを終了して再度開いてください。"
   },
   "ko": {
     "APP_NAME": "OBS Dynamics",
@@ -14505,6 +14543,7 @@
     "SUBS_CC_ACCENTS": "악센트 유지",
     "SUBS_CC_HINT": "시청자는 Twitch나 YouTube의 CC 버튼으로 자막을 켜고, 글꼴, 색상, 크기를 직접 고릅니다. 완성된 문장만 전송되며, '정확' 모드에서는 수정이 끝난 뒤 전송됩니다. 시청자에게 악센트가 잘못 보이면 '악센트 유지'를 끄세요.",
     "SUBS_HOWTO": "시작하기:\n1. 오디오 소스와 언어를 선택한 다음, 바로 아래의 “시작”를 클릭하세요. 그 전에는 아무것도 받아쓰지 않습니다.\n2. 위젯: 그 링크를 OBS의 브라우저 소스에 붙여넣으세요.\n3. 자막(CC): OBS를 연결하려면 왼쪽 아래의 “시작” 버튼으로 모니터링도 시작하고, “OBS로 보내기” 옵션을 켠 다음 라이브를 시작하세요.",
-    "SUBS_CC_CENTER": "가운데 정렬"
+    "SUBS_CC_CENTER": "가운데 정렬",
+    "SCREEN_PERMISSION_MAC": "시각 감지가 화면을 볼 수 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 OBS Dynamics를 허용한 다음 앱을 종료하고 다시 여세요."
   }
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import threading
+from tkinter import messagebox
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -13,7 +14,7 @@ import screen_match
 from app_paths import logger
 from env_config import EnvConfigManager
 from detection import (_capture_screen_bgr, _downscale, detect_game_state,
-                       is_game_active)
+                       is_game_active, screen_capture_allowed)
 from games import Game, GameStore
 from i18n import t
 
@@ -210,6 +211,9 @@ class ScanWorker:
         # une image ambiguë (transition, cinématique, chargement) ne doit pas
         # faire basculer OBS d'une scène à l'autre à chaque cycle.
         self._stabilizer = screen_match.Stabilizer(confirmations=2)
+        # macOS : l'absence d'autorisation de capture n'est signalée qu'une
+        # fois par session, pas à chaque cycle.
+        self._capture_warned = False
 
     @property
     def is_running(self) -> bool:
@@ -244,6 +248,7 @@ class ScanWorker:
                 # de référence à comparer.
                 screen_small: Optional[np.ndarray] = None
                 if any(g.menu_images or g.ingame_images for g in games):
+                    self._warn_if_capture_denied()
                     raw = _capture_screen_bgr()
                     if raw is not None:
                         screen_small = _downscale(raw)
@@ -268,6 +273,15 @@ class ScanWorker:
             except Exception:
                 logger.exception("Erreur dans la boucle de surveillance.")
             self._stop_event.wait(max(0.5, cfg.scan_interval_seconds))
+
+    def _warn_if_capture_denied(self) -> None:
+        """macOS sans « Enregistrement de l'écran » : la capture rend une
+        image vide SANS erreur. Le dire une fois, avec le chemin du réglage."""
+        if self._capture_warned or screen_capture_allowed():
+            return
+        self._capture_warned = True
+        logger.warning("Autorisation « Enregistrement de l'écran » absente : détection visuelle aveugle.")
+        self._post_ui(lambda: messagebox.showwarning(t("APP_NAME"), t("SCREEN_PERMISSION_MAC")))
 
     def _prune_state_maps(self, live_ids: set[str]) -> None:
         """Purge les jeux supprimés. Sans ça `_last_states` grossissait sans
