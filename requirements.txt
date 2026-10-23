@@ -46,7 +46,7 @@ winrt-runtime==3.2.1 ; sys_platform == "win32"
 # ailleurs et l'overlay fonctionne sans forme d'onde.
 pycaw==20251023 ; sys_platform == "win32"
 comtypes==1.4.16 ; sys_platform == "win32"
-tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
+tkinterdnd2==0.6.4          # glisser-déposer de médias sur la zone de dépôt
 
 # Sous-titres : reconnaissance vocale locale en flux (modèles téléchargés au
 # premier usage, pas dans le paquet) et capture micro / loopback WASAPI.
