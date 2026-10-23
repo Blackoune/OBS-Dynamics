@@ -19,6 +19,8 @@ Routes :
     GET /media/<rule_id>     le fichier média lui-même
     GET /chat/<token>        page HTML du chat
     GET /chatevents/<token>  flux SSE du chat
+    GET /subtitles/<token>   page HTML du widget de sous-titres
+    GET /subevents/<token>   flux SSE des sous-titres
     GET /health              sonde de vivacité
 
 Toute requête est refusée (403) si son en-tête `Host` ne désigne pas la
@@ -507,7 +509,8 @@ class _ChatBinding:
         expected = self._token_getter() or ""
         if not expected or not candidate:
             return False
-        return secrets.compare_digest(expected, candidate)
+        # En octets : sur deux `str`, un caractère non ASCII lève TypeError.
+        return secrets.compare_digest(expected.encode(), candidate.encode())
 
 
 class _OverlayHTTPServer(ThreadingHTTPServer):
@@ -564,6 +567,10 @@ class _Handler(BaseHTTPRequestHandler):
     @property
     def music_hub(self) -> Optional[Any]:
         return self.server.music_hub  # type: ignore[attr-defined]
+
+    @property
+    def subtitles_hub(self) -> Optional[Any]:
+        return getattr(self.server, "subtitles_hub", None)
 
     def text(self, key: str) -> str:
         """Libellé traduit, avec repli sur le français si rien n'est branché."""
@@ -693,6 +700,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_chat_page()
             else:
                 self._serve_chat_events(identifier)
+            return
+
+        if section in ("subtitles", "subevents"):
+            hub = self.subtitles_hub
+            if hub is None or not hub.token_matches(identifier):
+                self._not_found()
+                return
+            if section == "subtitles":
+                self._send(200, hub.page_html(identifier).encode("utf-8"),
+                           "text/html; charset=utf-8")
+            else:
+                sub, first = hub.subscribe()
+                self._stream_sse("subs", sub, lambda: hub.unsubscribe(sub),
+                                 [json.dumps(first)],
+                                 still_valid=lambda: hub.token_matches(identifier))
             return
 
         if section in ("music", "musicevents", "musiccover", "musiclogo",
@@ -1012,12 +1034,14 @@ class OverlayServer:
                  chat_hub: Optional[Any] = None,
                  chat_token_getter: Optional[Callable[[], str]] = None,
                  music_hub: Optional[Any] = None,
-                 text_getter: Optional[Callable[[str], str]] = None) -> None:
+                 text_getter: Optional[Callable[[str], str]] = None,
+                 subtitles_hub: Optional[Any] = None) -> None:
         self._rule_getter = rule_getter
         self._requested_port = port
         self._broker = _Broker()
         self._chat = _ChatBinding(chat_hub, chat_token_getter)
         self._music_hub = music_hub
+        self._subtitles_hub = subtitles_hub
         self._text_getter = text_getter
         self._httpd: Optional[_OverlayHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -1057,6 +1081,12 @@ class OverlayServer:
             return ""
         return (f"{self.base_url()}/music/{token}"
                 f"?source={quote(key, safe='')}")
+
+    def subtitles_url(self) -> str:
+        """URL du widget de sous-titres, vide tant qu'aucun hub n'est branché."""
+        hub = self._subtitles_hub
+        token = hub.ensure_token() if hub is not None else ""
+        return f"{self.base_url()}/subtitles/{token}" if token else ""
 
     def chat_url(self) -> str:
         """URL de l'overlay du chat, vide tant qu'aucun jeton n'existe."""
@@ -1127,6 +1157,7 @@ class OverlayServer:
                 "configurées dans OBS sur le port %d ne répondront plus.",
                 self.port, self._requested_port)
 
+        self._httpd.subtitles_hub = self._subtitles_hub
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True,
                                          name="overlay-http")
         self._thread.start()

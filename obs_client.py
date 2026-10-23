@@ -123,6 +123,14 @@ class OBSClient:
     async def set_current_scene(self, scene_name: str) -> None:
         await self.call("SetCurrentProgramScene", {"sceneName": scene_name})
 
+    async def stream_active(self) -> bool:
+        data = await self.call("GetStreamStatus")
+        return bool(data.get("outputActive"))
+
+    async def send_stream_caption(self, text: str) -> None:
+        """Sous-titre CC glissé dans le flux (CEA-608). Refusé par OBS hors live."""
+        await self.call("SendStreamCaption", {"captionText": text})
+
     # -- Création de scènes / sources (à l'ajout d'un jeu) ------------------ #
     # Chaque helper tolère l'échec « existe déjà » : recréer un jeu déjà
     # configuré ne doit pas faire échouer l'enregistrement du formulaire.

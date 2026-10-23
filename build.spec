@@ -50,6 +50,15 @@ try:
 except Exception:
     pass
 
+# sherpa-onnx charge onnxruntime.dll et ses API C à côté de son .pyd :
+# PyInstaller ne les voit pas dans l'arbre d'imports.
+binaries = []
+try:
+    from PyInstaller.utils.hooks import collect_dynamic_libs
+    binaries += collect_dynamic_libs("sherpa_onnx")
+except Exception:
+    pass
+
 if (ROOT / "assets").exists():
     datas.append((str(ROOT / "assets"), "assets"))
 if (ROOT / "i18n.json").exists():
@@ -62,7 +71,7 @@ datas.append((str(ROOT / "build" / "version.txt"), "."))
 a = Analysis(
     ["obs_dynamics.py"],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         "simpleobsws",
@@ -102,6 +111,16 @@ a = Analysis(
         "comtypes",        # interfaces COM chargees dynamiquement
         "ui_music_style",  # fenêtre Widget
         "ui_music",        # vue Widget Musique
+        "subtitles_audio", # capture micro / son du PC
+        "subtitles_engine",# modèles et reconnaissance en flux
+        "ui_subtitles",    # vue Sous-titres
+        "subtitles_style", # apparence du widget de sous-titres
+        "subtitles_overlay", # hub SSE et page OBS des sous-titres
+        "subtitles_words", # banque de mots (pseudos, jeux, emotes)
+        "ui_subtitles_style", # fenêtre Style
+        "ui_subtitles_words", # fenêtre Banque de mots
+        "sherpa_onnx",
+        "soundcard",
         # Chargée à la volée par la projection WinRT, jamais importée par nos
         # fichiers : PyInstaller ne peut pas la déduire de l'arbre d'imports.
         "winrt.windows.foundation.collections",

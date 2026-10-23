@@ -89,6 +89,8 @@ from ui_music import MusicView  # noqa: E402
 from ui_twitch_chat import (ConnectionDialog, TwitchChatCard,  # noqa: E402
                             TwitchChatView)
 from ui_settings import LanguageSegmentedControl, SettingsView  # noqa: E402
+from ui_subtitles import SubtitlesView  # noqa: E402
+from subtitles_overlay import SubtitlesHub  # noqa: E402
 from ui_triggers import TriggerRow, TriggersView  # noqa: E402
 
 
@@ -101,7 +103,7 @@ class Sidebar(ctk.CTkFrame):
                  on_open_folder: Callable[[], None], **kwargs) -> None:
         super().__init__(master, fg_color=COL_SIDEBAR, corner_radius=0, width=240, **kwargs)
         self.grid_propagate(False)
-        self.grid_rowconfigure(6, weight=1)
+        self.grid_rowconfigure(7, weight=1)
         self.on_nav = on_nav
 
         brand = ctk.CTkFrame(self, fg_color="transparent")
@@ -121,15 +123,16 @@ class Sidebar(ctk.CTkFrame):
         self._nav_btn("twitch_chat", t("SIDEBAR_NAV_TWITCH_CHAT"), row=3)
         # Widget Musique s'insère ENTRE Multi Stream et Paramètres.
         self._nav_btn("music", t("SIDEBAR_NAV_MUSIC"), row=4)
-        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=5)
+        self._nav_btn("subtitles", t("SIDEBAR_NAV_SUBTITLES"), row=5)
+        self._nav_btn("settings", t("SIDEBAR_NAV_SETTINGS"), row=6)
 
         self._folder_btn = ctk.CTkButton(self, text=t("SIDEBAR_BTN_OPEN_FOLDER"), anchor="w", height=36,
                                           corner_radius=8, fg_color="transparent", hover_color=COL_CARD,
                                           text_color=COL_TEXT_MUTED, font=font(12), command=on_open_folder)
-        self._folder_btn.grid(row=6, column=0, sticky="ew", padx=12, pady=(10, 3))
+        self._folder_btn.grid(row=7, column=0, sticky="ew", padx=12, pady=(10, 3))
 
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
-        ctrl.grid(row=7, column=0, sticky="sew", padx=16, pady=20)
+        ctrl.grid(row=8, column=0, sticky="sew", padx=16, pady=20)
 
         # Caché tant qu'aucune version plus récente n'est publiée (show_update).
         self._update_version: Optional[str] = None
@@ -202,6 +205,7 @@ class Sidebar(ctk.CTkFrame):
         self.nav_buttons["triggers"].configure(text=t("SIDEBAR_NAV_TRIGGERS"))
         self.nav_buttons["twitch_chat"].configure(text=t("SIDEBAR_NAV_TWITCH_CHAT"))
         self.nav_buttons["music"].configure(text=t("SIDEBAR_NAV_MUSIC"))
+        self.nav_buttons["subtitles"].configure(text=t("SIDEBAR_NAV_SUBTITLES"))
         self.nav_buttons["settings"].configure(text=t("SIDEBAR_NAV_SETTINGS"))
         self._folder_btn.configure(text=t("SIDEBAR_BTN_OPEN_FOLDER"))
         self.status_text.configure(text=t("SIDEBAR_STATUS_RUNNING") if self._is_running else t("SIDEBAR_STATUS_STOPPED"))
@@ -293,12 +297,17 @@ class App(ctk.CTk):
         self.music_hub = MusicHub(with_audio=True)
         self.music_hub.ensure_token()
 
+        # --- Sous-titres : même raison, le jeton doit exister avant le serveur.
+        self.subtitles_hub = SubtitlesHub(DATA_DIR / "subtitles_widget.json")
+        self.subtitles_hub.ensure_token()
+
         self.overlay = OverlayServer(
             self.trigger_store.get, port=_saved_cfg.overlay_port,
             chat_hub=self.chat_hub,
             chat_token_getter=lambda: self.twitch_chat_store.load().overlay_token,
             music_hub=self.music_hub,
-            text_getter=t)
+            text_getter=t,
+            subtitles_hub=self.subtitles_hub)
         self.overlay.start()
         self.chat_hub.apply_config(self.twitch_chat_store.load())
         self._combo_listener = ComboListener(on_combo=self._on_combo,
@@ -332,12 +341,21 @@ class App(ctk.CTk):
         # _on_close. Rien d'autre dans l'application n'en dépend.
         self.music = MusicView(self.content, post_ui=self.post_ui,
                                 hub=self.music_hub, overlay=self.overlay)
+        self.subtitles = SubtitlesView(self.content, post_ui=self.post_ui,
+                                       hub=self.subtitles_hub, overlay=self.overlay,
+                                       settings_path=DATA_DIR / "subtitles.json",
+                                       models_root=DATA_DIR / "models",
+                                       words_path=DATA_DIR / "subtitles_words.json",
+                                       cc_path=DATA_DIR / "subtitles_cc.json",
+                                       obs_client_getter=lambda: self._obs_client,
+                                       obs_loop=self.obs_loop)
         self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
         self.views: dict[str, ctk.CTkFrame] = {
             "dashboard": self.dashboard,
             "triggers": self.triggers,
             "twitch_chat": self.twitch_chat,
             "music": self.music,
+            "subtitles": self.subtitles,
             "settings": self.settings,
         }
         self._navigate("dashboard")
@@ -362,6 +380,7 @@ class App(ctk.CTk):
         self.triggers.refresh_labels()
         self.twitch_chat.refresh_labels()
         self.music.refresh_labels()
+        self.subtitles.refresh_labels()
         self.settings.refresh_labels()
 
     def _on_chat_status(self, platform: str, status: str, detail: str) -> None:
@@ -626,6 +645,7 @@ class App(ctk.CTk):
         self._combo_listener.stop()
         self.chat_hub.stop_all()
         self.music.stop()
+        self.subtitles.stop()
         # Le hub porte la capture audio : la vue seule ne suffit pas a la
         # rendre, et un thread de capture survivrait a la fenetre.
         self.music_hub.stop()

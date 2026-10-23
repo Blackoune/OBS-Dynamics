@@ -44,3 +44,10 @@ winrt-runtime==3.2.1
 pycaw==20251023
 comtypes==1.4.16
 tkinterdnd2==0.6.2          # glisser-déposer de médias sur la zone de dépôt
+
+# Sous-titres : reconnaissance vocale locale en flux (modèles téléchargés au
+# premier usage, pas dans le paquet) et capture micro / loopback WASAPI.
+# `subtitles_engine.available()` est faux si l'un manque : l'onglet le dit,
+# le reste de l'application fonctionne.
+sherpa-onnx==1.13.8
+soundcard==0.4.6

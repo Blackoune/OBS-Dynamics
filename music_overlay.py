@@ -154,7 +154,8 @@ class MusicHub:
         expected = self._token
         if not expected or not candidate:
             return False
-        return secrets.compare_digest(expected, candidate)
+        # En octets : sur deux `str`, un caractère non ASCII lève TypeError.
+        return secrets.compare_digest(expected.encode(), candidate.encode())
 
     # -- publication -------------------------------------------------------- #
 

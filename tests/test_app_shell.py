@@ -75,8 +75,9 @@ def app(app_module, tmp_path, monkeypatch):
 
 # --- Vues et navigation --------------------------------------------------- #
 
-def test_the_five_views_are_built(app):
-    assert set(app.views) == {"dashboard", "triggers", "twitch_chat", "music", "settings"}
+def test_the_six_views_are_built(app):
+    assert set(app.views) == {"dashboard", "triggers", "twitch_chat", "music",
+                              "subtitles", "settings"}
 
 
 def test_the_dashboard_is_shown_first(app):
@@ -85,7 +86,8 @@ def test_the_dashboard_is_shown_first(app):
     assert app.views["dashboard"].winfo_manager() == "grid"
 
 
-@pytest.mark.parametrize("cle", ["triggers", "twitch_chat", "music", "settings", "dashboard"])
+@pytest.mark.parametrize("cle", ["triggers", "twitch_chat", "music", "subtitles",
+                                 "settings", "dashboard"])
 def test_navigating_shows_exactly_one_view(app, cle):
     """Régression : un `grid_forget()` oublié laisserait deux vues empilées."""
     app._navigate(cle)
