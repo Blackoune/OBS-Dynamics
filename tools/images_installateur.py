@@ -50,9 +50,19 @@ def petit(echelle: int) -> Image.Image:
     return img
 
 
+#: Rendu à SS fois la taille, puis réduit en Lanczos : `rounded_rectangle`
+#: ne lisse pas ses bords, et la carte arrondie sortait crénelée.
+SS = 4
+
+
+def lisse(dessiner, echelle: int, taille: tuple[int, int]) -> Image.Image:
+    return dessiner(echelle * SS).resize((taille[0] * echelle, taille[1] * echelle),
+                                         Image.LANCZOS)
+
+
 if __name__ == "__main__":
     SORTIE.mkdir(exist_ok=True)
     for e, suffixe in ((1, "100"), (2, "200")):
-        panneau(e).save(SORTIE / f"wizard-{suffixe}.bmp")
-        petit(e).save(SORTIE / f"petit-{suffixe}.bmp")
+        lisse(panneau, e, (164, 314)).save(SORTIE / f"wizard-{suffixe}.bmp")
+        lisse(petit, e, (55, 55)).save(SORTIE / f"petit-{suffixe}.bmp")
     print("Images écrites dans", SORTIE)

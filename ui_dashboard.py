@@ -90,16 +90,23 @@ def _with_badge(base: Image.Image, state: str, scale: float,
         x1, y0 = base.width - margin, margin
         x0, y1 = x1 - width, y0 + height
 
+        # Pilule et point tracés en `_SUPERSAMPLE`x puis réduits : à cette
+        # taille, un cercle tracé directement avait l'air d'un octogone.
+        ss = _SUPERSAMPLE
+        pill = Image.new("RGBA", (width * ss, height * ss), (0, 0, 0, 0))
+        pdraw = ImageDraw.Draw(pill)
+        pdraw.rounded_rectangle((0, 0, width * ss - 1, height * ss - 1),
+                                radius=height * ss / 2, fill=(13, 10, 24, 214),
+                                outline=(255, 255, 255, 38), width=px(1) * ss)
+        dot_top = (height - dot) / 2 * ss
+        pdraw.ellipse((side * ss, dot_top, (side + dot) * ss, dot_top + dot * ss),
+                      fill=_rgb(STATE_DOT[is_running(state)]))
         layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        layer.alpha_composite(pill.resize((width, height), Image.Resampling.LANCZOS),
+                              (x0, y0))
         draw = ImageDraw.Draw(layer)
-        draw.rounded_rectangle((x0, y0, x1, y1), radius=height / 2,
-                               fill=(13, 10, 24, 214), outline=(255, 255, 255, 38),
-                               width=px(1))
         middle = (y0 + y1) / 2
-        dot_x = x0 + side
-        draw.ellipse((dot_x, middle - dot / 2, dot_x + dot, middle + dot / 2),
-                     fill=_rgb(STATE_DOT[is_running(state)]))
-        draw.text((dot_x + dot + px(6), middle), label, font=fnt,
+        draw.text((x0 + side + dot + px(6), middle), label, font=fnt,
                   fill=_rgb(COL_BADGE_FG), anchor="lm")
         return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
     except Exception:

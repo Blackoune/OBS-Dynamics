@@ -58,45 +58,53 @@ LOGOS = {
 }
 
 
+#: Sur-échantillonnage : rendu à SS fois la taille, puis réduction en Lanczos.
+#: Le masque rond était découpé pixel par pixel, sans transition : en petit,
+#: les logos ressemblaient à des octogones en escalier.
+SS = 4
+
+
 def _svg(slug: str, couleur: str, fond: str, plein: float) -> str:
     """SVG complet : le disque, puis le glyphe centré dessus."""
     glyphe = icons[slug].path
     marge = (24 - 24 * plein) / 2
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-        f'width="{COTE}" height="{COTE}">'
+        f'width="{COTE * SS}" height="{COTE * SS}">'
         f'<circle cx="12" cy="12" r="12" fill="{fond}"/>'
         f'<g transform="translate({marge:.3f},{marge:.3f}) '
         f'scale({plein:.4f})">'
         f'<path d="{glyphe}" fill="{couleur}"/></g></svg>')
 
 
-def _rasteriser(svg: str) -> Image.Image:
-    """PNG RGBA du SVG, coins du carré rendus transparents.
+def _rasteriser(svg: str, fond: str) -> Image.Image:
+    """PNG RGBA du SVG, coins du carré rendus transparents, bord lissé.
 
     renderPM ne sait pas produire de fond transparent : on dessine donc le
-    disque sur un fond neutre, puis on rétablit l'alpha avec un masque rond.
+    disque sur un fond DE SA PROPRE COULEUR (un fond noir laissait un liseré
+    sombre une fois le bord adouci), puis on rétablit l'alpha avec un masque
+    rond. Le tout à SS fois la taille, réduit ensuite en Lanczos.
     """
     dessin = svg2rlg(io.BytesIO(svg.encode("utf-8")))
-    plate = renderPM.drawToPIL(dessin, bg=0x000000).convert("RGBA")
+    plate = renderPM.drawToPIL(dessin, bg=int(fond.lstrip("#"), 16)).convert("RGBA")
 
     masque = Image.new("L", plate.size, 0)
     ImageDraw.Draw(masque).ellipse([0, 0, plate.size[0] - 1,
                                     plate.size[1] - 1], fill=255)
     plate.putalpha(masque)
-    return plate
+    final = (plate.size[0] // SS, plate.size[1] // SS)
+    return plate.resize(final, Image.Resampling.LANCZOS)
 
 
 def main() -> int:
     LOGOS_DIR.mkdir(parents=True, exist_ok=True)
     for app in BUILT_IN:
         slug, traitement, plein = LOGOS[app.key]
-        if traitement == "badge":
-            svg = _svg(slug, app.color, "#FFFFFF", plein)
-        else:
-            svg = _svg(slug, "#FFFFFF", app.color, plein)
+        fond = "#FFFFFF" if traitement == "badge" else app.color
+        glyphe = app.color if traitement == "badge" else "#FFFFFF"
+        svg = _svg(slug, glyphe, fond, plein)
         chemin = LOGOS_DIR / f"{app.key}.png"
-        _rasteriser(svg).save(chemin)
+        _rasteriser(svg, fond).save(chemin)
         print(f"{chemin.name:22} {slug:14} {traitement}")
     return 0
 
