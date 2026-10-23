@@ -2,7 +2,7 @@
 -r requirements.txt
 
 # Épinglé pour la même raison que requirements.txt : un build reproductible.
-pyinstaller==6.22.2         # packaging de l'exécutable via build.py / build.spec
+pyinstaller==6.22.3         # packaging de l'exécutable via build.py / build.spec
 pytest==9.1.1               # suite de tests (dossier tests/)
 
 # Uniquement pour refabriquer les logos des lecteurs
