@@ -39,23 +39,44 @@ def _imread_unicode(path: str, flags: int = cv2.IMREAD_COLOR) -> Optional[np.nda
         return None
 
 
-def is_game_active(game: Game) -> bool:
+class ProcessSnapshot:
+    """Relevé des processus, fait UNE fois puis partagé par tous les jeux.
+
+    Sans lui, chaque jeu relançait son propre balayage : 50 jeux configurés =
+    50 parcours de la table des processus à chaque cycle de scan. Les noms et
+    les chemins sont relevés séparément et à la demande : le chemin coûte une
+    ouverture de processus, inutile s'il n'y a que des jeux manuels.
+    """
+
+    def __init__(self) -> None:
+        self._names: Optional[set[str]] = None
+        self._exes: Optional[list[str]] = None
+
+    def names(self) -> set[str]:
+        if self._names is None:
+            self._names = {(proc.info.get("name") or "").lower()
+                           for proc in psutil.process_iter(["name"])}
+        return self._names
+
+    def exes(self) -> list[str]:
+        if self._exes is None:
+            self._exes = [exe.lower() for proc in psutil.process_iter(["exe"])
+                          if (exe := proc.info.get("exe"))]
+        return self._exes
+
+
+def is_game_active(game: Game, procs: Optional[ProcessSnapshot] = None) -> bool:
     """Steam: correspondance par chemin d'installation (fiable, indépendant du
-    nom d'exe). Manuel: correspondance par nom de processus."""
+    nom d'exe). Manuel: correspondance par nom de processus.
+
+    `procs` partage un même relevé entre plusieurs jeux ; None en fait un."""
+    procs = procs or ProcessSnapshot()
     try:
         if game.source == "steam" and game.active_match:
             target = str(Path(game.active_match)).lower()
-            for proc in psutil.process_iter(["exe"]):
-                exe = proc.info.get("exe")
-                if exe and exe.lower().startswith(target):
-                    return True
-            return False
+            return any(exe.startswith(target) for exe in procs.exes())
         if game.active_match:
-            target_name = game.active_match.strip().lower()
-            for proc in psutil.process_iter(["name"]):
-                name = (proc.info.get("name") or "").lower()
-                if name == target_name:
-                    return True
+            return game.active_match.strip().lower() in procs.names()
     except (psutil.Error, OSError):
         logger.debug("Erreur vérification processus pour '%s'.", game.name, exc_info=True)
     return False
@@ -435,7 +456,8 @@ def _best_match_score(screen_small: np.ndarray, template_paths: list[str]) -> fl
 
 
 def detect_game_state(game: Game, threshold: float,
-                      screen_small: Optional[np.ndarray] = None) -> str:
+                      screen_small: Optional[np.ndarray] = None,
+                      active: Optional[bool] = None) -> str:
     """'inactive' | 'active' (process seul, sans images de référence) |
     'menu' | 'in_game' | 'extra:<id>' (correspondance visuelle OpenCV).
 
@@ -444,8 +466,11 @@ def detect_game_state(game: Game, threshold: float,
     ImageGrab.grab() plein écran : 10 jeux configurés = 10 captures toutes les
     2 secondes. Laisser le paramètre à None reste possible (la capture est
     alors faite ici) pour les appels isolés et les tests.
+
+    `active` : résultat de is_game_active déjà connu de l'appelant (la boucle
+    de scan le calcule pour décider de capturer) ; None = le vérifier ici.
     """
-    if not is_game_active(game):
+    if not (is_game_active(game) if active is None else active):
         return "inactive"
     states = [(key, images) for key, images, _scene in game.detection_states() if images]
     if not states:

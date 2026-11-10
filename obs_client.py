@@ -13,8 +13,8 @@ import simpleobsws
 import screen_match
 from app_paths import logger
 from env_config import EnvConfigManager
-from detection import (_capture_screen_bgr, _downscale, detect_game_state,
-                       is_game_active, screen_capture_allowed)
+from detection import (ProcessSnapshot, _capture_screen_bgr, _downscale,
+                       detect_game_state, is_game_active, screen_capture_allowed)
 from games import Game, GameStore
 from i18n import t
 
@@ -243,11 +243,14 @@ class ScanWorker:
                 cfg = self._config_mgr.load()
                 games = self._store.load()
 
-                # UNE seule capture d'écran par cycle, partagée par tous les
-                # jeux, et uniquement si au moins un jeu actif a des images
-                # de référence à comparer.
+                # UN seul relevé des processus et UNE seule capture d'écran
+                # par cycle, partagés par tous les jeux. La capture n'a lieu
+                # que si un jeu EN COURS a des images de référence (états
+                # supplémentaires compris) : rien ne tourne, rien n'est capturé.
+                procs = ProcessSnapshot()
+                running = {g.id for g in games if is_game_active(g, procs)}
                 screen_small: Optional[np.ndarray] = None
-                if any(g.menu_images or g.ingame_images for g in games):
+                if any(g.id in running and g.reference_images() for g in games):
                     self._warn_if_capture_denied()
                     raw = _capture_screen_bgr()
                     if raw is not None:
@@ -256,7 +259,8 @@ class ScanWorker:
                 results: list[dict[str, Any]] = []
                 for game in games:
                     state = self._stabilizer.update(
-                        game.id, detect_game_state(game, cfg.match_threshold, screen_small))
+                        game.id, detect_game_state(game, cfg.match_threshold, screen_small,
+                                                   active=game.id in running))
                     forced = self._forced_states.get(game.id)
                     if forced is not None and state != "inactive":
                         # Une hotkey a forcé un état : il prime tant que le
@@ -296,8 +300,9 @@ class ScanWorker:
     def force_state(self, state: str) -> None:
         """Force l'état de tous les jeux actuellement actifs (hotkeys)."""
         applied = False
+        procs = ProcessSnapshot()
         for game in self._store.load():
-            if is_game_active(game):
+            if is_game_active(game, procs):
                 self._forced_states[game.id] = state
                 applied = True
         if applied:

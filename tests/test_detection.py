@@ -184,3 +184,57 @@ def test_the_scene_of_an_extra_state_is_the_one_sent_to_obs(app_module):
     assert m.ScanWorker._scene_for_state(game, "extra:x1") == "Scene Carte"
     assert m.ScanWorker._scene_for_state(game, "extra:inconnu") == ""
     assert m.ScanWorker._scene_for_state(game, "menu") == "Menu"
+
+
+# --- Coût d'un cycle de scan -------------------------------------------- #
+
+def test_one_process_sweep_is_shared_by_all_games(app_module, monkeypatch):
+    """Régression perf : N jeux ne doivent pas coûter N balayages des
+    processus."""
+    from types import SimpleNamespace
+    d = app_module.detection
+    sweeps = []
+
+    def process_iter(attrs):
+        sweeps.append(attrs)
+        return [SimpleNamespace(info={"name": "Jeu.EXE", "exe": r"C:\Steam\Jeu\jeu.exe"})]
+
+    monkeypatch.setattr(d.psutil, "process_iter", process_iter)
+    procs = d.ProcessSnapshot()
+    manual = [app_module.Game(id=str(i), name="X", source="manual", active_match=exe)
+              for i, exe in enumerate(("jeu.exe", "autre.exe", "jeu.exe"))]
+    assert [d.is_game_active(g, procs) for g in manual] == [True, False, True]
+    assert sweeps == [["name"]]            # chemins non relevés : aucun jeu Steam
+
+    steam = app_module.Game(id="s", name="S", source="steam", active_match=r"C:\Steam\Jeu")
+    assert d.is_game_active(steam, procs) and d.is_game_active(steam, procs)
+    assert sweeps == [["name"], ["exe"]]
+
+
+@pytest.mark.parametrize("running, expected", [(False, 0), (True, 1)])
+def test_screen_is_captured_only_for_a_running_game(app_module, monkeypatch, tmp_path,
+                                                    running, expected):
+    """Régression perf : un jeu configuré mais fermé ne déclenche aucune
+    capture. Un jeu lancé qui n'a d'images que sur un état supplémentaire en
+    déclenche UNE, partagée."""
+    import obs_client
+    m = app_module
+    game = m.Game(id="g", name="X", source="manual", active_match="x.exe",
+                  extra_states=[{"id": "x1", "images": ["carte.png"], "scene": "S"}])
+    captures = []
+    monkeypatch.setattr(obs_client, "is_game_active", lambda g, procs=None: running)
+    monkeypatch.setattr(obs_client, "_capture_screen_bgr",
+                        lambda: captures.append(1) or np.zeros((40, 40, 3), np.uint8))
+    monkeypatch.setattr(m.detection, "_capture_screen_bgr",
+                        lambda: pytest.fail("capture par jeu au lieu de la capture partagée"))
+
+    worker = m.ScanWorker(store=m.GameStore(tmp_path / "g.json"), obs_loop=None,
+                          obs_client_getter=lambda: None,
+                          config_mgr=m.EnvConfigManager(tmp_path / ".env"),
+                          post_ui=lambda fn: fn())
+    monkeypatch.setattr(worker._store, "load", lambda: [game])
+    seen = []
+    worker._loop(lambda results: (seen.append(results), worker._stop_event.set()))
+
+    assert len(captures) == expected
+    assert seen[0][0]["active"] is running
