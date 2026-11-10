@@ -99,6 +99,7 @@ a = Analysis(
         "detection",       # processus + comparaison visuelle
         "obs_client",      # WebSocket OBS v5 et boucle de scan
         "ui_common",       # palette, police, libellés d'état, glisser-déposer
+        "ui_intro",        # animation de lancement
         "ui_dashboard",    # grille de cartes de jeu
         "ui_game_dialogs", # fiche de jeu et relecture des patchs
         "ui_settings",     # vue Paramètres

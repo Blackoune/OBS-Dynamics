@@ -547,6 +547,56 @@ _PAGE_HTML = """<!doctype html>
   #card[data-layout="bandeau"]{padding:var(--pad-y) var(--bandeau-pad-x)}
   #card[data-layout="bandeau"] #wave{height:var(--bandeau-wave-h);margin-top:var(--bandeau-wave-gap)}
 
+  /* Lecteur : grille de cases. `display:contents` fait remonter texte, onde,
+     temps et barre au rang de la grille, sans ajouter d element au DOM. La
+     carte elle-meme devient invisible : c est le fond regle qui colore les
+     cases. Colonnes : pochette | temps | onde | duree. */
+  #card[data-layout="lecteur"]{display:grid;--cover:var(--lecteur-cover);
+    grid-template-columns:auto auto 1fr auto;column-gap:0;
+    row-gap:var(--bloc-gap);padding:var(--lecteur-pad);
+    background-color:transparent;border-color:transparent;
+    backdrop-filter:none;align-items:stretch}
+  #card[data-layout="lecteur"] #stack,
+  #card[data-layout="lecteur"] #progress,
+  #card[data-layout="lecteur"] #times{display:contents}
+  #card[data-layout="lecteur"] #discbox,
+  #card[data-layout="lecteur"] #frame{grid-row:1/3;grid-column:1;
+    align-self:center;margin-right:var(--bloc-gap)}
+  #card[data-layout="lecteur"] #frame img{height:var(--cover)}
+  #card[data-layout="lecteur"] #frame.wide img{height:auto}
+  #card[data-layout="lecteur"] #text,
+  #card[data-layout="lecteur"] #elapsed,
+  #card[data-layout="lecteur"] #wave,
+  #card[data-layout="lecteur"] #total{background:var(--fond);
+    border:var(--contour);padding:var(--bloc-pad)}
+  #card[data-layout="lecteur"] #text{grid-row:1;grid-column:2/5;
+    border-radius:12px;display:flex;flex-direction:column;justify-content:center}
+  #card[data-layout="lecteur"] #title{text-transform:uppercase}
+  /* La rangee du bas est UNE case visuelle faite de trois morceaux : seuls
+     ses bords exterieurs sont arrondis, et rien ne les separe. */
+  #card[data-layout="lecteur"] #elapsed,
+  #card[data-layout="lecteur"] #total{grid-row:2;width:var(--lecteur-time);
+    box-sizing:border-box;height:calc(var(--wave-h) + 2 * var(--bloc-pad) + 2px);display:flex;align-items:center;
+    color:var(--encre,#F3F0FA);font-size:17px;font-weight:700;
+    font-variant-numeric:tabular-nums}
+  #card[data-layout="lecteur"] #elapsed{grid-column:2;border-radius:12px 0 0 12px;
+    border-right:0}
+  #card[data-layout="lecteur"] #total{grid-column:4;border-radius:0 12px 12px 0;
+    border-left:0;justify-content:flex-end}
+  #card[data-layout="lecteur"] #wave{grid-row:2;grid-column:3;margin:0;
+    height:var(--wave-h);align-items:center;justify-content:center;
+    overflow:hidden;border-left:0;border-right:0}
+  #card[data-layout="lecteur"] #wave i{transform-origin:center}
+  #card[data-layout="lecteur"].sans-temps #wave{grid-column:2/5;
+    border-radius:12px;border:var(--contour)}
+  #card[data-layout="lecteur"].sans-onde #elapsed{grid-column:2/4}
+  #card[data-layout="lecteur"] #bar{grid-row:3;grid-column:1/5;
+    height:var(--lecteur-bar);border-radius:999px;background:var(--fond)}
+  #card[data-layout="lecteur"] #fill{background:var(--accent,#A855F7);
+    border-radius:999px}
+  /* Pas de place pour le transport dans cette grille. */
+  #card[data-layout="lecteur"] #controls{display:none}
+
   /* Pastilles de fenetre : posees en absolu pour ne pas restructurer la
      carte. Quand elles sont la, le haut de la carte leur fait de la place. */
   #card{position:relative}
@@ -712,10 +762,17 @@ function appliquerNiveaux(valeurs) {
   if (!Array.isArray(valeurs) || valeurs.length !== BARS) { return; }
   if (styleCourant && styleCourant.show_wave === false) { return; }
   wave.hidden = false;
+  majCases();
   for (let i = 0; i < BARS; i++) {
     const v = valeurs[i];
     cibles[i] = typeof v === "number" && v >= 0 && v <= 1 ? v : 0;
   }
+}
+
+// Lecteur : la rangee du bas change de forme selon ce qui y reste.
+function majCases() {
+  card.classList.toggle("sans-temps", progress.hidden);
+  card.classList.toggle("sans-onde", wave.hidden);
 }
 
 function applyStyle(s) {
@@ -830,6 +887,7 @@ function render(m) {
   elArtist.hidden = reglages.show_artist === false;
   if (reglages.show_app === false) { elApp.hidden = true; }
   if (reglages.show_wave === false) { wave.hidden = true; }
+  majCases();
   card.classList.add("on");
 }
 

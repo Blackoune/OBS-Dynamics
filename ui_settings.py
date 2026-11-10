@@ -212,8 +212,10 @@ class LanguageSegmentedControl(ctk.CTkFrame):
     LANGS = ("fr", "en", "es")
     LANG_BTN_WIDTH = 64
     LANG_BTN_HEIGHT = 34
-    COL_ACTIVE = "#3B82F6"
-    COL_ACTIVE_HOVER = "#2563EB"
+    # Violet de la palette : le bleu d'origine était la seule touche hors
+    # charte de toute l'application.
+    COL_ACTIVE = COL_ACCENT_SOFT
+    COL_ACTIVE_HOVER = COL_ACCENT_HOVER
     COL_INACTIVE = COL_BG
     COL_INACTIVE_HOVER = COL_BORDER
 
@@ -280,6 +282,8 @@ class ScrollableOptionMenu(ctk.CTkOptionMenu):
 
     VISIBLE_ROWS = 10
     ROW_HEIGHT = 30
+    #: Cadence à laquelle la liste ouverte se recale sur la fenêtre.
+    FOLLOW_MS = 30
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -287,27 +291,61 @@ class ScrollableOptionMenu(ctk.CTkOptionMenu):
         self._list: ctk.CTkScrollableFrame | None = None
         self._closed_at = 0.0
         self._anchor: tuple[int, int, int, int] | None = None
-        # La liste est une fenêtre à part, posée à l'écran : elle ne suit pas
-        # la fenêtre principale. Celle-ci bouge ou change de taille -> on
-        # ferme, l'utilisateur rouvre une fois la fenêtre en place.
-        self.winfo_toplevel().bind("<Configure>", self._on_window_configure, add="+")
+        self._follow_job: str | None = None
+        self._was_viewable = False
+        # La liste est une fenêtre à part, sans barre de titre. Windows ne lui
+        # donne pas toujours le focus : compter sur sa perte pour la fermer
+        # laissait la liste ouverte quoi qu'on clique. Un clic ailleurs dans
+        # la fenêtre principale la ferme donc explicitement.
+        self.winfo_toplevel().bind("<Button-1>", self._on_window_click, add="+")
 
     def _window_box(self) -> tuple[int, int, int, int]:
         top = self.winfo_toplevel()
         return top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height()
 
-    def _on_window_configure(self, event) -> None:
-        # Le binding de la fenêtre reçoit aussi le <Configure> de chacun de
-        # ses widgets : seul celui de la fenêtre elle-même compte, et
-        # seulement s'il l'a vraiment déplacée ou redimensionnée.
-        if (self._popup is not None and event.widget is self.winfo_toplevel()
-                and self._window_box() != self._anchor):
+    def _on_window_click(self, event) -> None:
+        # Un clic sur ce menu lui-même est traité par `_open_dropdown_menu`.
+        if self._popup is not None and not str(event.widget).startswith(str(self)):
             self.close_dropdown()
 
+    def _place(self) -> None:
+        """Pose la liste sous le bouton, ou au-dessus s'il n'y a pas la place."""
+        popup = self._popup
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height() + 2
+        if y + popup.winfo_reqheight() > self.winfo_screenheight():
+            y = self.winfo_rooty() - popup.winfo_reqheight() - 2
+        popup.geometry(f"+{x}+{y}")
+
+    def _follow(self) -> None:
+        """Garde la liste accrochée au bouton tant qu'elle est ouverte.
+
+        Une fenêtre à part ne suit pas la fenêtre principale : on la recale
+        dès que celle-ci bouge ou change de taille. Par relevé périodique et
+        non par <Configure> : la liste doit suivre PENDANT qu'on fait glisser
+        la barre de titre, pas seulement une fois la fenêtre relâchée.
+        """
+        self._follow_job = None
+        if self._popup is None:
+            return
+        # Onglet quitté ou fenêtre réduite : le bouton n'est plus à l'écran.
+        if self._was_viewable and not self.winfo_viewable():
+            self.close_dropdown()
+            return
+        box = self._window_box()
+        if box != self._anchor:
+            self._anchor = box
+            self._place()
+        self._follow_job = self.after(self.FOLLOW_MS, self._follow)
+
     def _open_dropdown_menu(self) -> None:
-        # Cliquer sur ce bouton liste ouverte la ferme d'abord (perte de
-        # focus), puis arrive ici : sans ce délai, elle se rouvrirait aussitôt.
-        if self._popup is not None or time.monotonic() - self._closed_at < 0.3:
+        # Recliquer sur le bouton replie la liste.
+        if self._popup is not None:
+            self.close_dropdown()
+            return
+        # La perte de focus a pu la fermer juste avant ce clic : sans ce
+        # délai, elle se rouvrirait aussitôt.
+        if time.monotonic() - self._closed_at < 0.3:
             return
         popup = self._popup = ctk.CTkToplevel(self, fg_color=COL_BORDER)
         popup.overrideredirect(True)
@@ -325,18 +363,16 @@ class ScrollableOptionMenu(ctk.CTkOptionMenu):
         SmoothScroll(self._list)
 
         popup.update_idletasks()
-        x = self.winfo_rootx()
-        y = self.winfo_rooty() + self.winfo_height() + 2
-        if y + popup.winfo_reqheight() > self.winfo_screenheight():   # pas la place dessous
-            y = self.winfo_rooty() - popup.winfo_reqheight() - 2
-        popup.geometry(f"+{x}+{y}")
+        self._place()
         if self._current_value in self._values:   # la langue active, en vue
             first = max(0, self._values.index(self._current_value) - rows // 2)
             self._list._parent_canvas.yview_moveto(first / len(self._values))
         self._anchor = self._window_box()
+        self._was_viewable = bool(self.winfo_viewable())
         popup.bind("<Escape>", lambda _e: self.close_dropdown())
         popup.bind("<FocusOut>", lambda _e: self.after(10, self._close_if_focus_left))
         popup.focus_force()
+        self._follow_job = self.after(self.FOLLOW_MS, self._follow)
 
     def _close_if_focus_left(self) -> None:
         # FocusOut remonte aussi d'un widget à l'autre DANS la liste : on ne
@@ -359,5 +395,8 @@ class ScrollableOptionMenu(ctk.CTkOptionMenu):
         if self._popup is None:
             return
         popup, self._popup, self._list = self._popup, None, None
+        if self._follow_job is not None:
+            self.after_cancel(self._follow_job)
+            self._follow_job = None
         self._closed_at = time.monotonic()
         popup.destroy()

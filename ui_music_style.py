@@ -3,9 +3,10 @@ ui_music_style.py — Fenêtre « Widget » : l'apparence d'un overlay.
 
 Ouverte depuis le bouton Widget d'une carte, elle règle UNE source : couleur de
 fond, couleur et présence du contour, opacité, template, image de fond. Dans
-cet ordre, qui est celui où l'on décide : d'abord de quoi la carte est faite,
-ensuite à quel point elle laisse passer la scène, enfin si un style tout prêt
-ou un dessin remplace le tout.
+cet ordre : d'abord un style tout prêt, puis la disposition, la pochette, les
+couleurs, et enfin un dessin qui remplace le tout. Même présentation que la
+fenêtre Style des sous-titres : une carte par famille de réglages, l'aperçu et
+les boutons restent visibles pendant qu'on fait défiler.
 
 Le sélecteur de couleur est celui de Windows (`tkinter.colorchooser`) : il
 offre déjà le dégradé de teintes, la saisie exacte d'une valeur et les
@@ -41,14 +42,15 @@ except Exception:                             # pragma: no cover
 
 #: Taille de l'aperçu en haut de la fenêtre, et de ceux des templates.
 _PREVIEW = (300, 96)
-_TPL_PREVIEW = (168, 56)
+_TPL_PREVIEW = (228, 76)
 
-#: Vignettes des grilles de forme. Plus petites : il y en a cinq par rangee,
-#: et ce qui doit se lire est la DISPOSITION, pas le texte d exemple.
+#: Vignettes des dispositions : trois par rangée, assez grandes pour LIRE
+#: l'agencement. À 128 px le titre d'exemple finissait en « Nom de la mu… ».
+_LAYOUT_PREVIEW = (228, 96)
+
+#: Vignettes des pochettes. Plus petites : il y en a cinq par rangee, et ce
+#: qui doit se lire est la FORME, pas le texte d exemple.
 _OPT_PREVIEW = (128, 54)
-
-#: Colonnes des grilles d options.
-_OPT_COLS = 5
 
 
 #: Les vignettes sont rendues a ce multiple de leur taille d affichage.
@@ -217,6 +219,10 @@ class StyleDialog(ctk.CTkToplevel):
         self._style = store.get(key)
         self._preview_img: Optional[ctk.CTkImage] = None
         self._tpl_imgs: list[ctk.CTkImage] = []
+        self._opt_imgs: list[ctk.CTkImage] = []
+        self._opt_btns: dict[str, dict[str, ctk.CTkButton]] = {}
+        self._tpl_btns: dict[str, ctk.CTkButton] = {}
+        self._cartes: list[ctk.CTkFrame] = []
         # Rendus reportés pendant qu'on fait glisser le curseur d'opacité.
         self._apercu_prevu: Optional[str] = None
         self._vignettes_prevues: Optional[str] = None
@@ -224,25 +230,27 @@ class StyleDialog(ctk.CTkToplevel):
         self.title(t("MUSIC_STYLE_TITLE", app=label))
         self.transient(master.winfo_toplevel())
 
-        # Corps defilant : la fenetre depasse 900 px de haut une fois les deux
-        # grilles et les templates en place. Sur un ecran de portable, le
-        # bouton Enregistrer serait sous le bord de l ecran, donc hors
-        # d atteinte. La hauteur suit l ecran, jamais le contenu — mise a
-        # l echelle de Windows comprise.
-        fit_to_screen(self, 860, 960, 720, 420)
-        self.grid_rowconfigure(0, weight=1)
+        # Seules les cartes defilent : l apercu (en haut) et Enregistrer (en
+        # bas) restent a l ecran. Avant, tout defilait ensemble : on reglait
+        # une couleur sans voir le resultat, et sur un portable le bouton
+        # Enregistrer etait sous le bord de l ecran. La hauteur suit l ecran,
+        # jamais le contenu — mise a l echelle de Windows comprise.
+        fit_to_screen(self, 860, 960, 720, 480)
+        # Collee en haut de l ecran : placee par Windows en cascade sous la
+        # fenetre principale, elle depassait en bas et cachait Enregistrer.
+        self.geometry(f"+{max(0, master.winfo_toplevel().winfo_rootx() + 60)}+20")
+        self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
+
+        self._build_preview()
         self._corps = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self._corps.grid(row=0, column=0, sticky="nsew")
+        self._corps.grid(row=1, column=0, sticky="nsew", padx=12)
         self._corps.grid_columnconfigure(0, weight=1)
         self._scroller = SmoothScroll(self._corps)
 
-        self._build_preview()
-        self._build_shapes()
-        self._build_parts()
-        self._build_colors()
-        self._build_opacity()
         self._build_templates()
+        self._build_shapes()
+        self._build_colors()
         self._build_image()
         self._build_actions()
 
@@ -255,19 +263,67 @@ class StyleDialog(ctk.CTkToplevel):
         except Exception:
             pass
 
+    # -- briques de mise en page ------------------------------------------- #
+
+    def _card(self, titre: str) -> ctk.CTkFrame:
+        """Une carte titrée, à la suite des précédentes."""
+        carte = ctk.CTkFrame(self._corps, fg_color=COL_CARD, corner_radius=12,
+                             border_width=1, border_color=COL_BORDER)
+        carte.grid(row=len(self._cartes), column=0, sticky="ew", padx=8, pady=6)
+        carte.grid_columnconfigure(0, weight=1)
+        self._cartes.append(carte)
+        ctk.CTkLabel(carte, text=titre, font=font(13, "bold"),
+                     text_color=COL_TEXT, anchor="w").grid(
+                         row=0, column=0, columnspan=3, sticky="w",
+                         padx=16, pady=(12, 6))
+        return carte
+
+    def _tiles(self, carte: ctk.CTkFrame, row: int, options: list, cols: int,
+               hauteur: int, commande: Callable[[str], None]
+               ) -> dict[str, ctk.CTkButton]:
+        """Grille de vignettes cliquables qui se partagent la largeur.
+
+        `options` : (clé, libellé, image ou None). Les colonnes sont de même
+        largeur et étirées : plus de rangée qui s'arrête au milieu de la
+        fenêtre.
+        """
+        grille = ctk.CTkFrame(carte, fg_color="transparent")
+        grille.grid(row=row, column=0, columnspan=3, sticky="ew", padx=10,
+                    pady=(0, 10))
+        for colonne in range(cols):
+            grille.grid_columnconfigure(colonne, weight=1, uniform="vignette")
+        boutons: dict[str, ctk.CTkButton] = {}
+        for index, (cle, libelle, image) in enumerate(options):
+            bouton = ctk.CTkButton(
+                grille, text=libelle, image=image, compound="top",
+                height=hauteur + 34, corner_radius=10, fg_color=COL_BG,
+                hover_color=COL_CARD_HOVER, border_width=2,
+                border_color=COL_BG, text_color=COL_TEXT, font=font(11),
+                command=lambda k=cle: commande(k))
+            bouton.grid(row=index // cols, column=index % cols, sticky="ew",
+                        padx=4, pady=4)
+            boutons[cle] = bouton
+        return boutons
+
+    def _field(self, carte: ctk.CTkFrame, row: int, cle: str) -> None:
+        """Libellé d'une ligne de réglage, à gauche de son contrôle."""
+        ctk.CTkLabel(carte, text=t(cle), font=font(12),
+                     text_color=COL_TEXT_MUTED, anchor="w").grid(
+                         row=row, column=0, sticky="w", padx=(16, 12), pady=6)
+
     # -- aperçu ------------------------------------------------------------ #
 
     def _build_preview(self) -> None:
-        cadre = ctk.CTkFrame(self._corps, fg_color=COL_CARD, corner_radius=14,
+        cadre = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=14,
                              border_width=1, border_color=COL_BORDER)
-        cadre.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 8))
+        cadre.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 8))
         self._preview_lbl = ctk.CTkLabel(cadre, text="")
-        self._preview_lbl.pack(padx=16, pady=(16, 8))
+        self._preview_lbl.pack(padx=16, pady=(14, 6))
         # La taille de source a donner a OBS pour CETTE combinaison. Elle suit
         # les reglages en direct : c'est ici qu'on les change.
         self._size_lbl = ctk.CTkLabel(cadre, text="", font=font(11),
                                       text_color=COL_ACCENT)
-        self._size_lbl.pack(padx=16, pady=(0, 14))
+        self._size_lbl.pack(padx=16, pady=(0, 12))
 
     def _refresh(self) -> None:
         """Redessine l'aperçu et les vignettes à partir des réglages en cours."""
@@ -289,47 +345,71 @@ class StyleDialog(ctk.CTkToplevel):
         largeur, hauteur = overlay_size(self._style)
         self._size_lbl.configure(text=t("MUSIC_SOURCE_SIZE", w=largeur,
                                         h=hauteur))
-        for champ, var in getattr(self, "_part_vars", {}).items():
+        for champ, var in self._part_vars.items():
             var.set(getattr(self._style, champ))
+
+    # -- templates --------------------------------------------------------- #
+
+    def _build_templates(self) -> None:
+        """En premier : un style tout prêt est le point de départ le plus
+        court, les cartes suivantes servent à le retoucher."""
+        carte = self._card(t("MUSIC_STYLE_TEMPLATES"))
+        options = []
+        for tpl in TEMPLATES:
+            image = _apercu(tpl.style, _TPL_PREVIEW)
+            if image is not None:
+                self._tpl_imgs.append(image)
+            options.append((tpl.key, tpl.label, image))
+        self._tpl_btns = self._tiles(carte, 1, options, 3, _TPL_PREVIEW[1],
+                                     self._apply)
+
+    def _apply(self, key: str) -> None:
+        """Un clic applique le modèle. L'enregistrement reste un geste à part."""
+        tpl = template(key)
+        if tpl is None:
+            return
+        if tpl.full:
+            # Certains modeles portent leur disposition : pastilles de
+            # fenetre, pochette carree et boutons de transport font partie du
+            # dessin. Les appliquer a moitie ne donnerait pas le modele.
+            self._style = tpl.style
+        else:
+            # Les autres ne portent que l habillage : appliquer une couleur ne
+            # doit pas reprendre a l utilisateur sa mise en page.
+            self._style = replace(tpl.style, layout=self._style.layout,
+                                  cover=self._style.cover,
+                                  show_wave=self._style.show_wave,
+                                  show_artist=self._style.show_artist,
+                                  show_app=self._style.show_app,
+                                  show_dots=self._style.show_dots,
+                                  show_progress=self._style.show_progress,
+                                  show_controls=self._style.show_controls)
+        self._border_var.set(self._style.border_on)
+        self._opacity_slider.set(self._style.opacity)
+        self._refresh()
 
     # -- formes ------------------------------------------------------------ #
 
     def _build_shapes(self) -> None:
-        """Les deux grilles de forme : disposition d ensemble, puis pochette.
+        """Disposition d ensemble et ses briques, puis forme de la pochette.
 
         Chaque vignette est le rendu reel de l option, avec un titre et un
         artiste d exemple et un rond clair a la place de la pochette : on
         choisit en VOYANT le resultat, sans avoir a l appliquer d abord.
+        Sans image a la construction : `_refresh`, appele juste apres, dessine
+        toutes les vignettes. Les rendre deux fois doublait le temps
+        d ouverture de la fenetre.
         """
-        self._opt_imgs: list[ctk.CTkImage] = []
-        self._opt_btns: dict[str, dict[str, ctk.CTkButton]] = {}
-        self._build_grid(1, "MUSIC_STYLE_LAYOUTS", LAYOUTS, "layout")
-        self._build_grid(3, "MUSIC_STYLE_COVERS", COVERS, "cover")
+        carte = self._card(t("MUSIC_STYLE_LAYOUTS").capitalize())
+        self._opt_btns["layout"] = self._tiles(
+            carte, 1, [(o.key, o.label, None) for o in LAYOUTS], 3,
+            _LAYOUT_PREVIEW[1], lambda cle: self._choisir("layout", cle))
+        self._build_parts(carte, 2)
 
-    def _build_grid(self, row: int, titre: str, options: tuple,
-                    champ: str) -> None:
-        ctk.CTkLabel(self._corps, text=t(titre), font=font(11, "bold"),
-                     text_color=COL_TEXT_MUTED, anchor="w").grid(
-                         row=row, column=0, sticky="ew", padx=20, pady=(4, 6))
-        grille = ctk.CTkFrame(self._corps, fg_color="transparent")
-        grille.grid(row=row + 1, column=0, sticky="ew", padx=16, pady=(0, 10))
-
-        boutons: dict[str, ctk.CTkButton] = {}
-        for index, option in enumerate(options):
-            # Sans image ici : `_refresh`, appele juste apres la construction,
-            # dessine toutes les vignettes. Les rendre deux fois doublait le
-            # temps d ouverture de la fenetre.
-            bouton = ctk.CTkButton(
-                grille, text=option.label, compound="top",
-                width=_OPT_PREVIEW[0] + 10, height=_OPT_PREVIEW[1] + 32,
-                corner_radius=10, fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
-                border_width=2, border_color=COL_CARD, text_color=COL_TEXT,
-                font=font(10),
-                command=lambda c=champ, k=option.key: self._choisir(c, k))
-            bouton.grid(row=index // _OPT_COLS, column=index % _OPT_COLS,
-                        padx=3, pady=3)
-            boutons[option.key] = bouton
-        self._opt_btns[champ] = boutons
+        carte = self._card(t("MUSIC_STYLE_COVERS").capitalize())
+        self._opt_btns["cover"] = self._tiles(
+            carte, 1, [(o.key, o.label, None) for o in COVERS], len(COVERS),
+            _OPT_PREVIEW[1], lambda cle: self._choisir("cover", cle))
 
     def _choisir(self, champ: str, cle: str) -> None:
         self._set(**{champ: cle})
@@ -343,7 +423,7 @@ class StyleDialog(ctk.CTkToplevel):
         l ancien habillage, donc sur un rendu faux.
         """
         self._opt_imgs = []
-        for champ, boutons in getattr(self, "_opt_btns", {}).items():
+        for champ, boutons in self._opt_btns.items():
             actif = getattr(self._style, champ)
             for cle, bouton in boutons.items():
                 if champ == "cover":
@@ -354,35 +434,42 @@ class StyleDialog(ctk.CTkToplevel):
                                     _OPT_PREVIEW)
                 else:
                     apercu = _apercu(replace(self._style, **{champ: cle}),
-                                     _OPT_PREVIEW)
+                                     _LAYOUT_PREVIEW)
                 if apercu is not None:
                     self._opt_imgs.append(apercu)
                 bouton.configure(image=apercu,
                                  border_color=COL_BORDER_ACCENT if cle == actif
-                                 else COL_CARD)
+                                 else COL_BG)
+        # Le modèle reste souligné tant qu'aucune retouche ne l'a quitté.
+        for cle, bouton in self._tpl_btns.items():
+            bouton.configure(border_color=COL_BORDER_ACCENT
+                             if cle == self._style.template else COL_BG)
 
     # -- briques ------------------------------------------------------------ #
 
-    def _build_parts(self) -> None:
+    def _build_parts(self, carte: ctk.CTkFrame, row: int) -> None:
         """Ce qu on garde ou non. Masquer une brique libere sa place."""
-        ligne = ctk.CTkFrame(self._corps, fg_color="transparent")
-        ligne.grid(row=5, column=0, sticky="ew", padx=20, pady=(2, 12))
+        ligne = ctk.CTkFrame(carte, fg_color="transparent")
+        ligne.grid(row=row, column=0, columnspan=3, sticky="ew", padx=16,
+                   pady=(2, 12))
 
         self._part_vars: dict[str, ctk.BooleanVar] = {}
-        for champ, cle in (("show_wave", "MUSIC_STYLE_WAVE"),
-                           ("show_artist", "MUSIC_STYLE_ARTIST"),
-                           ("show_app", "MUSIC_STYLE_APP"),
-                           ("show_dots", "MUSIC_STYLE_DOTS"),
-                           ("show_progress", "MUSIC_STYLE_PROGRESS"),
-                           ("show_controls", "MUSIC_STYLE_CONTROLS")):
+        for index, (champ, cle) in enumerate((
+                ("show_wave", "MUSIC_STYLE_WAVE"),
+                ("show_artist", "MUSIC_STYLE_ARTIST"),
+                ("show_app", "MUSIC_STYLE_APP"),
+                ("show_dots", "MUSIC_STYLE_DOTS"),
+                ("show_progress", "MUSIC_STYLE_PROGRESS"),
+                ("show_controls", "MUSIC_STYLE_CONTROLS"))):
+            ligne.grid_columnconfigure(index % 3, weight=1, uniform="brique")
             var = ctk.BooleanVar(value=getattr(self._style, champ))
             self._part_vars[champ] = var
-            ctk.CTkCheckBox(ligne, text=t(cle), font=font(11), variable=var,
-                            checkbox_width=18, checkbox_height=18,
-                            corner_radius=5, fg_color=COL_ACCENT,
-                            hover_color=COL_ACCENT_HOVER, text_color=COL_TEXT,
-                            command=lambda c=champ: self._basculer(c)).pack(
-                                side="left", padx=(0, 14))
+            ctk.CTkSwitch(ligne, text=t(cle), font=font(12), variable=var,
+                          onvalue=True, offvalue=False,
+                          progress_color=COL_ACCENT, text_color=COL_TEXT,
+                          command=lambda c=champ: self._basculer(c)).grid(
+                              row=index // 3, column=index % 3, sticky="w",
+                              pady=5)
 
     def _basculer(self, champ: str) -> None:
         self._set(**{champ: bool(self._part_vars[champ].get())})
@@ -390,41 +477,49 @@ class StyleDialog(ctk.CTkToplevel):
 
     # -- couleurs ---------------------------------------------------------- #
 
-    def _row(self, row: int, key: str) -> ctk.CTkFrame:
-        ligne = ctk.CTkFrame(self._corps, fg_color="transparent")
-        ligne.grid(row=row, column=0, sticky="ew", padx=20, pady=(0, 10))
-        ligne.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(ligne, text=t(key), font=font(12), text_color=COL_TEXT,
-                     anchor="w").grid(row=0, column=0, sticky="w")
-        return ligne
-
     def _swatch(self, parent, couleur: str,
                 commande: Callable[[], None]) -> ctk.CTkButton:
         """Pastille cliquable : elle MONTRE la couleur, et l'ouvre au clic."""
-        return ctk.CTkButton(parent, text="", width=64, height=28,
-                             corner_radius=7, fg_color=couleur,
+        return ctk.CTkButton(parent, text="", width=64, height=26,
+                             corner_radius=6, fg_color=couleur,
                              hover_color=couleur, border_width=1,
                              border_color=COL_BORDER, command=commande)
 
     def _build_colors(self) -> None:
-        ligne = self._row(6, "MUSIC_STYLE_BG")
-        self._bg_swatch = self._swatch(ligne, self._style.bg, self._pick_bg)
-        self._bg_swatch.grid(row=0, column=2, sticky="e")
+        carte = self._card(t("SUBS_STY_COLORS"))
+        carte.grid_columnconfigure(0, weight=0)
+        carte.grid_columnconfigure(1, weight=1)
 
-        ligne = self._row(7, "MUSIC_STYLE_BORDER")
-        self._border_swatch = self._swatch(ligne, self._style.border,
-                                           self._pick_border)
-        self._border_swatch.grid(row=0, column=2, sticky="e")
+        self._field(carte, 1, "MUSIC_STYLE_BG")
+        self._bg_swatch = self._swatch(carte, self._style.bg, self._pick_bg)
+        self._bg_swatch.grid(row=1, column=1, sticky="w", pady=6)
 
-        ligne = ctk.CTkFrame(self._corps, fg_color="transparent")
-        ligne.grid(row=8, column=0, sticky="ew", padx=20, pady=(0, 14))
+        self._field(carte, 2, "MUSIC_STYLE_BORDER_ON")
         self._border_var = ctk.BooleanVar(value=self._style.border_on)
-        ctk.CTkCheckBox(ligne, text=t("MUSIC_STYLE_BORDER_ON"), font=font(12),
-                        variable=self._border_var, checkbox_width=20,
-                        checkbox_height=20, corner_radius=5,
-                        fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
-                        text_color=COL_TEXT,
-                        command=self._toggle_border).pack(anchor="w")
+        ctk.CTkSwitch(carte, text="", variable=self._border_var, onvalue=True,
+                      offvalue=False, progress_color=COL_ACCENT,
+                      command=self._toggle_border).grid(
+                          row=2, column=1, sticky="w", pady=6)
+
+        self._field(carte, 3, "MUSIC_STYLE_BORDER")
+        self._border_swatch = self._swatch(carte, self._style.border,
+                                           self._pick_border)
+        self._border_swatch.grid(row=3, column=1, sticky="w", pady=6)
+
+        self._field(carte, 4, "MUSIC_STYLE_OPACITY")
+        ligne = ctk.CTkFrame(carte, fg_color="transparent")
+        ligne.grid(row=4, column=1, sticky="ew", padx=(0, 16), pady=(6, 14))
+        ligne.grid_columnconfigure(0, weight=1)
+        self._opacity_slider = ctk.CTkSlider(
+            ligne, from_=0, to=100, number_of_steps=100,
+            progress_color=COL_ACCENT, button_color=COL_ACCENT,
+            button_hover_color=COL_ACCENT_HOVER, command=self._set_opacity)
+        self._opacity_slider.set(self._style.opacity)
+        self._opacity_slider.grid(row=0, column=0, sticky="ew")
+        self._opacity_lbl = ctk.CTkLabel(ligne, text="", width=54,
+                                         font=font(11), text_color=COL_TEXT,
+                                         anchor="e")
+        self._opacity_lbl.grid(row=0, column=1, padx=(10, 0))
 
     def _choose(self, actuelle: str) -> Optional[str]:
         """Panneau de couleurs du système, ouvert sur la valeur courante."""
@@ -461,17 +556,6 @@ class StyleDialog(ctk.CTkToplevel):
 
     # -- opacité ----------------------------------------------------------- #
 
-    def _build_opacity(self) -> None:
-        ligne = self._row(9, "MUSIC_STYLE_OPACITY")
-        self._opacity_lbl = ctk.CTkLabel(ligne, text="", font=font(12, "bold"),
-                                         text_color=COL_ACCENT, width=50)
-        self._opacity_lbl.grid(row=0, column=2, sticky="e")
-        curseur = ctk.CTkSlider(ligne, from_=0, to=100, number_of_steps=100,
-                                progress_color=COL_ACCENT, button_color=COL_TEXT,
-                                command=self._set_opacity)
-        curseur.set(self._style.opacity)
-        curseur.grid(row=0, column=1, sticky="ew", padx=14)
-
     def _set_opacity(self, valeur: float) -> None:
         """Suit le curseur sans figer la fenêtre.
 
@@ -501,60 +585,16 @@ class StyleDialog(ctk.CTkToplevel):
         if self.winfo_exists():
             self._marquer_selection()
 
-    # -- templates --------------------------------------------------------- #
-
-    def _build_templates(self) -> None:
-        ctk.CTkLabel(self._corps, text=t("MUSIC_STYLE_TEMPLATES"), font=font(12, "bold"),
-                     text_color=COL_TEXT, anchor="w").grid(
-                         row=10, column=0, sticky="ew", padx=20, pady=(6, 6))
-        grille = ctk.CTkFrame(self._corps, fg_color="transparent")
-        grille.grid(row=11, column=0, sticky="ew", padx=16, pady=(0, 12))
-
-        for index, tpl in enumerate(TEMPLATES):
-            image = _apercu(tpl.style, _TPL_PREVIEW)
-            if image is not None:
-                self._tpl_imgs.append(image)
-            bouton = ctk.CTkButton(
-                grille, text=tpl.label, image=image, compound="top",
-                width=_TPL_PREVIEW[0] + 16, height=_TPL_PREVIEW[1] + 34,
-                corner_radius=10, fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
-                border_width=1, border_color=COL_BORDER, text_color=COL_TEXT,
-                font=font(11), command=lambda k=tpl.key: self._apply(k))
-            bouton.grid(row=index // 3, column=index % 3, padx=4, pady=4)
-
-    def _apply(self, key: str) -> None:
-        """Un clic applique le modèle. L'enregistrement reste un geste à part."""
-        tpl = template(key)
-        if tpl is None:
-            return
-        if tpl.full:
-            # Certains modeles portent leur disposition : pastilles de
-            # fenetre, pochette carree et boutons de transport font partie du
-            # dessin. Les appliquer a moitie ne donnerait pas le modele.
-            self._style = tpl.style
-        else:
-            # Les autres ne portent que l habillage : appliquer une couleur ne
-            # doit pas reprendre a l utilisateur sa mise en page.
-            self._style = replace(tpl.style, layout=self._style.layout,
-                                  cover=self._style.cover,
-                                  show_wave=self._style.show_wave,
-                                  show_artist=self._style.show_artist,
-                                  show_app=self._style.show_app,
-                                  show_dots=self._style.show_dots,
-                                  show_progress=self._style.show_progress,
-                                  show_controls=self._style.show_controls)
-        self._border_var.set(self._style.border_on)
-        self._refresh()
-
     # -- image de fond ----------------------------------------------------- #
 
     def _build_image(self) -> None:
-        ctk.CTkButton(self._corps, text=t("MUSIC_STYLE_IMAGE"), height=38,
+        carte = self._card(t("MUSIC_STYLE_IMAGE_TITLE"))
+        ctk.CTkButton(carte, text=t("MUSIC_STYLE_IMAGE"), height=36,
                       corner_radius=9, fg_color="transparent", border_width=1,
-                      border_color=COL_BORDER_ACCENT, hover_color=COL_CARD,
+                      border_color=COL_BORDER_ACCENT, hover_color=COL_CARD_HOVER,
                       text_color=COL_ACCENT, font=font(12, "bold"),
                       command=self._open_guide).grid(
-                          row=12, column=0, sticky="ew", padx=20, pady=(0, 14))
+                          row=1, column=0, sticky="w", padx=16, pady=(0, 14))
 
     def _open_guide(self) -> None:
         GuideDialog(self, self._key, self._store, self._refresh)
@@ -562,29 +602,30 @@ class StyleDialog(ctk.CTkToplevel):
     # -- actions ----------------------------------------------------------- #
 
     def _build_actions(self) -> None:
-        ligne = ctk.CTkFrame(self._corps, fg_color="transparent")
-        ligne.grid(row=13, column=0, sticky="ew", padx=20, pady=(0, 18))
-        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_RESET"), height=38, width=130,
+        ligne = ctk.CTkFrame(self, fg_color="transparent")
+        ligne.grid(row=2, column=0, sticky="ew", padx=24, pady=14)
+        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_RESET"), height=36, width=150,
                       corner_radius=9, fg_color="transparent", border_width=1,
                       border_color=COL_BORDER, hover_color=COL_CARD,
                       text_color=COL_TEXT_MUTED, font=font(12),
                       command=self._reset).pack(side="left")
-        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_CANCEL"), height=38, width=110,
-                      corner_radius=9, fg_color="transparent", border_width=1,
-                      border_color=COL_BORDER, hover_color=COL_CARD,
-                      text_color=COL_TEXT, font=font(12),
-                      command=self.destroy).pack(side="right", padx=(10, 0))
-        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_SAVE"), height=38, width=140,
+        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_SAVE"), height=36, width=140,
                       corner_radius=9, fg_color=COL_ACCENT,
                       hover_color=COL_ACCENT_HOVER, text_color=COL_BG,
                       font=font(12, "bold"),
                       command=self._save).pack(side="right")
+        ctk.CTkButton(ligne, text=t("MUSIC_STYLE_CANCEL"), height=36, width=110,
+                      corner_radius=9, fg_color="transparent", border_width=1,
+                      border_color=COL_BORDER, hover_color=COL_CARD,
+                      text_color=COL_TEXT, font=font(12),
+                      command=self.destroy).pack(side="right", padx=(0, 10))
 
     def _reset(self) -> None:
         self._store.reset(self._key)
         self._store.clear_background(self._key)
         self._style = self._store.get(self._key)
         self._border_var.set(self._style.border_on)
+        self._opacity_slider.set(self._style.opacity)
         self._refresh()
         self._on_saved(self._key, self._style)
 

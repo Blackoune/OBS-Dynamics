@@ -256,22 +256,36 @@ def test_the_list_closes_only_when_focus_leaves_it(vue, monkeypatch):
 
 @pytest.mark.skipif(sys.platform == "darwin",
                     reason="Tk macOS ne propage pas le déplacement par geometry() avant update()")
-def test_the_list_closes_when_the_window_moves(vue):
+def test_the_list_follows_the_window_and_folds_on_a_second_click(vue):
     """La liste est une fenêtre à part : si la fenêtre principale bouge sans
-    elle, elle resterait à flotter à l'ancienne place. Fenêtre affichée : Tk
-    n'émet aucun <Configure> quand on déplace une fenêtre masquée."""
+    elle, elle resterait à flotter à l'ancienne place. Elle doit suivre, et
+    se replier quand on reclique sur le bouton ou ailleurs dans la fenêtre."""
+    import time
     view, _, root = vue
     root.deiconify()
     root.update()
     menu = view._lang_menu
     menu._open_dropdown_menu()
     root.update()
-
-    view._title_lbl.configure(text="Un titre bien plus long qu'avant")   # un widget interne
-    root.update()
-    assert menu._popup is not None, "fermée par le redimensionnement d'un simple widget"
+    popup = menu._popup
+    avant = (popup.winfo_rootx(), popup.winfo_rooty())
 
     root.geometry(f"+{root.winfo_x() + 80}+{root.winfo_y() + 60}")
+    fin = time.monotonic() + 2
+    while time.monotonic() < fin and (popup.winfo_rootx(), popup.winfo_rooty()) == avant:
+        root.update()
+        time.sleep(0.02)
+    assert menu._popup is popup, "fermée au lieu de suivre la fenêtre"
+    root.update()
+    assert (popup.winfo_rootx() - avant[0], popup.winfo_rooty() - avant[1]) == (80, 60)
+
+    menu._open_dropdown_menu()                       # second clic sur le bouton
+    assert menu._popup is None
+
+    menu._closed_at = 0.0
+    menu._open_dropdown_menu()
+    root.update()
+    view._title_lbl.event_generate("<Button-1>")     # clic ailleurs dans la fenêtre
     root.update()
     assert menu._popup is None
 

@@ -445,8 +445,8 @@ direct :
 
 | Réglage | Options |
 |---|---|
-| Templates | Violet, Cassette néon, Ardoise, Clair, Sans cadre, Mocha, macOS sombre, macOS clair |
-| Disposition du lecteur | **Compact** (pochette à gauche), **Blocs** (trois cases), **Galerie** (pochette au-dessus), **Minimal** (une ligne, sans pochette), **Bandeau** (pleine largeur) |
+| Templates | Violet, Cassette néon, Ardoise, Clair, Sans cadre, Mocha, macOS sombre, macOS clair, Studio |
+| Disposition du lecteur | **Compact** (pochette à gauche), **Blocs** (trois cases), **Galerie** (pochette au-dessus), **Minimal** (une ligne, sans pochette), **Bandeau** (pleine largeur), **Lecteur** (pochette, case titre, case temps + onde, barre de progression dessous) |
 | Apparence de la pochette | **Auto**, **Vinyle** (disque qui tourne), **Carré**, **Large** (16:9), **Aucune** |
 | Éléments affichés | Forme d'onde, artiste, application, pastilles de fenêtre, progression, boutons décoratifs |
 | Couleurs | Couleur de fond, opacité du fond, contour et sa couleur |
@@ -471,6 +471,7 @@ celle saisie dans ses propriétés.
 | Galerie | 670 × 383 |
 | Minimal | 666 × 223 |
 | Bandeau | 918 × 247 |
+| Lecteur | 750 × 240 |
 
 Ces valeurs sont des **maximums garantis** : la largeur du titre et de
 l'artiste est plafonnée, aucun morceau au nom à rallonge ne peut faire

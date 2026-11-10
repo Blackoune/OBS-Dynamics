@@ -74,6 +74,7 @@ from overlay_server import (DEFAULT_PORT as OVERLAY_DEFAULT_PORT,  # noqa: E402
                             OverlayServer)
 from triggers import (DURATION_PRESETS_MS, MEDIA_EXTENSIONS, MEDIA_TYPES,  # noqa: E402
                       TriggerRule, TriggerStore)
+import ui_intro  # noqa: E402
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT,  # noqa: E402
                        COL_BG, COL_BG_GRADIENT_TOP, COL_BORDER,
                        COL_BORDER_ACCENT, COL_CARD, COL_CARD_HOVER, COL_GREEN,
@@ -108,6 +109,18 @@ class Sidebar(ctk.CTkFrame):
 
         brand = ctk.CTkFrame(self, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(26, 30))
+        # Le logo, à gauche du nom : c'est là que l'animation de lancement
+        # (ui_intro) vient le ranger. Sans le fichier, le nom reste seul.
+        self.brand_logo_lbl = ctk.CTkLabel(brand, text="", width=ui_intro.SMALL)
+        try:
+            from PIL import Image
+            with Image.open(ASSETS_DIR / "logo.png") as brut:
+                logo = brut.convert("RGBA")
+            self.brand_logo_lbl.configure(image=ctk.CTkImage(
+                light_image=logo, dark_image=logo, size=(ui_intro.SMALL,) * 2))
+            self.brand_logo_lbl.pack(side="left", padx=(0, 9))
+        except Exception:
+            logger.debug("Logo de la barre latérale indisponible.", exc_info=True)
         self._brand_icon_lbl = ctk.CTkLabel(brand, text=t("SIDEBAR_BRAND_ICON"), font=font(19, "bold"),
                                              text_color=COL_ACCENT)
         self._brand_icon_lbl.pack(side="left")
@@ -150,11 +163,13 @@ class Sidebar(ctk.CTkFrame):
 
         self.start_btn = ctk.CTkButton(ctrl, text=t("SIDEBAR_BTN_START"), height=38, fg_color=COL_GREEN,
                                         hover_color="#16A34A", font=font(12, "bold"), corner_radius=9,
-                                        command=on_start)
+                                        # Le gris par défaut d'un bouton désactivé est illisible sur
+                                        # un fond de couleur : teinte pâle de la couleur du bouton.
+                                        text_color_disabled="#BBF7D0", command=on_start)
         self.start_btn.pack(fill="x", pady=2)
         self.stop_btn = ctk.CTkButton(ctrl, text=t("SIDEBAR_BTN_STOP"), height=38, fg_color=COL_RED,
                                        hover_color="#DC2626", font=font(12, "bold"), corner_radius=9,
-                                       command=on_stop, state="disabled")
+                                       text_color_disabled="#FECACA", command=on_stop, state="disabled")
         self.stop_btn.pack(fill="x", pady=2)
 
         self._is_running = False
@@ -662,4 +677,6 @@ class App(ctk.CTk):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    app = App()
+    ui_intro.play(app, app.sidebar.brand_logo_lbl)
+    app.mainloop()

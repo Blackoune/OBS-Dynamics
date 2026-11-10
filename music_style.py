@@ -70,6 +70,10 @@ GEOMETRIE = {
     "minimal_pad_y": 12, "minimal_pad_x": 20, "minimal_title": 20,
     "bandeau_pad_x": 30, "bandeau_wave_h": 30, "bandeau_wave_gap": 14,
     "galerie_gap": 10,
+    # Lecteur : la carte elle-meme est invisible, ce sont ses cases qui portent
+    # le fond. La pochette couvre la hauteur des deux cases de droite.
+    "lecteur_pad": 6, "lecteur_cover": 150, "lecteur_time": 78,
+    "lecteur_bar": 8,
     # Briques optionnelles : place qu'elles ajoutent a la carte.
     "dots_h": 26, "progress_h": 43, "controls_w": 132,
     # Marge de securite ajoutee a chaque dimension annoncee. Elle couvre la
@@ -105,6 +109,7 @@ LAYOUTS: tuple[Option, ...] = (
     Option("galerie", "Galerie", "Pochette au-dessus, texte dessous"),
     Option("minimal", "Minimal", "Une seule ligne, sans pochette"),
     Option("bandeau", "Bandeau", "Pleine largeur, onde sur toute la base"),
+    Option("lecteur", "Lecteur", "Pochette, deux cases, barre en dessous"),
 )
 
 #: Formes de pochette. `auto` garde le comportement qui suit l'image reçue :
@@ -279,6 +284,13 @@ TEMPLATES: tuple[Template, ...] = (
                    show_wave=False, show_app=False, show_dots=True,
                    show_progress=True, show_controls=True,
                    template="macos_clair"), full=True),
+    # Cases gris anthracite, onde et barre violettes : le fond reglable colore
+    # les cases, la carte autour reste transparente sur la scene.
+    Template("studio", "Studio",
+             Style(bg="#1E1E21", border="#2C2C31", border_on=False,
+                   accent="#A855F7", opacity=100, layout="lecteur",
+                   cover="carre", show_app=False, show_progress=True,
+                   template="studio"), full=True),
 )
 
 _BY_KEY = {tpl.key: tpl for tpl in TEMPLATES}
@@ -750,6 +762,8 @@ LAYOUT_ZONES = {
     "minimal": {"colonnes": False, "cadres": False, "pochette": False},
     "bandeau": {"colonnes": False, "cadres": False, "pochette": True,
                 "onde_pleine": True},
+    "lecteur": {"colonnes": False, "cadres": True, "pochette": True,
+                "lecteur": True},
 }
 
 
@@ -800,7 +814,29 @@ def overlay_size(style: "Style") -> tuple[int, int]:
         pile_h += g["progress_h"]
     texte_w = g["title_max"]
 
-    if style.layout == "galerie":
+    if style.layout == "lecteur":
+        # Transport masque dans cette disposition (voir la page) : on ne lui
+        # reserve donc pas de place.
+        pad, bloc = g["lecteur_pad"], g["bloc_pad"]
+        if pochette and style.cover != "large":
+            largeur_p = hauteur_p = g["lecteur_cover"]
+        case_texte = texte_w + 2 * bloc
+        # Le texte n'impose qu'une largeur maximale ; la rangee temps + onde a
+        # sa propre largeur naturelle : 48 barres de 4 px au plus, 2 px d'ecart.
+        rangee = 2 * g["lecteur_time"] + 48 * 4 + 47 * 2 + 2 * bloc
+        largeur = 2 * pad + max(case_texte, rangee)
+        if pochette:
+            largeur += largeur_p + g["bloc_gap"]
+        droite = 2 * bloc + texte_h
+        if onde or style.show_progress:
+            droite += g["bloc_gap"] + 2 * bloc + g["wave_h"]
+        hauteur = 2 * pad + max(hauteur_p, droite)
+        if style.show_progress:
+            hauteur += g["bloc_gap"] + g["lecteur_bar"]
+        if style.show_dots:
+            hauteur += g["dots_h"]
+        return int(largeur + g["ombre"]), int(hauteur + g["ombre"])
+    elif style.layout == "galerie":
         largeur = pad_l + max(largeur_p, texte_w) + pad_r
         hauteur = pad_y * 2 + pile_h
         if pochette:
@@ -1100,10 +1136,12 @@ def preview_png(style: Style, width: int = 240, height: int = 78,
             pose = True
         except Exception:
             pose = False
-    if not pose:
+    # Lecteur : la carte est invisible, ce sont ses cases qui portent le fond.
+    sans_carte = style.layout == "lecteur" and not pose
+    if not pose and not sans_carte:
         dessin.rounded_rectangle([0, 0, CW - 1, CH - 1], radius=rayon,
                                  fill=style.rgba)
-    if style.border_on:
+    if style.border_on and not sans_carte:
         if style.border_dashed:
             _pointille(dessin, CW, CH, int(rayon), style.border,
                        tiret=int(7 * e), trou=int(5 * e), epaisseur=int(2 * e))
@@ -1135,7 +1173,9 @@ def _disposer(dessin, style: "Style", W: int, H: int, marge: float,
     accent = style.accent or style.border
     petit = H < 70 * e
 
-    if regles.get("vertical"):
+    if regles.get("lecteur"):
+        _lecteur(dessin, style, W, H, e, zones, forme, accent)
+    elif regles.get("vertical"):
         _galerie(dessin, style, W, H, marge, e, zones, forme, accent, petit)
     elif regles["colonnes"]:
         _colonnes(dessin, style, W, H, marge, e, zones, forme, accent)
@@ -1271,6 +1311,59 @@ def _colonnes(dessin, style, W, H, marge, e, zones, forme, accent) -> None:
             _onde(dessin, x + 8 * e, H - marge - 9 * e, largeur - 16 * e,
                   hauteur - 22 * e, accent, e)
         x += largeur + ecart
+
+
+def _lecteur(dessin, style, W, H, e, zones, forme, accent) -> None:
+    """Lecteur : pochette, case titre, case temps + onde, barre en pied."""
+    marge, ecart = 3 * e, 4 * e
+    encre = (24, 20, 44, 255) if is_light(style) else (244, 241, 251, 255)
+    contour = style.border if style.border_on else None
+    barre = 4 * e if style.show_progress else 0
+    bas = H - marge - (barre + ecart if barre else 0)
+    haut = marge + (10 * e if style.show_dots else 0)
+    if style.show_dots:
+        _pastilles(dessin, marge + 2 * e, marge, e)
+
+    def case(boite):
+        dessin.rounded_rectangle(boite, radius=4 * e, fill=style.rgba,
+                                 outline=contour, width=max(1, int(e / 2)))
+
+    x = marge
+    if "pochette" in zones:
+        cote = bas - haut
+        lg, ht = _taille_pochette(forme, cote, W * 0.4)
+        y = haut + (cote - ht) / 2
+        _pochette(dessin, (x, y, x + lg, y + ht), forme, accent, e)
+        x += lg + ecart
+    droite = W - marge
+
+    deux = "onde" in zones or style.show_progress
+    milieu = haut + (bas - haut) * (0.58 if deux else 1)
+    case((x, haut, droite, milieu - (ecart / 2 if deux else 0)))
+    _texte(dessin, x + 6 * e, haut + 5 * e, style, droite - x - 12 * e, e,
+           petit=True)
+    if deux:
+        y0 = milieu + ecart / 2
+        case((x, y0, droite, bas))
+        gauche, fin = x + 6 * e, droite - 6 * e
+        if style.show_progress:
+            police = _police_grasse(8 * e)
+            y = (y0 + bas) / 2 - 5 * e
+            dessin.text((gauche, y), "1:42", font=police, fill=encre)
+            large = dessin.textlength("3:58", font=police)
+            dessin.text((fin - large, y), "3:58", font=police, fill=encre)
+            gauche += large + 6 * e
+            fin -= large + 6 * e
+        if "onde" in zones:
+            hauteur = (bas - y0) * 0.6
+            _onde(dessin, gauche, (y0 + bas + hauteur) / 2, fin - gauche,
+                  hauteur, accent, e)
+    if barre:
+        y = H - marge - barre
+        dessin.rounded_rectangle([marge, y, W - marge, y + barre],
+                                 radius=barre / 2, fill=style.rgba)
+        dessin.rounded_rectangle([marge, y, marge + (W - 2 * marge) * 0.42,
+                                  y + barre], radius=barre / 2, fill=accent)
 
 
 def cover_preview_png(style: Style, forme: str, width: int = 128,

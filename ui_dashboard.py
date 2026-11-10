@@ -579,10 +579,12 @@ class DashboardView(ctk.CTkFrame):
 
         btns = ctk.CTkFrame(header, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e")
-        self._add_btn = ctk.CTkButton(btns, text=t("DASHBOARD_BTN_ADD"), width=110, height=36,
+        self._add_btn = ctk.CTkButton(btns, text=t("DASHBOARD_BTN_ADD"), width=120, height=36,
                                        fg_color=COL_CARD, hover_color=COL_CARD_HOVER,
                                        border_width=1, border_color=COL_BORDER, corner_radius=9,
-                                       font=font(12), command=self._open_add_modal)
+                                       # Gras, comme son voisin : en maigre le « + » se réduisait à
+                                       # deux traits fins, écrasé à côté du texte.
+                                       font=font(12, "bold"), command=self._open_add_modal)
         self._add_btn.pack(side="left", padx=(0, 8))
         self.scan_btn = ctk.CTkButton(btns, text=t("DASHBOARD_BTN_SCAN_STEAM"), width=160, height=36,
                                        fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,

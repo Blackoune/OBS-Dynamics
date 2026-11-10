@@ -56,6 +56,21 @@ COL_BADGE_FG = "#F3F0FA"
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+# Le thème « dark-blue » laisse du gris neutre là où une vue ne passe pas ses
+# couleurs : barres de défilement, fond des boutons segmentés, rail des
+# curseurs et des interrupteurs. Corrigé une fois ici plutôt que vue par vue.
+_THEME = ctk.ThemeManager.theme
+_THEME["CTkScrollbar"].update(button_color=[COL_RING_IDLE] * 2,
+                              button_hover_color=[COL_ACCENT_SOFT] * 2)
+_THEME["CTkSegmentedButton"].update(fg_color=[COL_BG] * 2,
+                                    unselected_color=[COL_BG] * 2,
+                                    unselected_hover_color=[COL_CARD_HOVER] * 2)
+_THEME["CTkSlider"].update(fg_color=[COL_BORDER] * 2)
+_THEME["CTkSwitch"].update(fg_color=[COL_RING_IDLE] * 2,
+                           progress_color=[COL_ACCENT] * 2,
+                           button_color=[COL_TEXT] * 2,
+                           button_hover_color=[COL_TEXT] * 2)
+
 # Police livrée avec le système : Inter n'est installée ni sur Windows ni sur
 # macOS, et Tk retombait alors sur une police bitmap sans prévenir.
 if sys.platform == "win32":
