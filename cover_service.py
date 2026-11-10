@@ -46,12 +46,7 @@ _HTTP_TIMEOUT = 8
 # hôte tiers de nous faire avaler un flux sans fin en mémoire.
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
-# Une image de 20 000 x 20 000 pixels tient dans quelques centaines de Ko
-# compressés, mais réclame plus d'un Go une fois décodée : la taille du fichier
-# ne dit rien du coût de décodage. La limite par défaut de Pillow (89 Mpx) se
-# contente d'un avertissement à ce seuil ; 40 Mpx lève, et reste très au-dessus
-# d'une jaquette comme d'une capture d'écran 8K (16,6 Mpx).
-Image.MAX_IMAGE_PIXELS = 40_000_000
+# Plafond de pixels décodés : posé dans app_paths, pour toute l'application.
 
 # Téléchargements réseau : purement I/O-bound, donc les threads se recouvrent
 # bien. Avec un seul worker, scanner une bibliothèque de 40 jeux faisait

@@ -14,6 +14,17 @@ import shutil
 import sys
 from pathlib import Path
 
+from PIL import Image
+
+# Une image de 20 000 x 20 000 pixels tient dans quelques centaines de Ko
+# compressés, mais réclame plus d'un Go une fois décodée : la taille du fichier
+# ne dit rien du coût de décodage. Posé ICI, le plafond vaut pour toute image
+# ouverte par l'application (jaquettes, pochettes SMTC, références), quel que
+# soit l'ordre de chargement des modules. 40 Mpx reste au-dessus d'une capture
+# d'écran 8K (33 Mpx). Pillow avertit au-delà du plafond et ne LÈVE qu'au
+# double : le refus ferme est donc à 80 Mpx.
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 
 def enable_dpi_awareness() -> None:
     """Déclare le processus « DPI aware » AVANT tout import de customtkinter.

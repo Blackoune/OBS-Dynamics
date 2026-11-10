@@ -79,6 +79,20 @@ jobs:
         # outils de build (PyInstaller) et de génération des logos tournent
         # eux aussi sur la machine du développeur, avec ses droits.
         # requirements-dev.txt inclut requirements.txt (-r).
+        # PyPI répond parfois trop lentement depuis les runners (ReadTimeout
+        # avec le délai par défaut de 15 s) : délai porté à 60 s et 3 essais,
+        # pour qu'une lenteur réseau ne passe pas pour une faille.
+        shell: pwsh
         run: |
           pip install pip-audit
-          pip-audit -r requirements-dev.txt
+          for ($i = 1; $i -le 3; $i++) {
+            pip-audit -r requirements-dev.txt --timeout 60
+            $dev = $LASTEXITCODE
+            # Le fichier réellement livré : ses versions verrouillées (dont les
+            # dépendances indirectes) peuvent différer de l'installation dev.
+            # --disable-pip : lu tel quel grâce aux empreintes, sans résolution.
+            pip-audit -r requirements-release.txt --require-hashes --disable-pip --timeout 60
+            if ($dev -eq 0 -and $LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "Essai $i en échec"
+          }
+          exit 1
