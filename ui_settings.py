@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Callable
 
 import i18n
+import update_check
 from env_config import EnvConfigManager
 from i18n import t
 from ui_common import (COL_ACCENT, COL_ACCENT_HOVER, COL_ACCENT_SOFT, COL_BG,
@@ -25,10 +26,13 @@ def alpha_key(name: str) -> str:
 # VUE : PARAMÈTRES
 # ============================================================================
 class SettingsView(ctk.CTkFrame):
-    def __init__(self, master, config_mgr: EnvConfigManager, on_saved: Callable[[], None], **kwargs) -> None:
+    def __init__(self, master, config_mgr: EnvConfigManager, on_saved: Callable[[], None],
+                 on_check_update: Callable[[], None] = lambda: None,
+                 on_install_update: Callable[[], None] = lambda: None, **kwargs) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
         self.config_mgr = config_mgr
         self.on_saved = on_saved
+        self.on_check_update = on_check_update
         self.grid_columnconfigure(0, weight=1)
 
         self._title_lbl = ctk.CTkLabel(self, text=t("SETTINGS_TITLE"), font=font(22, "bold"), text_color=COL_TEXT)
@@ -93,7 +97,51 @@ class SettingsView(ctk.CTkFrame):
         )
         self._lang_menu.grid(row=1, column=1, sticky="w", pady=(0, 18))
 
+        # --- Version et mise à jour ---
+        ver_card = ctk.CTkFrame(self, fg_color=COL_CARD, corner_radius=14, border_width=1, border_color=COL_BORDER)
+        ver_card.grid(row=3, column=0, sticky="ew", padx=28, pady=(20, 0))
+        self._ver_section_lbl = ctk.CTkLabel(ver_card, text=t("SETTINGS_SECTION_VERSION"),
+                                              font=font(14, "bold"), text_color=COL_TEXT)
+        self._ver_section_lbl.pack(anchor="w", padx=20, pady=(18, 12))
+        ver_row = ctk.CTkFrame(ver_card, fg_color="transparent")
+        ver_row.pack(anchor="w", padx=20)
+        ctk.CTkLabel(ver_row, text=f"Dynamics {update_check.current_version() or 'dev'}",
+                     font=font(12), text_color=COL_TEXT_MUTED).pack(side="left", padx=(0, 14))
+        self._check_btn = ctk.CTkButton(ver_row, text=t("SETTINGS_BTN_CHECK_UPDATE"), height=38, corner_radius=9,
+                                         fg_color="transparent", hover_color=COL_BG, border_width=1,
+                                         border_color=COL_BORDER, text_color=COL_TEXT, font=font(13),
+                                         command=self._check_update)
+        self._check_btn.pack(side="left", padx=(0, 8))
+        # Caché tant qu'aucune version plus récente n'est connue (show_update).
+        self._install_btn = ctk.CTkButton(ver_row, text=t("SETTINGS_BTN_INSTALL_UPDATE"), height=38,
+                                           fg_color=COL_ACCENT, hover_color=COL_ACCENT_HOVER,
+                                           text_color="#0F0C1B", corner_radius=9,
+                                           font=font(13, "bold"), command=on_install_update)
+        self._update_msg: tuple[str, str, dict] = ("", COL_TEXT_MUTED, {})
+        self._update_lbl = ctk.CTkLabel(ver_card, text="", font=font(11))
+        self._update_lbl.pack(anchor="w", padx=20, pady=(6, 16))
+
         self._load_into_form()
+
+    def _check_update(self) -> None:
+        self.set_update_message("SETTINGS_UPDATE_SEARCHING")
+        self.on_check_update()
+
+    def set_update_message(self, key: str, color: str = COL_TEXT_MUTED, busy: bool = False, **kwargs) -> None:
+        """Message sous les boutons ; `busy` les bloque pendant un téléchargement."""
+        self._update_msg = (key, color, kwargs)
+        self._update_lbl.configure(text=t(key, **kwargs) if key else "", text_color=color)
+        for btn in (self._check_btn, self._install_btn):
+            btn.configure(state="disabled" if busy else "normal")
+
+    def show_update(self, version: str | None) -> None:
+        """Résultat d'une recherche : version disponible, ou None si à jour."""
+        if version:
+            self.set_update_message("SIDEBAR_UPDATE_AVAILABLE", COL_GREEN, version=version)
+            self._install_btn.pack(side="left")
+        else:
+            self.set_update_message("SETTINGS_UPDATE_UP_TO_DATE", COL_GREEN)
+            self._install_btn.pack_forget()
 
     def _field(self, parent, row: int, label: str, var: ctk.StringVar) -> ctk.CTkLabel:
         lbl = ctk.CTkLabel(parent, text=label, font=font(12), text_color=COL_TEXT_MUTED)
@@ -170,6 +218,11 @@ class SettingsView(ctk.CTkFrame):
         self._field_labels["interval"].configure(text=t("SETTINGS_LABEL_SCAN_INTERVAL"))
         self._field_labels["threshold"].configure(text=t("SETTINGS_LABEL_MATCH_THRESHOLD"))
         self._save_btn.configure(text=t("SETTINGS_BTN_SAVE"))
+        self._ver_section_lbl.configure(text=t("SETTINGS_SECTION_VERSION"))
+        self._check_btn.configure(text=t("SETTINGS_BTN_CHECK_UPDATE"))
+        self._install_btn.configure(text=t("SETTINGS_BTN_INSTALL_UPDATE"))
+        key, color, kwargs = self._update_msg
+        self._update_lbl.configure(text=t(key, **kwargs) if key else "", text_color=color)
         self._lang_seg.refresh_labels()
         self._show_lang(i18n.current_lang())
 

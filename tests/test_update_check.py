@@ -1,3 +1,6 @@
+import hashlib
+
+import pytest
 import requests
 
 import update_check
@@ -43,6 +46,40 @@ def test_check_never_raises_on_network_error(monkeypatch):
 
     monkeypatch.setattr(update_check.requests, "get", boom)
     assert update_check.check() is None
+
+
+SUMS = "aa11  Dynamics.exe\n{h}  OBS-Dynamics-Setup.exe\nbb22  OBS-Dynamics.dmg\n"
+
+
+def _fake_fetch(contenu: bytes, sommes: str):
+    def fetch(url, sortie=None):
+        assert url.startswith("https://github.com/Blackoune/OBS-Dynamics/releases/download/v1.1.0/")
+        if sortie is None:
+            return sommes.encode(), ""
+        sortie.write_bytes(contenu)
+        return b"", hashlib.sha256(contenu).hexdigest()
+    return fetch
+
+
+def test_install_runs_the_installer_when_sha256_matches():
+    contenu, lances = b"installeur", []
+    sommes = SUMS.format(h=hashlib.sha256(contenu).hexdigest())
+    update_check.install_update("1.1.0", fetch=_fake_fetch(contenu, sommes),
+                                launch=lambda cmd, **_k: lances.append(cmd))
+    assert len(lances) == 1 and lances[0][0].endswith("OBS-Dynamics-Setup.exe")
+
+
+def test_install_refuses_a_wrong_sha256_and_never_launches():
+    lances = []
+    with pytest.raises(update_check.UpdateError):
+        update_check.install_update("1.1.0", fetch=_fake_fetch(b"piege", SUMS.format(h="0" * 64)),
+                                    launch=lambda cmd, **_k: lances.append(cmd))
+    assert not lances
+
+
+def test_install_refuses_a_version_that_is_not_a_version():
+    with pytest.raises(update_check.UpdateError):
+        update_check.install_update("../../evil", fetch=None, launch=None)
 
 
 def test_check_returns_newer_release(monkeypatch):

@@ -152,8 +152,7 @@ class Sidebar(ctk.CTkFrame):
         self.update_btn = ctk.CTkButton(ctrl, text="", height=34, corner_radius=9,
                                          fg_color="transparent", hover_color=COL_CARD,
                                          border_width=1, border_color=COL_ACCENT,
-                                         text_color=COL_ACCENT, font=font(12, "bold"),
-                                         command=lambda: webbrowser.open(update_check.install_page(i18n.current_lang())))
+                                         text_color=COL_ACCENT, font=font(12, "bold"))  # commande : App._install_update
 
         self.status_dot = ctk.CTkLabel(ctrl, text="●", text_color=COL_RED, font=font(14))
         self.status_dot.pack(anchor="w")
@@ -230,7 +229,7 @@ class Sidebar(ctk.CTkFrame):
             self.update_btn.configure(text=t("SIDEBAR_UPDATE_AVAILABLE", version=self._update_version))
 
     def show_update(self, version: str) -> None:
-        """Bouton discret au-dessus de l'état : ouvre la page Installation."""
+        """Bouton discret au-dessus de l'état : lance la mise à jour."""
         self._update_version = version
         self.update_btn.configure(text=t("SIDEBAR_UPDATE_AVAILABLE", version=version))
         self.update_btn.pack(fill="x", pady=(0, 12), before=self.status_dot)
@@ -364,7 +363,11 @@ class App(ctk.CTk):
                                        cc_path=DATA_DIR / "subtitles_cc.json",
                                        obs_client_getter=lambda: self._obs_client,
                                        obs_loop=self.obs_loop)
-        self.settings = SettingsView(self.content, self.config_mgr, on_saved=self._on_settings_saved)
+        self.settings = SettingsView(
+            self.content, self.config_mgr, on_saved=self._on_settings_saved,
+            on_check_update=lambda: threading.Thread(target=self._check_update_bg, args=(True,), daemon=True).start(),
+            on_install_update=self._install_update)
+        self.sidebar.update_btn.configure(command=self._install_update)
         self.views: dict[str, ctk.CTkFrame] = {
             "dashboard": self.dashboard,
             "triggers": self.triggers,
@@ -383,10 +386,39 @@ class App(ctk.CTk):
         self._pump_ui_queue()
         threading.Thread(target=self._check_update_bg, daemon=True).start()
 
-    def _check_update_bg(self) -> None:
+    _update_version: Optional[str] = None
+
+    def _check_update_bg(self, manual: bool = False) -> None:
         version = update_check.check()
+        self.post_ui(lambda: self._set_update(version, manual))
+
+    def _set_update(self, version: Optional[str], manual: bool) -> None:
+        self._update_version = version
         if version:
-            self.post_ui(lambda: self.sidebar.show_update(version))
+            self.sidebar.show_update(version)
+        if version or manual:  # au démarrage, pas de « à jour » non demandé
+            self.settings.show_update(version)
+
+    def _install_update(self) -> None:
+        version = self._update_version
+        if not version:
+            return
+        if not update_check.can_self_install():
+            webbrowser.open(update_check.install_page(i18n.current_lang()))
+            return
+        self._navigate("settings")
+        self.settings.set_update_message("SETTINGS_UPDATE_DOWNLOADING", busy=True)
+
+        def work() -> None:
+            try:
+                update_check.install_update(version)
+            except update_check.UpdateError as exc:
+                logger.warning("Mise à jour impossible : %s", exc)
+                self.post_ui(lambda: self.settings.set_update_message("SETTINGS_UPDATE_FAILED", COL_RED))
+            else:
+                self.post_ui(self._on_close)  # l'installeur remplace les fichiers puis relance
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_lang_changed(self, _lang: str) -> None:
         self.title(t("APP_TITLE_WINDOW"))

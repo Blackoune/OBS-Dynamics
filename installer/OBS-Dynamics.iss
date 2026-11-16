@@ -63,6 +63,12 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"; InfoBeforeFile: "infos-fr.txt"
 Name: "en"; MessagesFile: "compiler:Default.isl"; InfoBeforeFile: "infos-en.txt"
 
+; Version dans le titre de la fenêtre. Pas dans le nom du fichier : les liens
+; releases/latest/download/OBS-Dynamics-Setup.exe du site et update_check.py en dépendent.
+[Messages]
+fr.SetupWindowTitle=Installation - %1 {#AppVersion}
+en.SetupWindowTitle=Setup - %1 {#AppVersion}
+
 [Tasks]
 Name: "bureau"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
